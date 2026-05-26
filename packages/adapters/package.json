@@ -11,7 +11,7 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@devtap/shared": "workspace:*"
+    "@devtap/shared": "*"
   },
   "devDependencies": {
     "typescript": "^5.7.0",

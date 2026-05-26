@@ -97,8 +97,8 @@ export function deviceRoutes(sql: postgres.Sql) {
 
       // Send deviceToken to PC via its pairing WS connection
       const pcWs = pairingClients.get(record.device_id);
-      if (pcWs && pcWs.readyState === pcWs.OPEN) {
-        pcWs.send(JSON.stringify({
+      if (pcWs && pcWs.socket.readyState === pcWs.socket.OPEN) {
+        pcWs.socket.send(JSON.stringify({
           type: 'device_token',
           payload: { deviceToken, deviceId: record.device_id },
         }));

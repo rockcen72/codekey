@@ -1,5 +1,7 @@
 import { BaseAdapter, type AdapterOptions } from './base-adapter.js';
 import { RiskEngine } from './risk-engine.js';
+import { AnsiStripper } from './ansi-strip.js';
+import { ScreenBuffer } from './screen-buffer.js';
 import type { AgentType, AgentEventPayload, RiskLevel } from '@devtap/shared';
 
 type ClaudeState = 'idle' | 'awaiting_approval' | 'awaiting_reply' | 'running';
@@ -8,11 +10,24 @@ export class ClaudeCodeAdapter extends BaseAdapter {
   readonly agentType: AgentType = 'claude-code';
   private state: ClaudeState = 'idle';
   private riskEngine: RiskEngine;
+  private ansiStripper: AnsiStripper;
+  private screenBuffer: ScreenBuffer;
   private buffer: string[] = [];
 
   constructor(options: AdapterOptions = {}) {
     super(options);
     this.riskEngine = new RiskEngine();
+    this.ansiStripper = new AnsiStripper();
+    this.screenBuffer = new ScreenBuffer();
+  }
+
+  /** Entry point: raw PTY chunk → ANSI strip → line buffer → per-line processing */
+  processChunk(chunk: string): void {
+    const cleaned = this.ansiStripper.strip(chunk);
+    const lines = this.screenBuffer.feed(cleaned);
+    for (const line of lines) {
+      this.processOutput(line);
+    }
   }
 
   processOutput(line: string): void {

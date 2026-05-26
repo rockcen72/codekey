@@ -5,13 +5,14 @@ import { SessionManager } from '../daemon/session-manager.js';
 import { DeviceSecretManager } from '../auth/device-secret.js';
 import { ClaudeCodeAdapter, ResponseMapper } from '@devtap/adapters';
 import { PtyWrapper } from '../terminal/pty-wrapper.js';
+import type { AgentEventPayload } from '@devtap/shared';
 
 export const claudeCommand = new Command('claude')
   .description('Start a Claude Code session with remote control')
   .argument('[args...]', 'Arguments to pass to Claude Code')
   .option('--daemon', 'Run in background daemon mode')
   .option('--relay <url>', 'Relay server URL', 'http://localhost:3000')
-  .action(async (args: string[], options: { daemon?: boolean; relay?: string }) => {
+  .action(async (args: string[], options: { daemon?: boolean; relay: string }) => {
     const secretManager = new DeviceSecretManager();
     const { deviceId } = secretManager.loadOrCreate();
     const deviceToken = secretManager.getDeviceToken();
@@ -51,7 +52,7 @@ export const claudeCommand = new Command('claude')
     const pendingEventTypes = new Map<string, string>();
 
     // Wire adapter → relay
-    adapter.on('agent_event', (event) => {
+    adapter.on('agent_event', (event: AgentEventPayload) => {
       const clientEventId = randomUUID();
       const eventType = 'type' in event ? event.type : undefined;
       const needsPending = eventType === 'approval_required' || eventType === 'question';
@@ -66,7 +67,7 @@ export const claudeCommand = new Command('claude')
           clientEventId: needsPending ? clientEventId : undefined,
           sessionId: serverSessionId,
           agent: 'claude-code',
-          eventType: eventType ?? 'unknown',
+          eventType: (eventType ?? 'heartbeat') as import('@devtap/shared').AgentEventType,
           data: event,
           ts: new Date().toISOString(),
         },
@@ -81,7 +82,7 @@ export const claudeCommand = new Command('claude')
     });
 
     // Wire relay → approval_forward → response mapper → PTY
-    relay.on('approval_forward', (payload) => {
+    relay.on('approval_forward', (payload: { eventId: string; decision: string; message?: string }) => {
       const stdin = mapper.map(payload.eventId, payload.decision, payload.message);
       if (stdin) {
         pty.write(stdin);

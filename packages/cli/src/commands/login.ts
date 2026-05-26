@@ -28,7 +28,9 @@ export const loginCommand = new Command('login')
       process.exit(1);
     }
 
-    const { code, deviceId: serverDeviceId } = await response.json();
+    const pairResult = await response.json() as { code: string; deviceId?: string };
+    const code = pairResult.code;
+    const serverDeviceId = pairResult.deviceId;
     const effectiveDeviceId = serverDeviceId ?? deviceId;
 
     // On first pairing, save the server-assigned deviceId for future connections

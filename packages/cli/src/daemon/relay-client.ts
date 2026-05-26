@@ -93,6 +93,13 @@ export class RelayClient extends EventEmitter {
     });
   }
 
+  /** Send serialized WS message (heartbeat). */
+  private send(msg: WsMessage): void {
+    if (this.ws?.readyState === WebSocket.OPEN) {
+      this.ws.send(serializeMessage(msg));
+    }
+  }
+
   /** Send pre-serialized raw JSON string.
    *  NOTE: Unlike sendEvent, sendRaw does NOT buffer messages.
    *  Only call after WS is open — use waitForConnection() first.
