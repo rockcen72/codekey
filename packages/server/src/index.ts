@@ -11,10 +11,9 @@ const PORT = parseInt(process.env.PORT ?? '3000', 10);
 const HOST = process.env.HOST ?? '0.0.0.0';
 const DATABASE_URL = process.env.DATABASE_URL ?? 'postgres://devtap:devtap@localhost:5432/devtap';
 
-async function main() {
-  const sql = await initDb(DATABASE_URL);
-
-  const app = Fastify({ logger: true });
+export async function buildApp(databaseUrl: string) {
+  const sql = await initDb(databaseUrl);
+  const app = Fastify({ logger: false });
 
   await app.register(fastifyCors, { origin: true });
   await app.register(fastifyWebsocket);
@@ -31,7 +30,12 @@ async function main() {
 
   // Health check
   app.get('/health', async () => ({ status: 'ok', ts: new Date().toISOString() }));
+  return { app, sql };
+}
 
+async function main() {
+  const DATABASE_URL = process.env.DATABASE_URL ?? 'postgres://devtap:devtap@localhost:5432/devtap';
+  const { app } = await buildApp(DATABASE_URL);
   await app.listen({ port: PORT, host: HOST });
   console.log(`Relay server listening on ${HOST}:${PORT}`);
 }

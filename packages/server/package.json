@@ -9,20 +9,22 @@
     "build": "tsc",
     "dev": "tsc --watch",
     "start": "node dist/index.js",
-    "migrate": "node-pg-migrate up --migration-file-language ts"
+    "migrate": "node-pg-migrate up --migration-file-language ts",
+    "test": "vitest run"
   },
   "dependencies": {
-    "@devtap/shared": "workspace:*",
-    "fastify": "^5.2.0",
-    "@fastify/websocket": "^11.0.0",
+    "@devtap/shared": "*",
     "@fastify/cors": "^11.0.0",
+    "@fastify/websocket": "^11.0.0",
+    "dotenv": "^16.4.0",
+    "fastify": "^5.2.0",
     "postgres": "^3.4.0",
-    "uuid": "^11.0.0",
-    "dotenv": "^16.4.0"
+    "uuid": "^11.0.0"
   },
   "devDependencies": {
     "@types/uuid": "^10.0.0",
+    "node-pg-migrate": "^7.0.0",
     "typescript": "^5.7.0",
-    "node-pg-migrate": "^7.0.0"
+    "vitest": "^3.2.4"
   }
 }

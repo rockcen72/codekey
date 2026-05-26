@@ -74,6 +74,46 @@ export async function initDb(url: string) {
     )
   `;
 
+  // Add pending column to events table (for approval tracking)
+  await sql`
+    ALTER TABLE events ADD COLUMN IF NOT EXISTS pending BOOLEAN DEFAULT true
+  `;
+
+  // Pairing codes (one-time, server-generated)
+  await sql`
+    CREATE TABLE IF NOT EXISTS pairing_codes (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      code_hash TEXT NOT NULL UNIQUE,
+      device_id UUID NOT NULL REFERENCES devices(id),
+      ip_address TEXT NOT NULL,
+      expires_at TIMESTAMPTZ NOT NULL,
+      used_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ DEFAULT now()
+    )
+  `;
+
+  // Device tokens (separate from device_secret)
+  await sql`
+    CREATE TABLE IF NOT EXISTS device_tokens (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      device_id UUID NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+      token_type TEXT NOT NULL,
+      token_hash TEXT NOT NULL UNIQUE,
+      label TEXT,
+      last_used_at TIMESTAMPTZ,
+      expires_at TIMESTAMPTZ,
+      revoked BOOLEAN DEFAULT false,
+      created_at TIMESTAMPTZ DEFAULT now()
+    )
+  `;
+
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_pairing_codes_code_hash ON pairing_codes(code_hash)
+  `;
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_device_tokens_token_hash ON device_tokens(token_hash)
+  `;
+
   console.log('Database migrations complete');
   return sql;
 }
