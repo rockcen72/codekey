@@ -1,25 +1,48 @@
+import { getDeviceId, getServerUrl, clearAuth } from '../../services/storage';
+
+const app = getApp();
+
 Page({
   data: {
-    devices: [] as Array<{ id: string; name: string; lastSeen: string }>,
+    deviceId: '',
+    serverUrl: '',
   },
 
   onShow() {
-    this.fetchDevices();
+    this.setData({
+      deviceId: getDeviceId() || '',
+      serverUrl: getServerUrl(),
+    });
   },
 
-  fetchDevices() {
-    // TODO: GET /api/v1/devices
+  goBack() {
+    wx.navigateBack();
   },
 
-  unbindDevice(e: { currentTarget: { dataset: { id: string } } }) {
+  unbindDevice() {
     wx.showModal({
-      title: '确认解绑',
-      content: '解绑后该设备将无法接收通知',
+      title: '解绑设备',
+      content: '确定要解绑此设备吗？',
       success: (res) => {
         if (res.confirm) {
-          // TODO: DELETE /api/v1/devices/:id
+          // Local-only unbind: mini program uses clientToken which the
+          // server's DELETE /devices/:id endpoint does not accept.
+          // Clear local auth and disconnect WS.
+          clearAuth();
+          const ws = app.globalData.ws as any;
+          if (ws) { ws.disconnect(); }
+          app.globalData.ws = null;
+          app.globalData.wsConnected = false;
+          wx.reLaunch({ url: '/pages/login/login' });
         }
       },
+    });
+  },
+
+  copyDeviceId() {
+    wx.setClipboardData({
+      data: this.data.deviceId,
+      success: () => wx.showToast({ title: '已复制', icon: 'success' }),
     });
   },
 });

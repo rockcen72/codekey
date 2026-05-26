@@ -8,10 +8,10 @@ describe('ResponseMapper', () => {
     expect(mapper.map('evt-1', 'approve')).toBe('y\n');
   });
 
-  it('maps approve with message to message line', () => {
+  it('maps approve with message to y (message ignored for security)', () => {
     const mapper = new ResponseMapper();
     mapper.setPending('evt-1', 'approval');
-    expect(mapper.map('evt-1', 'approve', 'go ahead')).toBe('go ahead\n');
+    expect(mapper.map('evt-1', 'approve', 'go ahead')).toBe('y\n');
   });
 
   it('maps deny to n', () => {

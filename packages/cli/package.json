@@ -1,21 +1,22 @@
 {
-  "name": "@devtap/cli",
+  "name": "@codekey/cli",
   "version": "0.1.0",
   "private": true,
   "type": "module",
   "bin": {
-    "devtap": "dist/index.js"
+    "codekey": "dist/index.js"
   },
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "scripts": {
     "build": "tsc",
     "dev": "tsc --watch",
-    "start": "node dist/index.js"
+    "start": "node dist/index.js",
+    "test": "vitest run --passWithNoTests --reporter=verbose"
   },
   "dependencies": {
-    "@devtap/shared": "*",
-    "@devtap/adapters": "*",
+    "@codekey/shared": "*",
+    "@codekey/adapters": "*",
     "commander": "^13.0.0",
     "node-pty": "^1.0.0",
     "qrcode-terminal": "^0.12.0",
@@ -25,6 +26,7 @@
   "devDependencies": {
     "@types/ws": "^8.5.0",
     "@types/qrcode-terminal": "^0.12.0",
-    "typescript": "^5.7.0"
+    "typescript": "^5.7.0",
+    "vitest": "^3.2.4"
   }
 }

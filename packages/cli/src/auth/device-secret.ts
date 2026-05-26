@@ -2,7 +2,7 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { homedir } from 'node:os';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
-import { CREDENTIALS_PATH } from '@devtap/shared';
+import { CREDENTIALS_PATH } from '@codekey/shared';
 
 export interface DeviceCredentials {
   deviceId: string;

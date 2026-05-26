@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { buildApp } from '../index.js';
+import { buildApp } from '../app.js';
 import type { FastifyInstance } from 'fastify';
 import type postgres from 'postgres';
 

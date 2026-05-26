@@ -1,5 +1,5 @@
 import { EventEmitter } from 'node:events';
-import type { AgentEventPayload, AgentType } from '@devtap/shared';
+import type { AgentEventPayload, AgentType } from '@codekey/shared';
 
 export interface AdapterOptions {
   cwd?: string;

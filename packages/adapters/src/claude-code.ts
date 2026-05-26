@@ -2,7 +2,7 @@ import { BaseAdapter, type AdapterOptions } from './base-adapter.js';
 import { RiskEngine } from './risk-engine.js';
 import { AnsiStripper } from './ansi-strip.js';
 import { ScreenBuffer } from './screen-buffer.js';
-import type { AgentType, AgentEventPayload, RiskLevel } from '@devtap/shared';
+import type { AgentType, AgentEventPayload, RiskLevel } from '@codekey/shared';
 
 type ClaudeState = 'idle' | 'awaiting_approval' | 'awaiting_reply' | 'running';
 

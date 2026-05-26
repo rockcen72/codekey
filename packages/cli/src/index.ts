@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { Command } from 'commander';
-import { APP_NAME } from '@devtap/shared';
+import { APP_NAME } from '@codekey/shared';
 import { loginCommand } from './commands/login.js';
 import { claudeCommand } from './commands/claude.js';
 import { listCommand } from './commands/list.js';

@@ -1,1 +1,1 @@
-export { RiskEngine } from '@devtap/shared';
+export { RiskEngine } from '@codekey/shared';

@@ -1,18 +1,29 @@
 <view class="container">
-  <text class="title">设置</text>
+  <view class="header">
+    <text class="back" bindtap="goBack">返回</text>
+    <text class="title">设置</text>
+  </view>
 
   <view class="section">
     <text class="section-title">已绑定设备</text>
-    <view wx:for="{{devices}}" wx:key="id" class="device-item">
-      <text>{{item.name}}</text>
-      <text class="time">{{item.lastSeen}}</text>
-      <button class="unbind" bindtap="unbindDevice" data-id="{{item.id}}">解绑</button>
+    <view class="info-row">
+      <text class="label">设备 ID</text>
+      <text class="value code">{{deviceId || '未绑定'}}</text>
+      <text class="copy-btn" wx:if="{{deviceId}}" bindtap="copyDeviceId">复制</text>
+    </view>
+    <view class="info-row">
+      <text class="label">服务器</text>
+      <text class="value">{{serverUrl}}</text>
     </view>
   </view>
 
   <view class="section">
+    <button class="unbind-btn" bindtap="unbindDevice">解绑设备</button>
+  </view>
+
+  <view class="section about">
     <text class="section-title">关于</text>
-    <text>DevTap v0.1.0</text>
-    <text>AI Agent 远程控制工具</text>
+    <text class="about-text">CodeKey v0.1.0</text>
+    <text class="about-text">AI 远程控制工具</text>
   </view>
 </view>

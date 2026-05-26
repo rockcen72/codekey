@@ -1,6 +1,6 @@
-export const APP_NAME = 'devtap';
+export const APP_NAME = 'codekey';
 
-export const RELAY_DEFAULT_URL = 'wss://api.devtap.dev';
+export const RELAY_DEFAULT_URL = 'wss://api.codekey.dev';
 
 export const PAIRING_CODE_LENGTH = 8;
 export const PAIRING_CODE_TTL_MS = 5 * 60 * 1000; // 5 min
@@ -28,4 +28,4 @@ export const ERROR_CODES = {
   ADAPTER_ERROR: 'ADAPTER_ERROR',
 } as const;
 
-export const CREDENTIALS_PATH = '.devtap/credentials.json';
+export const CREDENTIALS_PATH = '.codekey/credentials.json';

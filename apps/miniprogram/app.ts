@@ -1,12 +1,15 @@
-// WeChat Mini Program entry
+import { getClientToken, getDeviceId, getServerUrl } from './services/storage';
+
 App({
   globalData: {
-    deviceId: '',
-    sessionId: '',
+    serverUrl: getServerUrl(),
+    clientToken: getClientToken() || '',
+    deviceId: getDeviceId() || '',
+    ws: null as any,
     wsConnected: false,
   },
-
   onLaunch() {
-    // TODO: check login state, restore session
+    // Auth state restored synchronously via getClientToken/getDeviceId
+    // in globalData initializer above
   },
 });

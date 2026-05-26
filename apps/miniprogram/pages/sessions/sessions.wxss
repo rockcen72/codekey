@@ -1,0 +1,18 @@
+.container { display: flex; flex-direction: column; height: 100vh; }
+.header { display: flex; align-items: center; padding: 24rpx 32rpx; border-bottom: 1rpx solid #eee; }
+.title { flex: 1; font-size: 40rpx; font-weight: 700; }
+.ws-indicator { width: 16rpx; height: 16rpx; border-radius: 50%; background: #ccc; margin-right: 16rpx; }
+.ws-indicator.connected { background: #07c160; }
+.settings-link { font-size: 28rpx; color: #07c160; }
+.list { flex: 1; padding: 16rpx 24rpx; }
+.empty { display: flex; flex-direction: column; align-items: center; padding-top: 200rpx; font-size: 32rpx; color: #999; }
+.empty-hint { font-size: 26rpx; color: #ccc; margin-top: 16rpx; text-align: center; }
+.session-card { background: #fff; border-radius: 16rpx; padding: 24rpx; margin-bottom: 16rpx; box-shadow: 0 2rpx 8rpx rgba(0,0,0,0.06); }
+.card-header { display: flex; justify-content: space-between; margin-bottom: 12rpx; }
+.agent { font-size: 30rpx; font-weight: 600; }
+.status { font-size: 22rpx; padding: 4rpx 12rpx; border-radius: 8rpx; background: #f0f0f0; text-transform: uppercase; }
+.status.active { background: #e8f5e9; color: #2e7d32; }
+.status.paused { background: #fff3e0; color: #e65100; }
+.project { font-size: 26rpx; color: #666; }
+.card-footer { margin-top: 12rpx; }
+.time { font-size: 22rpx; color: #999; }

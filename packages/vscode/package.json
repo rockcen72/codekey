@@ -1,0 +1,42 @@
+{
+  "name": "codekey-vscode",
+  "version": "0.1.0",
+  "private": true,
+  "displayName": "CodeKey",
+  "description": "Remote control for AI coding agents — approve, deny, reply from your phone",
+  "publisher": "codekey",
+  "engines": { "vscode": "^1.96.0" },
+  "type": "module",
+  "categories": ["Other"],
+  "activationEvents": ["onStartupFinished"],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "codekey.showDashboard",
+        "title": "CodeKey: Show Dashboard"
+      },
+      {
+        "command": "codekey.pairDevice",
+        "title": "CodeKey: Pair Device"
+      },
+      {
+        "command": "codekey.startClaudeCode",
+        "title": "CodeKey: Start Claude Code"
+      }
+    ]
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsc -watch -p tsconfig.json",
+    "package": "vsce package --no-dependencies",
+    "test": "echo 'No tests yet'"
+  },
+  "dependencies": {
+    "@codekey/shared": "*"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.96.0",
+    "typescript": "^5.7.0"
+  }
+}

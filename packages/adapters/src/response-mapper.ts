@@ -34,7 +34,7 @@ export class ResponseMapper {
         switch (decision) {
           case 'approve':
             this.pending = null;
-            return message && message.trim() ? `${message}\n` : 'y\n';
+            return 'y\n';
           case 'deny':
             this.pending = null;
             return 'n\n';

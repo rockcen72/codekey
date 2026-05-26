@@ -1,5 +1,5 @@
 {
-  "name": "@devtap/server",
+  "name": "@codekey/server",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -10,10 +10,11 @@
     "dev": "tsc --watch",
     "start": "node dist/index.js",
     "migrate": "node-pg-migrate up --migration-file-language ts",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:integration": "node -e \"process.env.DATABASE_URL || (console.error('FATAL: DATABASE_URL is required for integration tests'), process.exit(1))\" && vitest run --reporter=verbose --fileParallelism=false"
   },
   "dependencies": {
-    "@devtap/shared": "*",
+    "@codekey/shared": "*",
     "@fastify/cors": "^11.0.0",
     "@fastify/websocket": "^11.0.0",
     "dotenv": "^16.4.0",

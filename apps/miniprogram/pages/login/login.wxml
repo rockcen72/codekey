@@ -1,10 +1,25 @@
 <view class="container">
-  <view class="logo">DevTap</view>
-  <text class="title">AI Agent 远程控制</text>
-  <text class="desc">扫码绑定电脑，远程处理 agent 阻塞</text>
+  <view class="logo">CodeKey</view>
+  <text class="subtitle">AI 远程控制</text>
+  <text class="desc">扫描电脑终端的配对码，连接你的 AI 代理</text>
 
-  <button class="scan-btn" bindtap="startScan" wx:if="{{canScan}}">
+  <button class="scan-btn" wx:if="{{canScan}}" bindtap="startScan">
     扫码绑定
   </button>
-  <text class="hint" wx:else>请先在电脑端运行 devtap login</text>
+
+  <view class="manual-section">
+    <text class="manual-toggle" bindtap="toggleManualInput">
+      {{showManualInput ? '取消' : '手动输入配对码'}}
+    </text>
+
+    <view class="manual-input-area" wx:if="{{showManualInput}}">
+      <input class="code-input" placeholder="例如 ABC12345" maxlength="8"
+             value="{{manualCode}}" bindinput="onCodeInput" />
+      <button class="confirm-btn" bindtap="confirmManualCode">绑定</button>
+    </view>
+  </view>
+
+  <view class="hint">
+    <text>在电脑上运行 "codekey login" 获取配对码</text>
+  </view>
 </view>

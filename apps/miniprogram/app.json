@@ -7,9 +7,11 @@
     "pages/settings/settings"
   ],
   "window": {
-    "navigationBarTitleText": "DevTap",
-    "navigationBarTextStyle": "black",
-    "backgroundColor": "#ffffff"
+    "navigationBarTitleText": "CodeKey",
+    "navigationBarTextStyle": "white",
+    "navigationBarBackgroundColor": "#07c160",
+    "backgroundColor": "#f8f8f8"
   },
-  "style": "v2"
+  "style": "v2",
+  "sitemapLocation": "sitemap.json"
 }

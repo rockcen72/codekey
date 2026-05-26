@@ -3,9 +3,9 @@ import { Command } from 'commander';
 import { RelayClient } from '../daemon/relay-client.js';
 import { SessionManager } from '../daemon/session-manager.js';
 import { DeviceSecretManager } from '../auth/device-secret.js';
-import { ClaudeCodeAdapter, ResponseMapper } from '@devtap/adapters';
+import { ClaudeCodeAdapter, ResponseMapper } from '@codekey/adapters';
 import { PtyWrapper } from '../terminal/pty-wrapper.js';
-import type { AgentEventPayload } from '@devtap/shared';
+import type { AgentEventPayload } from '@codekey/shared';
 
 export const claudeCommand = new Command('claude')
   .description('Start a Claude Code session with remote control')
@@ -17,7 +17,7 @@ export const claudeCommand = new Command('claude')
     const { deviceId } = secretManager.loadOrCreate();
     const deviceToken = secretManager.getDeviceToken();
     if (!deviceToken) {
-      console.error('Not paired. Run `devtap login` first.');
+      console.error('Not paired. Run `codekey login` first.');
       process.exit(1);
     }
 
@@ -67,18 +67,21 @@ export const claudeCommand = new Command('claude')
           clientEventId: needsPending ? clientEventId : undefined,
           sessionId: serverSessionId,
           agent: 'claude-code',
-          eventType: (eventType ?? 'heartbeat') as import('@devtap/shared').AgentEventType,
+          eventType: (eventType ?? 'heartbeat') as import('@codekey/shared').AgentEventType,
           data: event,
           ts: new Date().toISOString(),
         },
       });
     });
 
-    // Wire relay → event_ack → mapper.setPending
+    // Wire relay → event_ack → mapper.setPending (only for tracked pending event types)
     relay.on('event_ack', (ack: { clientEventId?: string; serverEventId: string }) => {
-      const pendingType = (ack.clientEventId && pendingEventTypes.get(ack.clientEventId)) ?? 'approval';
-      if (ack.clientEventId) pendingEventTypes.delete(ack.clientEventId);
-      mapper.setPending(ack.serverEventId, pendingType as 'approval' | 'question');
+      if (ack.clientEventId && pendingEventTypes.has(ack.clientEventId)) {
+        const pendingType = pendingEventTypes.get(ack.clientEventId)!;
+        pendingEventTypes.delete(ack.clientEventId);
+        mapper.setPending(ack.serverEventId, pendingType as 'approval' | 'question');
+      }
+      // Non-pending events (command_started, task_complete, etc.) are ignored
     });
 
     // Wire relay → approval_forward → response mapper → PTY

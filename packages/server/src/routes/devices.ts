@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import type postgres from 'postgres';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
+import { deviceTokenAuth } from '../auth/middleware.js';
 import { pairingClients } from '../ws/connection-registry.js';
 
 export function deviceRoutes(sql: postgres.Sql) {
@@ -68,16 +69,15 @@ export function deviceRoutes(sql: postgres.Sql) {
 
       const codeHash = createHash('sha256').update(code).digest('hex');
 
+      // Atomic one-time consumption: single UPDATE claims the code
       const [record] = await sql`
-        SELECT * FROM pairing_codes
+        UPDATE pairing_codes SET used_at = now()
         WHERE code_hash = ${codeHash}
           AND expires_at > now()
           AND used_at IS NULL
+        RETURNING *
       `;
       if (!record) return reply.code(404).send({ error: 'invalid or expired code' });
-
-      // One-time consumption
-      await sql`UPDATE pairing_codes SET used_at = now() WHERE id = ${record.id}`;
 
       // Create client token (short-lived, for mini program)
       const clientToken = randomUUID();
@@ -110,15 +110,20 @@ export function deviceRoutes(sql: postgres.Sql) {
       };
     });
 
-    // List bound devices
-    fastify.get('/devices', async (req, reply) => {
-      const devices = await sql`SELECT * FROM devices ORDER BY created_at DESC`;
+    // List bound devices (scoped to own device)
+    fastify.get('/devices', { preHandler: [deviceTokenAuth(sql)] }, async (req, reply) => {
+      const { deviceAuth } = req as unknown as { deviceAuth: { deviceId: string } };
+      const devices = await sql`SELECT * FROM devices WHERE id = ${deviceAuth.deviceId}`;
       return devices;
     });
 
-    // Unbind device
-    fastify.delete('/devices/:id', async (req, reply) => {
+    // Unbind device (must match token's device)
+    fastify.delete('/devices/:id', { preHandler: [deviceTokenAuth(sql)] }, async (req, reply) => {
+      const { deviceAuth } = req as unknown as { deviceAuth: { deviceId: string } };
       const { id } = req.params as { id: string };
+      if (id !== deviceAuth.deviceId) {
+        return reply.code(403).send({ error: 'forbidden' });
+      }
       await sql`DELETE FROM devices WHERE id = ${id}`;
       return { success: true };
     });

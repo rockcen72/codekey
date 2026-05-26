@@ -1,5 +1,5 @@
 {
-  "name": "@devtap/adapters",
+  "name": "@codekey/adapters",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -11,7 +11,7 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@devtap/shared": "*"
+    "@codekey/shared": "*"
   },
   "devDependencies": {
     "typescript": "^5.7.0",

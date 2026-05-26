@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { SessionStatus } from '@devtap/shared';
+import type { SessionStatus } from '@codekey/shared';
 
 interface SessionState {
   id: string;

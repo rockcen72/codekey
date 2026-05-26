@@ -10,7 +10,7 @@ import {
   serializeMessage,
   deserializeMessage,
   createPing,
-} from '@devtap/shared';
+} from '@codekey/shared';
 
 export class RelayClient extends EventEmitter {
   private ws: WebSocket | null = null;

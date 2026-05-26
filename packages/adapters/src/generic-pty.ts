@@ -1,5 +1,5 @@
 import { BaseAdapter, type AdapterOptions } from './base-adapter.js';
-import type { AgentType, AgentEventPayload } from '@devtap/shared';
+import type { AgentType, AgentEventPayload } from '@codekey/shared';
 
 export class GenericPtyAdapter extends BaseAdapter {
   readonly agentType: AgentType = 'generic-pty';

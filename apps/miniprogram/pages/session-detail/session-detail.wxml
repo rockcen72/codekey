@@ -1,50 +1,84 @@
 <view class="container">
-  <view wx:if="{{!session}}" class="loading">加载中...</view>
-
-  <view wx:else>
-    <!-- Session info -->
-    <view class="info-card">
-      <text class="agent">{{session.agentType}}</text>
-      <text class="project">{{session.projectName}}</text>
-      <text class="status {{session.status}}">{{session.status}}</text>
-    </view>
-
-    <!-- Event timeline -->
-    <scroll-view class="timeline" scroll-y>
-      <view wx:for="{{events}}" wx:key="id" class="event-item">
-        <view class="event-type {{item.type}}">{{item.type}}</view>
-        <view class="event-summary">{{item.data.summary || item.data.command || item.data.question}}</view>
-        <view class="event-time">{{item.createdAt}}</view>
-
-        <!-- Approval button -->
-        <button wx:if="{{item.type === 'approval_required'}}" class="approve-btn"
-          bindtap="showApprovalCard" data-event="{{item}}">
-          处理审批
-        </button>
-      </view>
-    </scroll-view>
+  <view class="header">
+    <text class="back" bindtap="goBack">返回</text>
+    <text class="title">会话详情</text>
   </view>
 
-  <!-- Approval card modal -->
-  <view wx:if="{{showApprovalCard}}" class="modal-overlay">
-    <view class="approval-card">
-      <text class="card-title">审批请求</text>
-      <text class="risk-label risk-{{riskLevel}}">{{riskLevel}}</text>
-      <text class="command">{{currentEvent.data.command}}</text>
-      <text class="context">{{currentEvent.data.contextSnippet}}</text>
+  <view class="info-card" wx:if="{{session}}">
+    <text class="agent">{{session.agent_type}}</text>
+    <text class="status {{session.status}}">{{session.status}}</text>
+  </view>
 
-      <view class="actions">
-        <button class="btn-approve" bindtap="approve">批准</button>
-        <button class="btn-deny" bindtap="deny">拒绝</button>
-        <button class="btn-pause" bindtap="pause">暂停</button>
+  <scroll-view class="event-list" scroll-y>
+    <view class="empty" wx:if="{{events.length === 0}}">
+      <text>暂无事件</text>
+    </view>
+
+    <view class="event-item" wx:for="{{events}}" wx:key="id"
+          data-id="{{item.id}}" bindtap="showApprovalCard">
+      <view class="event-time">{{item.displayTime}}</view>
+      <view class="event-body">
+        <text class="event-type">{{item.type}}</text>
+        <text class="event-summary">{{item.summary}}</text>
+        <view class="event-meta">
+          <text class="risk-badge {{item.risk_level || 'unknown'}}">{{item.riskText}}</text>
+          <text wx:if="{{item.showPending}}" class="pending-badge">待处理</text>
+          <text wx:elif="{{item.showDecision}}" class="decision-badge">{{item.decision}}</text>
+        </view>
+      </view>
+    </view>
+  </scroll-view>
+
+  <!-- Approval Card Modal -->
+  <view class="modal-overlay" wx:if="{{showApproval}}" bindtap="closeApprovalCard">
+    <view class="approval-card" catchtap="">
+      <view class="card-header">
+        <text class="card-title">审批请求</text>
+        <text class="card-close" bindtap="closeApprovalCard">X</text>
+      </view>
+
+      <view wx:if="{{currentEvent}}" class="card-body">
+        <!-- Risk badge + agent -->
+        <view class="approval-meta">
+          <text class="risk-tag {{riskLevel}}">{{riskLabel}}</text>
+          <text class="agent-tag">{{session.agentType}}</text>
+        </view>
+
+        <!-- Summary (main description) -->
+        <view class="summary-block" wx:if="{{approvalSummary}}">
+          <text class="summary-text">{{approvalSummary}}</text>
+        </view>
+
+        <!-- Command (terminal-style block) -->
+        <view class="command-block" wx:if="{{approvalCommand}}">
+          <text class="block-label">即将执行的命令</text>
+          <view class="command-box">
+            <text class="command-text">{{approvalCommand}}</text>
+          </view>
+        </view>
+
+        <!-- Directory -->
+        <view class="detail-row" wx:if="{{approvalCwd}}">
+          <text class="detail-label">工作目录</text>
+          <text class="detail-value code">{{approvalCwd}}</text>
+        </view>
+      </view>
+
+      <view class="card-actions">
+        <button class="action-btn approve {{approvalDisabled ? 'disabled' : ''}}"
+                disabled="{{approvalDisabled}}" bindtap="approve">批准</button>
+        <button class="action-btn deny" bindtap="deny">拒绝</button>
+        <button class="action-btn pause" bindtap="pause">暂停</button>
       </view>
 
       <view class="reply-section">
-        <input class="reply-input" placeholder="回复 agent..." bindinput="onReplyInput" />
-        <button class="btn-reply" bindtap="sendReply" disabled="{{!replyText}}">发送</button>
+        <input class="reply-input" placeholder="输入回复..." value="{{replyText}}" bindinput="onReplyInput" />
+        <button class="reply-btn" bindtap="sendReply">发送</button>
       </view>
 
-      <text class="close" bindtap="closeApprovalCard">关闭</text>
+      <view wx:if="{{showRiskNotice}}" class="risk-notice">
+        <text>风险等级 {{riskLabel}} 无法在手机上批准，请到电脑端处理。</text>
+      </view>
     </view>
   </view>
 </view>

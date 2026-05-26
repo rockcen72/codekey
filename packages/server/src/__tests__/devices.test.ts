@@ -1,5 +1,5 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { buildApp } from '../index.js';
+import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
+import { buildApp } from '../app.js';
 import type { FastifyInstance } from 'fastify';
 import type postgres from 'postgres';
 
@@ -9,6 +9,7 @@ const describeDb = DATABASE_URL ? describe : describe.skip;
 describeDb('Devices API', () => {
   let app: FastifyInstance;
   let sql: postgres.Sql;
+  const cleanupIds: string[] = [];
 
   beforeAll(async () => {
     const built = await buildApp(DATABASE_URL!);
@@ -16,7 +17,19 @@ describeDb('Devices API', () => {
     sql = built.sql;
   });
 
+  beforeEach(async () => {
+    await sql`DELETE FROM pairing_codes WHERE ip_address IN ('127.0.0.1', '::1')`;
+  });
+
   afterAll(async () => {
+    for (const did of cleanupIds) {
+      try { await sql`DELETE FROM approvals WHERE session_id IN (SELECT id FROM sessions WHERE device_id = ${did})`; } catch { /* ignore */ }
+      try { await sql`DELETE FROM events WHERE session_id IN (SELECT id FROM sessions WHERE device_id = ${did})`; } catch { /* ignore */ }
+      try { await sql`DELETE FROM sessions WHERE device_id = ${did}`; } catch { /* ignore */ }
+      try { await sql`DELETE FROM device_tokens WHERE device_id = ${did}`; } catch { /* ignore */ }
+      try { await sql`DELETE FROM pairing_codes WHERE device_id = ${did}`; } catch { /* ignore */ }
+      try { await sql`DELETE FROM devices WHERE id = ${did}`; } catch { /* ignore */ }
+    }
     await app.close();
     await sql.end();
   });
@@ -35,20 +48,22 @@ describeDb('Devices API', () => {
     expect(body.code).toHaveLength(8);
     expect(body.deviceId).toBeDefined();
     expect(body.expiresIn).toBe(300);
+    cleanupIds.push(body.deviceId);
   });
 
   it('rejects pair with wrong device_secret for existing deviceId', async () => {
     const boot = await app.inject({
       method: 'POST',
       url: '/api/v1/devices/pair',
-      payload: { deviceSecretHash: 'validhash', deviceName: 'pc2' },
+      payload: { deviceSecretHash: 'v'.repeat(64), deviceName: 'pc2' },
     });
     const { deviceId } = JSON.parse(boot.payload);
+    cleanupIds.push(deviceId);
 
     const res = await app.inject({
       method: 'POST',
       url: '/api/v1/devices/pair',
-      payload: { deviceId, deviceSecretHash: 'wronghash' },
+      payload: { deviceId, deviceSecretHash: 'w'.repeat(64) },
     });
     expect(res.statusCode).toBe(403);
   });
@@ -59,7 +74,8 @@ describeDb('Devices API', () => {
       url: '/api/v1/devices/pair',
       payload: { deviceSecretHash: 'b'.repeat(64), deviceName: 'pc3' },
     });
-    const { code } = JSON.parse(pair.payload);
+    const { code, deviceId } = JSON.parse(pair.payload);
+    cleanupIds.push(deviceId);
 
     const confirm = await app.inject({
       method: 'POST',

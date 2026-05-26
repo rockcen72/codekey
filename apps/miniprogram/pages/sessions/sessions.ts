@@ -1,13 +1,13 @@
+import { createApi } from '../../services/api';
+import { WsClient } from '../../services/ws';
+import { getClientToken, getDeviceId, getServerUrl, clearAuth } from '../../services/storage';
+
+const app = getApp();
+
 Page({
   data: {
-    sessions: [] as Array<{
-      id: string;
-      agentType: string;
-      projectName: string;
-      status: string;
-      lastActive: string;
-    }>,
-    ws: null as WebSocket | null,
+    sessions: [] as any[],
+    wsConnected: false,
   },
 
   onShow() {
@@ -16,24 +16,72 @@ Page({
   },
 
   onHide() {
-    this.closeWs();
+    // App-level WS — keep alive across page navigation.
+    // Disconnected only on unbind/logout.
   },
 
-  fetchSessions() {
-    // TODO: GET /api/v1/sessions
+  async fetchSessions() {
+    try {
+      const api = createApi(getServerUrl());
+      const raw = await api.getSessions();
+      const sessions = raw.map(s => ({
+        ...s,
+        displayTime: this.formatTime(s.last_active_at),
+        projectName: s.metadata?.projectName || 'Default',
+      }));
+      this.setData({ sessions });
+    } catch (err) {
+      console.error('[sessions] fetch error:', err);
+    }
   },
 
   connectWs() {
-    // TODO: connect WSS for real-time updates
-  },
+    const token = getClientToken();
+    const deviceId = getDeviceId();
+    if (!token || !deviceId) return;
 
-  closeWs() {
-    // TODO: close WebSocket
-  },
+    // WS already active at app level
+    if (app.globalData.wsConnected) return;
 
-  openSession(e: { currentTarget: { dataset: { id: string } } }) {
-    wx.navigateTo({
-      url: `/pages/session-detail/session-detail?id=${e.currentTarget.dataset.id}`,
+    const newWs = new WsClient(getServerUrl(), deviceId, token);
+    newWs.on('event_push', () => {
+      this.fetchSessions();
     });
+    newWs.on('session_registered', () => {
+      this.fetchSessions();
+    });
+    newWs.on('connected', () => {
+      app.globalData.wsConnected = true;
+      this.setData({ wsConnected: true });
+    });
+    newWs.on('auth_failed', () => {
+      clearAuth();
+      app.globalData.ws = null;
+      app.globalData.wsConnected = false;
+      wx.redirectTo({ url: '/pages/login/login' });
+    });
+    newWs.connect();
+    app.globalData.ws = newWs;
+    // wsConnected set in 'connected' event handler, after SocketTask.onOpen
+  },
+
+  openSession(e: any) {
+    const id = e.currentTarget.dataset.id;
+    wx.navigateTo({ url: `/pages/session-detail/session-detail?id=${id}` });
+  },
+
+  goToSettings() {
+    wx.navigateTo({ url: '/pages/settings/settings' });
+  },
+
+  formatTime(iso: string): string {
+    if (!iso) return '';
+    const diff = Date.now() - new Date(iso).getTime();
+    const mins = Math.floor(diff / 60000);
+    if (mins < 1) return '刚刚';
+    if (mins < 60) return `${mins} 分钟前`;
+    const hrs = Math.floor(mins / 60);
+    if (hrs < 24) return `${hrs} 小时前`;
+    return new Date(iso).toLocaleDateString();
   },
 });
