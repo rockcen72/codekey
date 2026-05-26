@@ -23,24 +23,10 @@ export const bridgeCommand = new Command('bridge')
     relay.connect();
     await relay.waitForConnection();
 
-    // Register a hook session with the relay
-    relay.sendRaw(JSON.stringify({
-      type: 'register_session',
-      payload: { agentType: 'claude-code-hook' },
-    }));
-
-    bridge.serverSessionId = await new Promise<string>((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error('Session registration timeout')), 10_000);
-      relay.once('session_registered', (payload: { sessionId: string }) => {
-        clearTimeout(timer);
-        resolve(payload.sessionId);
-      });
-    });
+    console.error('bridge running — waiting for hook events...');
 
     bridge.listenRelayCommands();
     const close = await startBridgeServer(bridge);
-
-    console.error(`bridge running — session ${bridge.serverSessionId}`);
 
     // Keep alive until signal
     process.on('SIGINT', () => { close(); relay.close(); process.exit(0); });

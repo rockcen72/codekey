@@ -43,7 +43,7 @@ function handleRequest(req: IncomingMessage, res: ServerResponse, bridge: Approv
     req.on('end', () => {
       try {
         const input: HookEventBody = JSON.parse(body);
-        bridge.handleHookEvent(input);
+        bridge.handleHookEvent(input).catch(() => {});
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ ok: true }));
       } catch {
