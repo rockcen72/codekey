@@ -212,7 +212,7 @@ export function wsHandler(sql: postgres.Sql) {
             return;
           }
 
-          const pc = pcClients.get(deviceId);
+          const pc = pcClients.get(deviceId!);
           if (!pc || pc.socket.readyState !== pc.socket.OPEN) {
             socket.send(JSON.stringify({ type: 'error', code: 'BRIDGE_NOT_CONNECTED' }));
             return;
