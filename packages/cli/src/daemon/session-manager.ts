@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import type { SessionStatus } from '@devtap/shared';
 
 interface SessionState {
@@ -12,7 +13,7 @@ export class SessionManager {
 
   create(agentType: string): SessionState {
     const session: SessionState = {
-      id: crypto.randomUUID(),
+      id: randomUUID(),
       status: 'active',
       startedAt: new Date(),
       lastActiveAt: new Date(),
