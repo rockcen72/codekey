@@ -51,9 +51,11 @@ Page({
         ...e,
         displayTime: this.formatTime(e.created_at),
         summary: e.data?.summary || e.data?.command || '',
+        summaryShort: e.data?.summaryShort || '',
         riskText: RISK_LABELS[e.risk_level as string] || '未知',
         showPending: e.pending && e.type === 'approval_required',
         showDecision: !e.pending && e.decision,
+        isTaskComplete: e.type === 'task_complete',
       }));
       this.setData({ session: { ...session, agentType: session.agent_type || 'AI Agent' }, events });
     } catch (err) {
@@ -66,6 +68,12 @@ Page({
     if (!ws) return;
     ws.on('event_push', (payload: any) => {
       if (payload.sessionId === this.data.sessionId) {
+        // Show toast for incoming task_complete events
+        if (payload.eventType === 'task_complete') {
+          const summary = payload.summaryShort || payload.summary || '';
+          const snippet = summary.length > 80 ? summary.slice(0, 80) + '...' : summary;
+          wx.showToast({ title: '任务完成: ' + snippet, icon: 'none', duration: 3000 });
+        }
         this.fetchDetail();
       }
     });

@@ -14,14 +14,19 @@
       <text>暂无事件</text>
     </view>
 
-    <view class="event-item" wx:for="{{events}}" wx:key="id"
-          data-id="{{item.id}}" bindtap="showApprovalCard">
+    <view class="event-item {{item.isTaskComplete ? 'task-complete' : ''}}"
+          wx:for="{{events}}" wx:key="id"
+          data-id="{{item.id}}"
+          bindtap="{{item.isTaskComplete ? '' : 'showApprovalCard'}}">
       <view class="event-time">{{item.displayTime}}</view>
       <view class="event-body">
-        <text class="event-type">{{item.type}}</text>
-        <text class="event-summary">{{item.summary}}</text>
+        <view class="event-type-row">
+          <text wx:if="{{item.isTaskComplete}}" class="icon-check">✓</text>
+          <text class="event-type">{{item.isTaskComplete ? '任务完成' : item.type}}</text>
+        </view>
+        <text class="event-summary">{{item.isTaskComplete ? (item.summaryShort || item.summary) : item.summary}}</text>
         <view class="event-meta">
-          <text class="risk-badge {{item.risk_level || 'unknown'}}">{{item.riskText}}</text>
+          <text wx:if="{{!item.isTaskComplete}}" class="risk-badge {{item.risk_level || 'unknown'}}">{{item.riskText}}</text>
           <text wx:if="{{item.showPending}}" class="pending-badge">待处理</text>
           <text wx:elif="{{item.showDecision}}" class="decision-badge">{{item.decision}}</text>
         </view>

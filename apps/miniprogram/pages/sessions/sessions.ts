@@ -44,7 +44,12 @@ Page({
     if (app.globalData.wsConnected) return;
 
     const newWs = new WsClient(getServerUrl(), deviceId, token);
-    newWs.on('event_push', () => {
+    newWs.on('event_push', (payload: any) => {
+      if (payload.eventType === 'task_complete') {
+        const summary = payload.summaryShort || payload.summary || '';
+        const snippet = summary.length > 80 ? summary.slice(0, 80) + '...' : summary;
+        wx.showToast({ title: '任务完成: ' + snippet, icon: 'none', duration: 3000 });
+      }
       this.fetchSessions();
     });
     newWs.on('session_registered', () => {

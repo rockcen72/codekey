@@ -23,6 +23,11 @@
 .pending-badge { font-size: 20rpx; padding: 2rpx 10rpx; border-radius: 6rpx; background: #fff8e1; color: #f57f17; margin-left: 8rpx; }
 .decision-badge { font-size: 20rpx; padding: 2rpx 10rpx; border-radius: 6rpx; background: #e8f5e9; color: #2e7d32; margin-left: 8rpx; }
 
+/* Task Complete Card */
+.event-item.task-complete { background: #f0faf0; border-radius: 12rpx; padding: 16rpx; margin-bottom: 8rpx; border-bottom: none; }
+.event-type-row { display: flex; align-items: center; gap: 8rpx; }
+.icon-check { font-size: 28rpx; color: #07c160; font-weight: 700; }
+
 /* Approval Card Modal */
 .modal-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); display: flex; align-items: flex-end; z-index: 100; }
 .approval-card { width: 100%; background: #fff; border-radius: 24rpx 24rpx 0 0; padding: 32rpx; max-height: 80vh; overflow-y: auto; }
