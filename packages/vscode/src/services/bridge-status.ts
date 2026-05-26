@@ -64,7 +64,7 @@ export class BridgeStatusService {
       this._update({ bridge: code === 0 ? 'stopped' : 'error' });
     });
 
-    this._update({ bridge: 'running' });
+    // Don't mark 'running' until first health check succeeds
     this._startHealthCheck();
   }
 
@@ -94,24 +94,28 @@ export class BridgeStatusService {
     }
   }
 
+  private async _checkHealth(): Promise<void> {
+    try {
+      const resp = await fetch('http://127.0.0.1:3001/v1/health');
+      if (resp.ok) {
+        if (this._state.bridge !== 'running') {
+          this._update({ bridge: 'running' });
+        }
+      } else {
+        this._update({ bridge: 'error' });
+      }
+    } catch {
+      if (this._state.bridge !== 'stopped') {
+        this._update({ bridge: 'stopped' });
+      }
+    }
+  }
+
   private _startHealthCheck(): void {
     this._stopHealthCheck();
-    this._healthTimer = setInterval(async () => {
-      try {
-        const resp = await fetch('http://127.0.0.1:3001/v1/health');
-        if (resp.ok) {
-          if (this._state.bridge !== 'running') {
-            this._update({ bridge: 'running' });
-          }
-        } else {
-          this._update({ bridge: 'error' });
-        }
-      } catch {
-        if (this._state.bridge !== 'stopped') {
-          this._update({ bridge: 'stopped' });
-        }
-      }
-    }, 10_000);
+    // Check immediately, then every 10s
+    this._checkHealth();
+    this._healthTimer = setInterval(() => this._checkHealth(), 10_000);
   }
 
   private _stopHealthCheck(): void {
@@ -122,8 +126,14 @@ export class BridgeStatusService {
   }
 }
 
+/** True if at least one CodeKey hook script exists in ~/.claude/hooks/ */
 function isHookInstalledSafe(): boolean {
-  try { return fs.existsSync(getHookPath()); } catch { return false; }
+  try {
+    const dir = getHookPath();
+    if (!fs.existsSync(dir)) return false;
+    const files = ['claude_code_permission_request.js', 'claude_code_stop.js', 'claude_code_notification.js'];
+    return files.some(f => fs.existsSync(path.join(dir, f)));
+  } catch { return false; }
 }
 
 function readHookConfigStatus(): HookConfigStatus {

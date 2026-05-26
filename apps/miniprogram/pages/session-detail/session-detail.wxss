@@ -64,3 +64,8 @@
 .reply-input { flex: 1; height: 64rpx; border: 1rpx solid #ddd; border-radius: 12rpx; padding: 0 16rpx; font-size: 26rpx; }
 .reply-btn { height: 64rpx; line-height: 64rpx; background: #07c160; color: #fff; border-radius: 12rpx; font-size: 26rpx; padding: 0 24rpx; }
 .risk-notice { background: #fff3e0; padding: 16rpx; border-radius: 12rpx; font-size: 24rpx; color: #e65100; text-align: center; }
+
+/* Remote Command Input Bar */
+.command-bar { display: flex; gap: 12rpx; align-items: center; padding: 16rpx 24rpx; border-top: 1rpx solid #eee; background: #fff; }
+.command-input { flex: 1; height: 64rpx; border: 1rpx solid #ddd; border-radius: 12rpx; padding: 0 16rpx; font-size: 26rpx; }
+.command-send-btn { height: 64rpx; line-height: 64rpx; background: #07c160; color: #fff; border-radius: 12rpx; font-size: 26rpx; padding: 0 32rpx; white-space: nowrap; }

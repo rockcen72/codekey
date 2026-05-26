@@ -1,5 +1,6 @@
 export interface PendingCommand {
   id: string;
+  sessionId: string;
   text: string;
   source: string;
   timestamp: string;

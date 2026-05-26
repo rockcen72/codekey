@@ -27,7 +27,19 @@ export class ApprovalBridge {
   private pendingApprovals = new Map<string, PendingApproval>();
 
   constructor(readonly relay: RelayClient) {
-    // Wire approval_forward listener once — maps server event decisions back to pending requests
+    // Migrate pending entry from clientEventId → serverEventId on ack
+    this.relay.on('event_ack', (payload: unknown) => {
+      const ack = payload as { clientEventId?: string | null; serverEventId: string };
+      if (ack.clientEventId) {
+        const entry = this.pendingApprovals.get(ack.clientEventId);
+        if (entry) {
+          this.pendingApprovals.delete(ack.clientEventId);
+          this.pendingApprovals.set(ack.serverEventId, entry);
+        }
+      }
+    });
+
+    // Resolve pending approval from phone decision (keyed by serverEventId)
     this.relay.on('approval_forward', (payload: unknown) => {
       const fwd = payload as { eventId: string; decision: string };
       const entry = this.pendingApprovals.get(fwd.eventId);
@@ -103,8 +115,13 @@ export class ApprovalBridge {
   listenRelayCommands(): void {
     this.relay.on('command', (payload: { sessionId?: string; action: string; data: string }) => {
       if (payload.action !== 'write_stdin') return;
+      // Discard if session doesn't match the current bridge session
+      if (payload.sessionId && payload.sessionId !== this.serverSessionId) {
+        return;
+      }
       this.commandQueue.push({
         id: randomUUID(),
+        sessionId: payload.sessionId ?? this.serverSessionId ?? '',
         text: payload.data,
         source: 'relay:command',
         timestamp: new Date().toISOString(),

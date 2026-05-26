@@ -218,6 +218,11 @@ export function wsHandler(sql: postgres.Sql) {
             return;
           }
 
+          if (pc.sessionId !== sessionId) {
+            socket.send(JSON.stringify({ type: 'error', code: 'SESSION_NOT_ACTIVE' }));
+            return;
+          }
+
           pc.socket.send(JSON.stringify({
             type: 'command',
             payload: { sessionId, action, data },

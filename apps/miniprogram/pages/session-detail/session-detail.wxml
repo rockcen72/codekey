@@ -34,6 +34,12 @@
     </view>
   </scroll-view>
 
+  <!-- Remote Command Input -->
+  <view class="command-bar" wx:if="{{session && session.status === 'active'}}">
+    <input class="command-input" placeholder="输入指令发送给 AI Agent..." value="{{commandText}}" bindinput="onCommandInput" />
+    <button class="command-send-btn" bindtap="sendCommand">发送</button>
+  </view>
+
   <!-- Approval Card Modal -->
   <view class="modal-overlay" wx:if="{{showApproval}}" bindtap="closeApprovalCard">
     <view class="approval-card" catchtap="">

@@ -27,6 +27,8 @@ Page({
     approvalCwd: '',
     approvalDisabled: false,
     showRiskNotice: false,
+    commandText: '',
+    wsConnected: false,
   },
 
   onLoad(query: any) {
@@ -66,9 +68,11 @@ Page({
   setupWsListener() {
     const ws = app.globalData.ws as any;
     if (!ws) return;
+
+    this.setData({ wsConnected: true });
+
     ws.on('event_push', (payload: any) => {
       if (payload.sessionId === this.data.sessionId) {
-        // Show toast for incoming task_complete events
         if (payload.eventType === 'task_complete') {
           const summary = payload.summaryShort || payload.summary || '';
           const snippet = summary.length > 80 ? summary.slice(0, 80) + '...' : summary;
@@ -76,6 +80,14 @@ Page({
         }
         this.fetchDetail();
       }
+    });
+
+    ws.on('disconnected', () => {
+      this.setData({ wsConnected: false });
+    });
+
+    ws.on('connected', () => {
+      this.setData({ wsConnected: true });
     });
   },
 
@@ -164,6 +176,37 @@ Page({
       }
       this.fetchDetail();
     }, 1000);
+  },
+
+  onCommandInput(e: any) {
+    this.setData({ commandText: e.detail.value });
+  },
+
+  sendCommand() {
+    const text = this.data.commandText.trim();
+    if (!text) {
+      wx.showToast({ title: '请输入指令', icon: 'none' });
+      return;
+    }
+
+    const ws = app.globalData.ws as any;
+    if (!ws || !this.data.wsConnected) {
+      wx.showToast({ title: '未连接服务器', icon: 'none' });
+      return;
+    }
+
+    if (!this.data.session?.status || this.data.session.status !== 'active') {
+      wx.showToast({ title: '会话未处于活跃状态', icon: 'none' });
+      return;
+    }
+
+    ws.send({
+      type: 'command',
+      payload: { sessionId: this.data.sessionId, action: 'write_stdin', data: text },
+    });
+
+    this.setData({ commandText: '' });
+    wx.showToast({ title: '指令已发送', icon: 'success' });
   },
 
   goBack() {
