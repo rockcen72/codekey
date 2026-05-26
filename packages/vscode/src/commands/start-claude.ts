@@ -3,10 +3,10 @@ import { loadCredentials } from '../auth/credentials.js';
 import { findCli } from '../cli.js';
 import type { StatusBar } from '../status/bar.js';
 
-export async function startClaudeCode(
+export function startClaudeCode(
   context: vscode.ExtensionContext,
   statusBar: StatusBar,
-): Promise<void> {
+): vscode.Terminal | undefined {
   const creds = loadCredentials();
   if (!creds) {
     vscode.window.showWarningMessage(
@@ -41,7 +41,7 @@ export async function startClaudeCode(
   }
 
   const terminal = vscode.window.createTerminal({
-    name: 'Claude Code (CodeKey)',
+    name: 'CodeKey: Claude Code',
     shellPath: cliPath,
     shellArgs: ['claude', '--relay', creds.relayUrl],
     iconPath: new vscode.ThemeIcon('sparkle'),
@@ -49,4 +49,5 @@ export async function startClaudeCode(
 
   terminal.show();
   statusBar.set('paired');
+  return terminal;
 }

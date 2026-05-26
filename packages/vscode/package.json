@@ -11,6 +11,24 @@
   "activationEvents": ["onStartupFinished"],
   "main": "./dist/extension.js",
   "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "codekey",
+          "title": "CodeKey",
+          "icon": "media/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "codekey": [
+        {
+          "type": "webview",
+          "id": "codekey.sidebar",
+          "name": "CodeKey"
+        }
+      ]
+    },
     "commands": [
       {
         "command": "codekey.showDashboard",
@@ -23,6 +41,14 @@
       {
         "command": "codekey.startClaudeCode",
         "title": "CodeKey: Start Claude Code"
+      },
+      {
+        "command": "codekey.enableHook",
+        "title": "CodeKey: Enable Hook"
+      },
+      {
+        "command": "codekey.focusSidebar",
+        "title": "CodeKey: Focus Sidebar"
       }
     ]
   },

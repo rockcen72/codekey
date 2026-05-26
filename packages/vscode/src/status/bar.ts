@@ -1,12 +1,13 @@
 import * as vscode from 'vscode';
 
-export type DeviceStatus = 'unpaired' | 'paired' | 'checking' | 'offline';
+export type DeviceStatus = 'unpaired' | 'paired' | 'checking' | 'offline' | 'hook_active';
 
 const TEXT: Record<DeviceStatus, string> = {
   unpaired: '$(key) CodeKey: Not Paired',
   paired: '$(check) CodeKey: Ready',
   checking: '$(loading~spin) CodeKey: Checking...',
   offline: '$(circle-slash) CodeKey: Offline',
+  hook_active: '$(shield) CodeKey: Hook Active',
 };
 
 export class StatusBar {

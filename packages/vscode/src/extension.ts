@@ -4,6 +4,9 @@ import { StatusBar } from './status/bar.js';
 import { showDashboard } from './commands/show-dashboard.js';
 import { pairDevice } from './commands/pair.js';
 import { startClaudeCode } from './commands/start-claude.js';
+import { enableHook } from './commands/enable-hook.js';
+import { SidebarProvider } from './webview/sidebar-provider.js';
+import { CommandRelayService } from './services/command-relay.js';
 
 let statusBar: StatusBar | null = null;
 
@@ -23,6 +26,19 @@ export function activate(context: vscode.ExtensionContext) {
       .catch(() => { if (statusBar) statusBar.set('offline'); });
   }
 
+  // Sidebar provider
+  const sidebarProvider = new SidebarProvider(context);
+  context.subscriptions.push(
+    vscode.window.registerWebviewViewProvider(SidebarProvider.viewType, sidebarProvider, {
+      webviewOptions: { retainContextWhenHidden: true },
+    }),
+  );
+
+  // Command relay — polls bridge for phone→agent commands
+  const commandRelay = new CommandRelayService();
+  commandRelay.start();
+  context.subscriptions.push(commandRelay);
+
   context.subscriptions.push(
     vscode.commands.registerCommand('codekey.showDashboard', () => {
       output.appendLine('cmd: dashboard');
@@ -38,7 +54,15 @@ export function activate(context: vscode.ExtensionContext) {
     }),
     vscode.commands.registerCommand('codekey.startClaudeCode', () => {
       output.appendLine('cmd: start');
-      startClaudeCode(context, statusBar!);
+      const term = startClaudeCode(context, statusBar!);
+      if (term) commandRelay.setTerminal(term);
+    }),
+    vscode.commands.registerCommand('codekey.enableHook', () => {
+      output.appendLine('cmd: enableHook');
+      enableHook(context, statusBar!);
+    }),
+    vscode.commands.registerCommand('codekey.focusSidebar', () => {
+      vscode.commands.executeCommand('workbench.view.extension.codekey');
     }),
   );
 
