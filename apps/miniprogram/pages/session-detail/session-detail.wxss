@@ -1,71 +1,90 @@
-.container { display: flex; flex-direction: column; height: 100vh; }
-.header { display: flex; align-items: center; padding: 24rpx 32rpx; border-bottom: 1rpx solid #eee; }
-.back { font-size: 28rpx; color: #07c160; margin-right: 16rpx; }
-.title { font-size: 36rpx; font-weight: 700; flex: 1; }
-.info-card { padding: 24rpx 32rpx; background: #fff; border-bottom: 1rpx solid #f0f0f0; }
-.agent { font-size: 32rpx; font-weight: 600; }
-.status { font-size: 22rpx; padding: 4rpx 16rpx; border-radius: 8rpx; margin-left: 16rpx; }
-.status.active { background: #e8f5e9; color: #2e7d32; }
-.event-list { flex: 1; padding: 16rpx 24rpx; }
-.empty { text-align: center; padding-top: 200rpx; color: #999; font-size: 32rpx; }
-.event-item { display: flex; padding: 16rpx 0; border-bottom: 1rpx solid #f5f5f5; }
-.event-time { font-size: 22rpx; color: #ccc; width: 100rpx; }
-.event-body { flex: 1; }
-.event-type { font-size: 28rpx; font-weight: 600; display: block; }
-.event-summary { font-size: 26rpx; color: #666; display: block; margin-top: 4rpx; }
-.event-meta { margin-top: 8rpx; display: flex; align-items: center; }
-.risk-badge { font-size: 20rpx; padding: 2rpx 10rpx; border-radius: 6rpx; }
-.risk-badge.low { background: #e8f5e9; color: #2e7d32; }
-.risk-badge.medium { background: #fff3e0; color: #e65100; }
-.risk-badge.high { background: #fbe9e7; color: #c62828; }
-.risk-badge.critical { background: #fce4ec; color: #880e4f; }
-.risk-badge.unknown { background: #f5f5f5; color: #666; }
-.pending-badge { font-size: 20rpx; padding: 2rpx 10rpx; border-radius: 6rpx; background: #fff8e1; color: #f57f17; margin-left: 8rpx; }
-.decision-badge { font-size: 20rpx; padding: 2rpx 10rpx; border-radius: 6rpx; background: #e8f5e9; color: #2e7d32; margin-left: 8rpx; }
+/* ── Container ── */
+.container { display: flex; flex-direction: column; height: 100vh; background: #ededed; }
 
-/* Task Complete Card */
-.event-item.task-complete { background: #f0faf0; border-radius: 12rpx; padding: 16rpx; margin-bottom: 8rpx; border-bottom: none; }
-.event-type-row { display: flex; align-items: center; gap: 8rpx; }
-.icon-check { font-size: 28rpx; color: #07c160; font-weight: 700; }
+/* ── Header ── */
+.header { display: flex; align-items: center; padding: 12rpx 24rpx; background: #fff; border-bottom: 1rpx solid #e0e0e0; }
+.back-btn { padding: 8rpx 16rpx 8rpx 0; }
+.back-arrow { font-size: 32rpx; color: #07c160; }
+.header-info { flex: 1; display: flex; flex-direction: column; }
+.header-title { font-size: 34rpx; font-weight: 600; }
+.header-status { font-size: 22rpx; color: #999; }
+.header-status.active { color: #07c160; }
+.ws-dot { width: 16rpx; height: 16rpx; border-radius: 50%; margin-left: 12rpx; }
+.ws-dot.on { background: #07c160; }
+.ws-dot.off { background: #ccc; }
 
-/* Approval Card Modal */
-.modal-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); display: flex; align-items: flex-end; z-index: 100; }
-.approval-card { width: 100%; background: #fff; border-radius: 24rpx 24rpx 0 0; padding: 32rpx; max-height: 80vh; overflow-y: auto; }
-.card-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 24rpx; }
-.card-title { font-size: 34rpx; font-weight: 700; }
-.card-close { font-size: 32rpx; color: #999; padding: 8rpx; }
-.card-body { margin-bottom: 24rpx; }
-.approval-meta { display: flex; align-items: center; gap: 12rpx; margin-bottom: 24rpx; }
-.agent-tag { font-size: 22rpx; color: #666; background: #f0f0f0; padding: 4rpx 12rpx; border-radius: 8rpx; }
-.summary-block { margin-bottom: 24rpx; }
-.summary-text { font-size: 30rpx; font-weight: 600; color: #222; line-height: 1.5; }
-.command-block { margin-bottom: 20rpx; }
-.block-label { font-size: 22rpx; color: #999; display: block; margin-bottom: 8rpx; }
-.command-box { background: #1e1e1e; border-radius: 12rpx; padding: 20rpx; }
-.command-text { font-family: 'Courier New', monospace; font-size: 24rpx; color: #d4d4d4; line-height: 1.6; white-space: pre-wrap; word-break: break-all; }
-.risk-row { margin-bottom: 16rpx; }
-.risk-tag { font-size: 24rpx; padding: 6rpx 16rpx; border-radius: 8rpx; }
+/* ── Chat scroll area ── */
+.chat-list { flex: 1; padding: 20rpx 24rpx 30rpx; overflow-y: scroll; -webkit-overflow-scrolling: touch; }
+.empty { text-align: center; padding-top: 300rpx; color: #999; font-size: 30rpx; }
+
+/* ── System messages ── */
+.system-wrap { text-align: center; margin: 16rpx 0; }
+.system-bubble { display: inline-block; background: rgba(0,0,0,0.05); border-radius: 8rpx; padding: 6rpx 20rpx; }
+.system-text { font-size: 22rpx; color: #999; }
+
+/* ── Message row ── */
+.msg-row { display: flex; align-items: flex-start; margin-bottom: 24rpx; }
+.msg-row.right { flex-direction: row-reverse; }
+
+/* ── Avatar ── */
+.avatar { width: 72rpx; height: 72rpx; border-radius: 12rpx; display: flex; align-items: center; justify-content: center; font-size: 24rpx; font-weight: 600; flex-shrink: 0; }
+.ai-avatar { background: #07c160; color: #fff; margin-right: 16rpx; }
+.user-avatar { background: #95ec69; color: #fff; margin-left: 16rpx; }
+
+/* ── Message bubble ── */
+.msg-bubble { max-width: 75%; padding: 16rpx 20rpx; border-radius: 12rpx; font-size: 28rpx; line-height: 1.5; word-break: break-word; }
+.left-bubble { background: #fff; border-top-left-radius: 4rpx; }
+.right-bubble { background: #95ec69; border-top-right-radius: 4rpx; }
+.complete-bubble { background: #f0faf0; }
+
+/* ── Bubble contents ── */
+.bubble-header { margin-bottom: 8rpx; }
+.bubble-type { font-size: 22rpx; color: #999; font-weight: 500; }
+.bubble-type.complete-label { color: #07c160; }
+.msg-text { font-size: 30rpx; display: block; }
+.msg-time { font-size: 20rpx; color: rgba(0,0,0,0.3); display: block; margin-top: 4rpx; }
+.right-time { text-align: right; color: rgba(0,0,0,0.35); }
+
+/* ── Code block ── */
+.code-block { background: #1e1e1e; border-radius: 10rpx; padding: 16rpx 18rpx; margin: 8rpx 0; }
+.code-text { font-family: 'Courier New', monospace; font-size: 22rpx; color: #d4d4d4; line-height: 1.6; word-break: break-all; white-space: pre-wrap; }
+
+/* ── Summary ── */
+.summary-block { margin: 8rpx 0; }
+.summary-text { font-size: 28rpx; color: #333; line-height: 1.5; }
+.complete-summary { color: #1b5e20; }
+
+/* ── Tags ── */
+.tag-row { margin: 8rpx 0; }
+.risk-tag { font-size: 22rpx; padding: 4rpx 14rpx; border-radius: 6rpx; display: inline-block; }
 .risk-tag.low { background: #e8f5e9; color: #2e7d32; }
 .risk-tag.medium { background: #fff3e0; color: #e65100; }
 .risk-tag.high { background: #fbe9e7; color: #c62828; }
 .risk-tag.critical { background: #fce4ec; color: #880e4f; }
 .risk-tag.unknown { background: #f5f5f5; color: #666; }
-.detail-row { margin-bottom: 12rpx; }
-.detail-label { font-size: 24rpx; color: #999; display: block; margin-bottom: 4rpx; }
-.detail-value { font-size: 28rpx; color: #333; display: block; }
-.detail-value.code { font-family: monospace; background: #f5f5f5; padding: 12rpx; border-radius: 8rpx; font-size: 24rpx; }
-.card-actions { display: flex; gap: 16rpx; margin-bottom: 16rpx; }
-.action-btn { flex: 1; height: 72rpx; line-height: 72rpx; text-align: center; border-radius: 12rpx; font-size: 28rpx; color: #fff; }
-.action-btn.approve { background: #07c160; }
-.action-btn.approve.disabled { background: #ccc; }
-.action-btn.deny { background: #e64340; }
-.action-btn.pause { background: #ff9800; }
-.reply-section { display: flex; gap: 12rpx; align-items: center; margin-bottom: 16rpx; }
-.reply-input { flex: 1; height: 64rpx; border: 1rpx solid #ddd; border-radius: 12rpx; padding: 0 16rpx; font-size: 26rpx; }
-.reply-btn { height: 64rpx; line-height: 64rpx; background: #07c160; color: #fff; border-radius: 12rpx; font-size: 26rpx; padding: 0 24rpx; }
-.risk-notice { background: #fff3e0; padding: 16rpx; border-radius: 12rpx; font-size: 24rpx; color: #e65100; text-align: center; }
+.decision-tag { font-size: 22rpx; padding: 4rpx 14rpx; border-radius: 6rpx; display: inline-block; }
+.decision-tag.approve { background: #e8f5e9; color: #2e7d32; }
+.decision-tag.deny { background: #fbe9e7; color: #c62828; }
+.decision-tag.pause { background: #fff8e1; color: #f57f17; }
+.decision-tag.reply { background: #e3f2fd; color: #1565c0; }
+.bubble-time { font-size: 20rpx; color: #bbb; display: block; margin-top: 4rpx; }
 
-/* Remote Command Input Bar */
-.command-bar { display: flex; gap: 12rpx; align-items: center; padding: 16rpx 24rpx; border-top: 1rpx solid #eee; background: #fff; }
-.command-input { flex: 1; height: 64rpx; border: 1rpx solid #ddd; border-radius: 12rpx; padding: 0 16rpx; font-size: 26rpx; }
-.command-send-btn { height: 64rpx; line-height: 64rpx; background: #07c160; color: #fff; border-radius: 12rpx; font-size: 26rpx; padding: 0 32rpx; white-space: nowrap; }
+/* ── Inline action buttons ── */
+.action-row { display: flex; gap: 12rpx; margin-top: 14rpx; flex-wrap: wrap; }
+.chat-action-btn { flex: 1; min-width: 120rpx; height: 60rpx; line-height: 60rpx; text-align: center; border-radius: 10rpx; font-size: 26rpx; color: #fff; padding: 0; }
+.chat-action-btn.approve { background: #07c160; }
+.chat-action-btn.deny { background: #e64340; }
+.chat-action-btn.pause { background: #ff9800; }
+
+/* ── Inline reply ── */
+.reply-inline { display: flex; gap: 10rpx; align-items: center; margin-top: 12rpx; border-top: 1rpx solid #eee; padding-top: 12rpx; }
+.inline-reply-input { flex: 1; height: 56rpx; border: 1rpx solid #ddd; border-radius: 8rpx; padding: 0 12rpx; font-size: 24rpx; background: #f8f8f8; }
+.inline-reply-btn { height: 56rpx; line-height: 56rpx; background: #07c160; color: #fff; border-radius: 8rpx; font-size: 24rpx; padding: 0 18rpx; flex-shrink: 0; }
+
+/* ── Risk notice (high/critical) ── */
+.risk-notice-inline { background: #fff3e0; padding: 12rpx; border-radius: 8rpx; font-size: 22rpx; color: #e65100; text-align: center; margin-top: 10rpx; }
+
+/* ── Bottom input bar ── */
+.input-bar { display: flex; gap: 12rpx; align-items: center; padding: 14rpx 24rpx; border-top: 1rpx solid #ddd; background: #f8f8f8; }
+.chat-input { flex: 1; height: 64rpx; border: 1rpx solid #ddd; border-radius: 12rpx; padding: 0 16rpx; font-size: 28rpx; background: #fff; }
+.send-btn { height: 64rpx; line-height: 64rpx; background: #07c160; color: #fff; border-radius: 12rpx; font-size: 28rpx; padding: 0 32rpx; flex-shrink: 0; }

@@ -1,95 +1,100 @@
 <view class="container">
+  <!-- Header -->
   <view class="header">
-    <text class="back" bindtap="goBack">返回</text>
-    <text class="title">会话详情</text>
+    <view class="back-btn" bindtap="goBack">
+      <text class="back-arrow">◀</text>
+    </view>
+    <view class="header-info">
+      <text class="header-title">{{session.agentType || 'AI Agent'}}</text>
+      <text class="header-status {{session.status}}">{{session.status === 'active' ? '在线' : '离线'}}</text>
+    </view>
+    <view class="ws-dot {{wsConnected ? 'on' : 'off'}}"></view>
   </view>
 
-  <view class="info-card" wx:if="{{session}}">
-    <text class="agent">{{session.agent_type}}</text>
-    <text class="status {{session.status}}">{{session.status}}</text>
-  </view>
-
-  <scroll-view class="event-list" scroll-y>
-    <view class="empty" wx:if="{{events.length === 0}}">
-      <text>暂无事件</text>
+  <!-- Chat messages -->
+  <scroll-view class="chat-list" scroll-y scroll-into-view="{{scrollToId}}" scroll-with-animation upper-threshold="100">
+    <view class="empty" wx:if="{{chatMessages.length === 0}}">
+      <text>暂无消息</text>
     </view>
 
-    <view class="event-item {{item.isTaskComplete ? 'task-complete' : ''}}"
-          wx:for="{{events}}" wx:key="id"
-          data-id="{{item.id}}"
-          bindtap="{{item.isTaskComplete ? '' : 'showApprovalCard'}}">
-      <view class="event-time">{{item.displayTime}}</view>
-      <view class="event-body">
-        <view class="event-type-row">
-          <text wx:if="{{item.isTaskComplete}}" class="icon-check">✓</text>
-          <text class="event-type">{{item.isTaskComplete ? '任务完成' : item.type}}</text>
-        </view>
-        <text class="event-summary">{{item.isTaskComplete ? (item.summaryShort || item.summary) : item.summary}}</text>
-        <view class="event-meta">
-          <text wx:if="{{!item.isTaskComplete}}" class="risk-badge {{item.risk_level || 'unknown'}}">{{item.riskText}}</text>
-          <text wx:if="{{item.showPending}}" class="pending-badge">待处理</text>
-          <text wx:elif="{{item.showDecision}}" class="decision-badge">{{item.decision}}</text>
+    <block wx:for="{{chatMessages}}" wx:key="id">
+      <!-- System messages (centered) -->
+      <view wx:if="{{item.type === 'system'}}" class="system-wrap">
+        <view class="system-bubble">
+          <text class="system-text">{{item.content}}</text>
         </view>
       </view>
-    </view>
-  </scroll-view>
 
-  <!-- Remote Command Input -->
-  <view class="command-bar" wx:if="{{session && session.status === 'active'}}">
-    <input class="command-input" placeholder="输入指令发送给 AI Agent..." value="{{commandText}}" bindinput="onCommandInput" />
-    <button class="command-send-btn" bindtap="sendCommand">发送</button>
-  </view>
-
-  <!-- Approval Card Modal -->
-  <view class="modal-overlay" wx:if="{{showApproval}}" bindtap="closeApprovalCard">
-    <view class="approval-card" catchtap="">
-      <view class="card-header">
-        <text class="card-title">审批请求</text>
-        <text class="card-close" bindtap="closeApprovalCard">X</text>
+      <!-- User messages (right side) -->
+      <view wx:elif="{{item.side === 'right'}}" class="msg-row right" id="msg-{{item.id}}">
+        <view class="msg-bubble right-bubble">
+          <text class="msg-text">{{item.content}}</text>
+          <text class="msg-time right-time">{{item.displayTime}}</text>
+        </view>
+        <view class="avatar user-avatar">
+          <text>我</text>
+        </view>
       </view>
 
-      <view wx:if="{{currentEvent}}" class="card-body">
-        <!-- Risk badge + agent -->
-        <view class="approval-meta">
-          <text class="risk-tag {{riskLevel}}">{{riskLabel}}</text>
-          <text class="agent-tag">{{session.agentType}}</text>
+      <!-- AI messages (left side) -->
+      <view wx:else class="msg-row left" id="msg-{{item.id}}">
+        <view class="avatar ai-avatar">
+          <text>AI</text>
         </view>
+        <view class="msg-bubble left-bubble {{item.isTaskComplete ? 'complete-bubble' : ''}}">
+          <!-- Header row -->
+          <view class="bubble-header">
+            <text class="bubble-type {{item.isTaskComplete ? 'complete-label' : ''}}">{{item.typeLabel}}</text>
+          </view>
 
-        <!-- Summary (main description) -->
-        <view class="summary-block" wx:if="{{approvalSummary}}">
-          <text class="summary-text">{{approvalSummary}}</text>
-        </view>
+          <!-- Command (approval_required) -->
+          <view wx:if="{{item.command}}" class="code-block">
+            <text class="code-text">{{item.command}}</text>
+          </view>
 
-        <!-- Command (terminal-style block) -->
-        <view class="command-block" wx:if="{{approvalCommand}}">
-          <text class="block-label">即将执行的命令</text>
-          <view class="command-box">
-            <text class="command-text">{{approvalCommand}}</text>
+          <!-- Task summary (task_complete) -->
+          <view wx:if="{{item.summary}}" class="summary-block">
+            <text class="summary-text {{item.isTaskComplete ? 'complete-summary' : ''}}">{{item.summary}}</text>
+          </view>
+
+          <!-- Risk tag (pending approval) -->
+          <view wx:if="{{item.riskText && item.pending}}" class="tag-row">
+            <text class="risk-tag {{item.risk_level}}">{{item.riskText}}</text>
+          </view>
+
+          <!-- Decision badge (responded) -->
+          <view wx:elif="{{item.decisionText}}" class="tag-row">
+            <text class="decision-tag {{item.decision}}">{{item.decisionText}}</text>
+          </view>
+
+          <!-- Time -->
+          <text class="bubble-time">{{item.displayTime}}</text>
+
+          <!-- Action buttons (pending approval) -->
+          <view wx:if="{{item.pending && item.canApprove}}" class="action-row">
+            <button class="chat-action-btn approve" data-id="{{item.id}}" bindtap="approveEvent">批准</button>
+            <button class="chat-action-btn deny" data-id="{{item.id}}" bindtap="denyEvent">拒绝</button>
+            <button class="chat-action-btn pause" data-id="{{item.id}}" bindtap="pauseEvent">暂缓</button>
+          </view>
+
+          <!-- High risk notice -->
+          <view wx:elif="{{item.pending && !item.canApprove}}" class="risk-notice-inline">
+            <text>风险较高，请在电脑端处理</text>
+          </view>
+
+          <!-- Inline reply (pending approval) -->
+          <view wx:if="{{item.pending}}" class="reply-inline">
+            <input class="inline-reply-input" placeholder="回复 AI..." data-id="{{item.id}}" bindinput="onReplyInput" />
+            <button class="inline-reply-btn" data-id="{{item.id}}" bindtap="sendReply">发送</button>
           </view>
         </view>
-
-        <!-- Directory -->
-        <view class="detail-row" wx:if="{{approvalCwd}}">
-          <text class="detail-label">工作目录</text>
-          <text class="detail-value code">{{approvalCwd}}</text>
-        </view>
       </view>
+    </block>
+  </scroll-view>
 
-      <view class="card-actions">
-        <button class="action-btn approve {{approvalDisabled ? 'disabled' : ''}}"
-                disabled="{{approvalDisabled}}" bindtap="approve">批准</button>
-        <button class="action-btn deny" bindtap="deny">拒绝</button>
-        <button class="action-btn pause" bindtap="pause">暂停</button>
-      </view>
-
-      <view class="reply-section">
-        <input class="reply-input" placeholder="输入回复..." value="{{replyText}}" bindinput="onReplyInput" />
-        <button class="reply-btn" bindtap="sendReply">发送</button>
-      </view>
-
-      <view wx:if="{{showRiskNotice}}" class="risk-notice">
-        <text>风险等级 {{riskLabel}} 无法在手机上批准，请到电脑端处理。</text>
-      </view>
-    </view>
+  <!-- Bottom input bar -->
+  <view class="input-bar">
+    <input class="chat-input" placeholder="输入指令..." value="{{commandText}}" bindinput="onCommandInput" />
+    <button class="send-btn" bindtap="sendCommand">发送</button>
   </view>
 </view>

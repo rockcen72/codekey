@@ -13,7 +13,9 @@ function findInParent(anchor: string, isWin: boolean): string | null {
     const candidates = isWin
       ? [path.join(binDir, 'codekey.cmd'), path.join(binDir, 'codekey')]
       : [path.join(binDir, 'codekey'), path.join(binDir, 'codekey.cmd')];
-    candidates.push(path.join(dir, 'node_modules', 'codekey', 'cli', 'dist', 'index.js'));
+    // npm workspaces: @codekey/cli → packages/cli (symlink follows automatically)
+  candidates.push(path.join(dir, 'node_modules', '@codekey', 'cli', 'dist', 'index.js'));
+  candidates.push(path.join(dir, 'node_modules', 'codekey', 'cli', 'dist', 'index.js'));
     for (const p of candidates) {
       try { if (fs.existsSync(p)) return p; } catch { /* skip */ }
     }

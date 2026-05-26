@@ -4,6 +4,7 @@ import { createApi, ApiError, type SessionResponse } from '../api/client.js';
 import { getAgents } from '../agents/registry.js';
 import { BridgeStatusService } from '../services/bridge-status.js';
 import { renderSidebar, type SidebarState } from './sidebar-html.js';
+import { log } from '../log.js';
 
 const POLL_MS = 5000;
 
@@ -42,7 +43,8 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     if (creds?.deviceToken) {
       try {
         const api = createApi(creds);
-        sessions = await api.getSessions();
+        const windowId = vscode.env.sessionId;
+        sessions = await api.getSessions(windowId);
         await Promise.all(sessions.map(async (s) => {
           events[s.id] = await api.getSessionEvents(s.id).catch(() => []);
         }));

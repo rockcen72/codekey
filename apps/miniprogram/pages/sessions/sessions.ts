@@ -27,7 +27,7 @@ Page({
       const sessions = raw.map(s => ({
         ...s,
         displayTime: this.formatTime(s.last_active_at),
-        projectName: s.metadata?.projectName || 'Default',
+        projectName: s.metadata?.sessionLabel || s.metadata?.projectName || 'Default',
       }));
       this.setData({ sessions });
     } catch (err) {
@@ -58,6 +58,10 @@ Page({
     newWs.on('connected', () => {
       app.globalData.wsConnected = true;
       this.setData({ wsConnected: true });
+    });
+    newWs.on('disconnected', () => {
+      app.globalData.wsConnected = false;
+      this.setData({ wsConnected: false });
     });
     newWs.on('auth_failed', () => {
       clearAuth();

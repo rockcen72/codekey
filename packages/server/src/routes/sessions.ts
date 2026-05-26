@@ -19,13 +19,16 @@ export function sessionRoutes(sql: postgres.Sql) {
       return { sessionId: session.id, createdAt: session.created_at };
     });
 
-    // List sessions (mini program) — scoped to own device
+    // List sessions (mini program) — scoped to own device, optionally filtered by windowId
     fastify.get('/sessions', { preHandler: [tokenAuth(sql)] }, async (req, reply) => {
       const { deviceAuth } = req as unknown as { deviceAuth: { deviceId: string } };
-      const sessions = await sql`
-        SELECT * FROM sessions WHERE device_id = ${deviceAuth.deviceId} ORDER BY last_active_at DESC
-      `;
-      return sessions;
+      const { windowId } = req.query as { windowId?: string };
+      let query = sql`SELECT * FROM sessions WHERE device_id = ${deviceAuth.deviceId} AND status = 'active'`;
+      if (windowId) {
+        query = sql`${query} AND metadata->>'windowId' = ${windowId}`;
+      }
+      query = sql`${query} ORDER BY last_active_at DESC`;
+      return await query;
     });
 
     // Get session detail — scoped to own device

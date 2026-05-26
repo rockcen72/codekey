@@ -4,9 +4,11 @@ import * as os from 'node:os';
 import { spawn, type ChildProcess } from 'node:child_process';
 import * as vscode from 'vscode';
 import { findCli } from '../cli.js';
+import { loadCredentials } from '../auth/credentials.js';
 import { getHookPath } from '../hook/installer.js';
+import { log } from '../log.js';
 
-export type BridgeStatus = 'running' | 'stopped' | 'error';
+export type BridgeStatus = 'running' | 'stopped' | 'error' | 'connecting';
 export type HookConfigStatus = 'enabled' | 'installed_only' | 'not_found';
 
 export interface BridgeState {
@@ -27,6 +29,8 @@ export class BridgeStatusService {
   private _state: BridgeState = { bridge: 'stopped', hookInstalled: false, hookConfig: 'not_found' };
   private _listeners = new Set<Listener>();
   private _healthTimer?: ReturnType<typeof setInterval>;
+  private _startedAt = 0;
+  private _windowRegistered = false;
 
   static getInstance(): BridgeStatusService {
     if (!BridgeStatusService._instance) {
@@ -50,28 +54,75 @@ export class BridgeStatusService {
   start(): void {
     if (this._process) return;
 
-    const cliPath = findCli();
-    if (!cliPath) throw new Error('codekey CLI not found — is it installed and on PATH?');
+    this._startedAt = Date.now();
+    this._update({ bridge: 'connecting' });
 
-    this._process = spawn(cliPath, ['bridge'], {
+    // Check if an orphaned bridge from a previous session is still alive.
+    // If so, adopt it instead of spawning a new one (avoids EADDRINUSE).
+    this._tryAdoptOrSpawn();
+  }
+
+  /** Try to adopt an orphaned bridge; if none found, spawn a new one. */
+  private async _tryAdoptOrSpawn(): Promise<void> {
+    try {
+      const resp = await fetch('http://127.0.0.1:3001/v1/health', { signal: AbortSignal.timeout(2000) });
+      if (resp.ok) {
+        log('[CodeKey] orphaned bridge alive — adopting');
+        this._startHealthCheck();
+        return;
+      }
+    } catch { /* no orphan */ }
+
+    // No orphan — spawn fresh
+    const cliPath = findCli();
+    if (!cliPath) {
+      log('[CodeKey] bridge: findCli() returned null — no bridge binary found');
+      this._update({ bridge: 'error' });
+      return;
+    }
+
+    log(`[CodeKey] bridge: spawning ${cliPath}`);
+    const creds = loadCredentials();
+    const args = creds?.relayUrl ? ['bridge', '--relay', creds.relayUrl] : ['bridge'];
+
+    const proc = spawn(cliPath, args, {
       stdio: ['ignore', 'pipe', 'pipe'],
       detached: false,
       shell: process.platform === 'win32' && cliPath.endsWith('.cmd'),
     });
 
-    this._process.on('exit', (code) => {
-      this._process = null;
-      this._update({ bridge: code === 0 ? 'stopped' : 'error' });
+    this._process = proc;
+
+    proc.stderr?.on('data', (chunk: Buffer) => {
+      const lines = chunk.toString().trimEnd();
+      if (lines) log(`[CodeKey] bridge: ${lines}`);
     });
 
-    // Don't mark 'running' until first health check succeeds
+    proc.on('exit', (code) => {
+      if (this._process !== proc) return; // stale
+      this._process = null;
+      this._stopHealthCheck();
+      this._startedAt = 0;
+      if (code !== 0) log(`[CodeKey] bridge exited with code ${code}`);
+      this._update({ bridge: 'stopped' });
+    });
+
+    proc.on('error', (err) => {
+      if (this._process !== proc) return; // stale
+      this._process = null;
+      this._stopHealthCheck();
+      this._startedAt = 0;
+      log(`[CodeKey] bridge spawn error: ${err.message}`);
+      this._update({ bridge: 'stopped' });
+    });
+
     this._startHealthCheck();
   }
 
   /** Stop the bridge child process */
   stop(): void {
     if (!this._process) return;
-    this._process.kill('SIGINT');
+    this._process.kill(); // SIGTERM on Unix, terminates on Windows
     this._process = null;
     this._stopHealthCheck();
     this._update({ bridge: 'stopped' });
@@ -95,17 +146,28 @@ export class BridgeStatusService {
   }
 
   private async _checkHealth(): Promise<void> {
+    const GRACE_MS = 8000; // ignore transient errors shortly after start
     try {
       const resp = await fetch('http://127.0.0.1:3001/v1/health');
       if (resp.ok) {
         if (this._state.bridge !== 'running') {
           this._update({ bridge: 'running' });
         }
-      } else {
+        // Register this VSCode window with the bridge so hook events from this
+        // window can be associated with the correct windowId.
+        if (!this._windowRegistered) {
+          this._windowRegistered = true;
+          fetch('http://127.0.0.1:3001/v1/register-window', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ windowId: process.env.CODEKEY_WINDOW_ID || '' }),
+          }).catch(() => {});
+        }
+      } else if (Date.now() - this._startedAt > GRACE_MS) {
         this._update({ bridge: 'error' });
       }
     } catch {
-      if (this._state.bridge !== 'stopped') {
+      if (Date.now() - this._startedAt > GRACE_MS && this._state.bridge !== 'stopped') {
         this._update({ bridge: 'stopped' });
       }
     }

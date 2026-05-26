@@ -9,15 +9,15 @@ process.stdin.on('data', (c) => { input += c; });
 process.stdin.on('end', async () => {
   try {
     const event = JSON.parse(input);
-    // Only intercept Bash tool permission requests
-    if (event.tool_name !== 'Bash') process.exit(0);
     const claudeSessionId = event.session_id || event.sessionId || '';
+    const codekeyWindowId = process.env.CODEKEY_WINDOW_ID || '';
+
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
     const res = await fetch(BRIDGE_URL + '/v1/hook/approval', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ claudeSessionId, rawEvent: event }),
+      body: JSON.stringify({ claudeSessionId, codekeyWindowId, debugEnvWindowId: process.env.CODEKEY_WINDOW_ID || '(unset)', rawEvent: event }),
       signal: ctrl.signal,
     });
     clearTimeout(timer);

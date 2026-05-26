@@ -1,17 +1,17 @@
 import * as vscode from 'vscode';
+import { classifyTerminal } from '../commands/start-claude.js';
 
 const POLL_MS = 2000;
 const BRIDGE_URL = 'http://127.0.0.1:3001';
-const TERMINAL_NAME = 'CodeKey: Claude Code';
 
 /**
  * Polls the bridge for pending commands from the phone.
- * Sends them ONLY to a CodeKey-managed Claude Code terminal.
- * If no managed terminal exists, commands stay in the queue.
+ * Sends them to the trusted Claude Code terminal (strict-match only).
+ * If no trusted terminal exists, commands stay in the queue.
  */
 export class CommandRelayService {
   private _timer?: ReturnType<typeof setInterval>;
-  /** The terminal CodeKey created — the ONLY terminal we write to */
+  /** The trusted Claude Code terminal we write phone commands into */
   private _terminal?: vscode.Terminal;
   private _disposed = false;
 
@@ -67,13 +67,15 @@ export class CommandRelayService {
     }
   }
 
-  /** Find the CodeKey-managed terminal by name. Returns undefined if closed. */
+  /** Find the trusted Claude Code terminal. Stored ref first, then strict-name scan. */
   private _findManagedTerminal(): vscode.Terminal | undefined {
     if (this._terminal && vscode.window.terminals.includes(this._terminal)) {
       return this._terminal;
     }
+    // Strict-match only — fuzzy matches require explicit user confirmation
     for (const t of vscode.window.terminals) {
-      if (t.name === TERMINAL_NAME) {
+      const r = classifyTerminal(t);
+      if (r.matched && r.matched !== 'fuzzy') {
         this._terminal = t;
         return t;
       }

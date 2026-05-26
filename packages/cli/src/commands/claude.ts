@@ -15,25 +15,21 @@ function findClaude(): string | null {
 }
 
 export const claudeCommand = new Command('claude')
-  .description('Launch Claude Code with CodeKey relay integration')
+  .description('Launch Claude Code')
   .argument('[args...]', 'Arguments to pass to Claude Code')
-  .option('--relay <url>', 'Relay server URL')
-  .action(async (args: string[], options: { relay?: string }) => {
-    // Build the claude argv: npx @anthropic-ai/claude -- <args>
+  .option('--relay <url>', 'Ignored — retained for backward compat with VS Code extension')
+  .action(async (args: string[], _options: { relay?: string }) => {
     const claudeBin = findClaude();
     if (!claudeBin) {
-      console.error('Claude CLI not found. Install it with: npm install -g @anthropic-ai/claude');
+      console.error('Claude Code CLI not found. Install it with: npm install -g @anthropic-ai/claude-code');
       process.exit(1);
     }
 
+    // Forward only positional args; --relay is consumed by commander but NOT passed to claude
     const claudeArgs: string[] = [];
 
     if (claudeBin.endsWith('npx') || claudeBin.endsWith('npx.cmd')) {
-      claudeArgs.push('@anthropic-ai/claude');
-    }
-
-    if (options.relay) {
-      claudeArgs.push('--relay', options.relay);
+      claudeArgs.push('@anthropic-ai/claude-code');
     }
 
     claudeArgs.push(...args);

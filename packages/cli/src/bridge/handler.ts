@@ -6,6 +6,7 @@ import type { AgentEventPayload, SessionEventMessage } from '@codekey/shared';
 export interface HookEventBody {
   eventType: 'task_complete' | 'session_idle';
   claudeSessionId?: string;
+  codekeyWindowId?: string;
   data: {
     type: 'task_complete';
     summary: string;
@@ -24,9 +25,12 @@ interface PendingApproval {
 export class ApprovalBridge {
   readonly commandQueue = new CommandQueue();
   private sessions = new Map<string, string>(); // claudeSessionId → serverSessionId
+  private inFlightSessions = new Map<string, Promise<string>>(); // claudeSessionId → registering promise
   private registeredClientRequests = new Map<string, (sid: string) => void>(); // clientRequestId → resolve
   private pendingByServerEventId = new Map<string, PendingApproval>();
   private primarySessionId: string | null = null;
+  private windowLabels = new Map<string, string>(); // windowId → session label (tab title)
+  private activeWindows = new Map<string, number>(); // windowId → lastSeen timestamp
 
   constructor(readonly relay: RelayClient) {
     // Match session_registered by clientRequestId (NOT by once() — prevents race)
@@ -65,22 +69,55 @@ export class ApprovalBridge {
     });
   }
 
+  /** Register a VSCode window so its hook events can be associated with this windowId. */
+  registerWindow(windowId: string): void {
+    if (windowId) this.activeWindows.set(windowId, Date.now());
+  }
+
+  /** Set a label that will be applied to sessions from the given window. */
+  setPendingLabel(windowId: string, label: string): void {
+    if (windowId && label) this.windowLabels.set(windowId, label);
+  }
+
+  /** Get the most recently registered active windowId, or undefined. */
+  private _getActiveWindowId(): string | undefined {
+    let best: string | undefined;
+    let bestTs = 0;
+    for (const [wid, ts] of this.activeWindows) {
+      if (ts > bestTs) { best = wid; bestTs = ts; }
+    }
+    return best;
+  }
+
   /** Ensure a server session exists for the given claudeSessionId. */
-  async ensureSession(claudeSessionId: string): Promise<string> {
+  async ensureSession(claudeSessionId: string, windowId?: string): Promise<string> {
     if (!claudeSessionId) {
       throw new Error('ensureSession requires non-empty claudeSessionId');
     }
 
+    // Fast path: already registered
     const existing = this.sessions.get(claudeSessionId);
     if (existing) return existing;
 
-    const serverSessionId = await this._registerOnRelay(claudeSessionId);
-    this.sessions.set(claudeSessionId, serverSessionId);
-    if (!this.primarySessionId) this.primarySessionId = serverSessionId;
-    return serverSessionId;
+    // Deduplicate concurrent registrations for the same claudeSessionId
+    const inFlight = this.inFlightSessions.get(claudeSessionId);
+    if (inFlight) return inFlight;
+
+    const promise = this._registerOnRelay(claudeSessionId, windowId).then((serverSessionId) => {
+      this.sessions.set(claudeSessionId, serverSessionId);
+      if (!this.primarySessionId) this.primarySessionId = serverSessionId;
+      this.inFlightSessions.delete(claudeSessionId);
+      return serverSessionId;
+    }).catch((err) => {
+      this.inFlightSessions.delete(claudeSessionId);
+      throw err;
+    });
+
+    this.inFlightSessions.set(claudeSessionId, promise);
+    return promise;
   }
 
-  private _registerOnRelay(claudeSessionId: string): Promise<string> {
+  private _registerOnRelay(claudeSessionId: string, windowId?: string): Promise<string> {
     const clientRequestId = randomUUID();
     return new Promise<string>((resolve, reject) => {
       const timer = setTimeout(() => {
@@ -91,22 +128,38 @@ export class ApprovalBridge {
         clearTimeout(timer);
         resolve(sid);
       });
+      const payload: Record<string, string> = {
+        agentType: 'claude-code-hook',
+        claudeSessionId,
+        clientRequestId,
+      };
+      if (windowId) {
+        payload.windowId = windowId;
+        const label = this.windowLabels.get(windowId);
+        if (label) payload.sessionLabel = label;
+      }
       this.relay.sendRaw(JSON.stringify({
         type: 'register_session',
-        payload: { agentType: 'claude-code-hook', claudeSessionId, clientRequestId },
+        payload,
       }));
     });
   }
 
   /** Forward a PermissionRequest hook event to relay. */
   async handleApproval(body: unknown): Promise<{ approved: boolean }> {
-    const payload = body as { claudeSessionId?: string; rawEvent?: { tool_input?: { command?: string; cwd?: string } } };
+    const payload = body as { claudeSessionId?: string; codekeyWindowId?: string; rawEvent?: { tool_input?: { command?: string; cwd?: string } } };
     const claudeSessionId = payload.claudeSessionId ?? '';
     if (!claudeSessionId) return { approved: false };
 
+    // Determine windowId: from hook request body, or fall back to most recent active window
+    const windowId = payload.codekeyWindowId || this._getActiveWindowId() || '';
+
+    console.error('[bridge] handleApproval: session=%s, codekeyWindowId=%s, fallback=%s, resolved=%s',
+      claudeSessionId, payload.codekeyWindowId || '(none)', this._getActiveWindowId() || '(none)', windowId || '(none)');
+
     let serverSessionId: string;
     try {
-      serverSessionId = await this.ensureSession(claudeSessionId);
+      serverSessionId = await this.ensureSession(claudeSessionId, windowId);
     } catch {
       return { approved: false };
     }
@@ -132,6 +185,15 @@ export class ApprovalBridge {
         ts: new Date().toISOString(),
       },
     };
+    // Attach per-window identifiers so the server can associate this session
+    // with the correct VSCode window and display the correct label.
+    if (windowId) {
+      (relayMsg.payload as Record<string, unknown>).windowId = windowId;
+    }
+    const label = windowId ? this.windowLabels.get(windowId) : undefined;
+    if (label) {
+      (relayMsg.payload as Record<string, unknown>).sessionLabel = label;
+    }
 
     this.relay.sendEvent(serverSessionId, relayMsg);
 
@@ -149,9 +211,15 @@ export class ApprovalBridge {
     const claudeSessionId = body.claudeSessionId ?? '';
     if (!claudeSessionId) return;
 
+    // Determine windowId: from hook request body, or fall back to most recent active window
+    const windowId = body.codekeyWindowId || this._getActiveWindowId() || '';
+
+    console.error('[bridge] handleHookEvent(%s): session=%s, codekeyWindowId=%s, fallback=%s, resolved=%s',
+      body.eventType, claudeSessionId, body.codekeyWindowId || '(none)', this._getActiveWindowId() || '(none)', windowId || '(none)');
+
     let serverSessionId: string;
     try {
-      serverSessionId = await this.ensureSession(claudeSessionId);
+      serverSessionId = await this.ensureSession(claudeSessionId, windowId);
     } catch {
       console.error('[bridge] no session for hook event (claudeSessionId=%s)', claudeSessionId);
       return;
@@ -171,8 +239,24 @@ export class ApprovalBridge {
         ts: new Date().toISOString(),
       },
     };
+    // Attach per-window identifiers so the server can associate this session
+    // with the correct VSCode window and display the correct label.
+    if (windowId) {
+      (relayMsg.payload as Record<string, unknown>).windowId = windowId;
+    }
+    const label = windowId ? this.windowLabels.get(windowId) : undefined;
+    if (label) {
+      (relayMsg.payload as Record<string, unknown>).sessionLabel = label;
+    }
 
     this.relay.sendEvent(serverSessionId, relayMsg);
+
+    // task_complete means the Claude Code session has ended.
+    // Clear the local cache so the next hook call triggers a fresh
+    // register_session and creates a new server-side session.
+    if (body.eventType === 'task_complete') {
+      this.sessions.delete(claudeSessionId);
+    }
   }
 
   listenRelayCommands(): void {

@@ -45,8 +45,9 @@ export function createApi(creds: Credentials) {
   }
 
   return {
-    getSessions(): Promise<SessionResponse[]> {
-      return request<SessionResponse[]>('GET', '/sessions');
+    getSessions(windowId?: string): Promise<SessionResponse[]> {
+      const path = windowId ? `/sessions?windowId=${encodeURIComponent(windowId)}` : '/sessions';
+      return request<SessionResponse[]>('GET', path);
     },
 
     getSessionEvents(sessionId: string): Promise<EventResponse[]> {

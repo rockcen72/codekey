@@ -43,7 +43,9 @@ function handleRequest(req: IncomingMessage, res: ServerResponse, bridge: Approv
     req.on('end', () => {
       try {
         const input: HookEventBody = JSON.parse(body);
-        bridge.handleHookEvent(input).catch(() => {});
+        bridge.handleHookEvent(input).catch((err: unknown) => {
+          console.error('[bridge] hook event error:', err);
+        });
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ ok: true }));
       } catch {
@@ -74,6 +76,42 @@ function handleRequest(req: IncomingMessage, res: ServerResponse, bridge: Approv
       } catch {
         res.writeHead(400, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: 'invalid payload' }));
+      }
+    });
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/v1/register-window') {
+    let body = '';
+    req.on('data', (chunk) => { body += chunk; });
+    req.on('end', () => {
+      try {
+        const { windowId } = JSON.parse(body);
+        if (windowId) bridge.registerWindow(windowId);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: true }));
+      } catch {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: false }));
+      }
+    });
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/v1/session-label') {
+    let body = '';
+    req.on('data', (chunk) => { body += chunk; });
+    req.on('end', () => {
+      try {
+        const { windowId, label } = JSON.parse(body);
+        if (windowId && label && typeof label === 'string') {
+          bridge.setPendingLabel(windowId, label);
+        }
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: true }));
+      } catch {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: false }));
       }
     });
     return;

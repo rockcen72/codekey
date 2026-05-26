@@ -127,7 +127,7 @@ export type WsMessage =
   // Server → PC push messages
   | { type: 'approval_forward'; payload: { sessionId: string; eventId: string; decision: string; message: string } }
   | { type: 'event_ack'; payload: { clientEventId?: string | null; serverEventId: string } }
-  | { type: 'session_registered'; payload: { sessionId: string } }
+  | { type: 'session_registered'; payload: { sessionId: string; clientRequestId?: string | null; claudeSessionId?: string | null } }
   | { type: 'pairing_ready'; payload: { deviceId: string } }
   | { type: 'device_token'; payload: { deviceToken: string; deviceId: string } }
   | { type: 'error'; payload: { code: string } };

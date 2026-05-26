@@ -27,6 +27,7 @@ process.stdin.on('end', () => {
   try {
     const event = JSON.parse(body);
     const claudeSessionId = event.sessionId || event.session_id || '';
+    const codekeyWindowId = process.env.CODEKEY_WINDOW_ID || '';
     const lastMsg = event.last_assistant_message || '';
     const summary = typeof lastMsg === 'string'
       ? lastMsg.replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim().slice(0, SUMMARY_MAX_LEN)
@@ -38,6 +39,8 @@ process.stdin.on('end', () => {
       body: JSON.stringify({
         eventType: 'task_complete',
         claudeSessionId,
+        codekeyWindowId,
+        debugEnvWindowId: process.env.CODEKEY_WINDOW_ID || '(unset)',
         data: {
           type: 'task_complete',
           summary,

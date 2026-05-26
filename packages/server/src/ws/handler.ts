@@ -60,6 +60,7 @@ export function wsHandler(sql: postgres.Sql) {
         const clientRequestId = msg.payload?.clientRequestId ?? null;
 
         sql.begin(async (tx) => {
+          let oldSessionId: string | null = null;
           if (claudeSessionId) {
             // Close only the session for this Claude Code instance
             const [oldSession] = await tx`
@@ -69,6 +70,7 @@ export function wsHandler(sql: postgres.Sql) {
               LIMIT 1
             `;
             if (oldSession) {
+              oldSessionId = oldSession.id;
               await tx`
                 UPDATE events SET pending = false, decision = 'expired'
                 WHERE session_id = ${oldSession.id} AND pending = true
@@ -96,16 +98,26 @@ export function wsHandler(sql: postgres.Sql) {
             `;
           }
 
-          const metadata = claudeSessionId
-            ? JSON.stringify({ claudeSessionId })
-            : '{}';
+          const metadata: Record<string, string> = {};
+          if (claudeSessionId) metadata.claudeSessionId = claudeSessionId;
+          if (msg.payload.sessionLabel) metadata.sessionLabel = msg.payload.sessionLabel;
+          if (msg.payload.windowId) metadata.windowId = msg.payload.windowId;
           const [newSession] = await tx`
             INSERT INTO sessions (device_id, agent_type, status, metadata)
-            VALUES (${deviceId}, ${msg.payload.agentType ?? 'claude-code'}, 'active', ${metadata})
+            VALUES (${deviceId}, ${msg.payload.agentType ?? 'claude-code'}, 'active', ${tx.json(metadata)})
             RETURNING id
           `;
-          return newSession;
-        }).then((newSession) => {
+          return { newSession, oldSessionId };
+        }).then(({ newSession, oldSessionId }) => {
+          const pc = pcClients.get(deviceId!);
+          if (pc) {
+            // Phase 1: set pc.sessionId on first registration (primary session).
+            // Also update if the old primary session was just closed by re-registration.
+            if (!pc.sessionId || (oldSessionId && pc.sessionId === oldSessionId)) {
+              pc.sessionId = newSession.id;
+            }
+          }
+
           socket.send(JSON.stringify({
             type: 'session_registered',
             payload: {
@@ -155,6 +167,13 @@ export function wsHandler(sql: postgres.Sql) {
           `.then(([event]) => {
             // Bump session activity timestamp (background, non-critical)
             sql`UPDATE sessions SET last_active_at = now() WHERE id = ${sessionId}`.catch(() => {});
+            // If event carries windowId/label, persist in session metadata
+            if (msg.payload.sessionLabel) {
+              sql`UPDATE sessions SET metadata = metadata || ${sql.json({ sessionLabel: msg.payload.sessionLabel })} WHERE id = ${sessionId}`.catch(() => {});
+            }
+            if (msg.payload.windowId) {
+              sql`UPDATE sessions SET metadata = metadata || ${sql.json({ windowId: msg.payload.windowId })} WHERE id = ${sessionId}`.catch(() => {});
+            }
             socket.send(JSON.stringify({
               type: 'event_ack',
               payload: {
@@ -180,6 +199,11 @@ export function wsHandler(sql: postgres.Sql) {
                   }));
                 }
               }
+            }
+
+            // task_complete from Stop hook → close the session
+            if (msg.payload.eventType === 'task_complete') {
+              sql`UPDATE sessions SET status = 'finished', finished_at = now() WHERE id = ${sessionId} AND status = 'active'`.catch(() => {});
             }
           }).catch((err) => {
             console.error('event insert error:', err);

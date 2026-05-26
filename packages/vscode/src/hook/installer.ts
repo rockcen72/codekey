@@ -44,7 +44,7 @@ function removeScripts(): void {
 function buildHookConfig(): Record<string, unknown> {
   return {
     PermissionRequest: [
-      { matcher: 'Bash', hooks: [{ type: 'command', command: makeCommand('claude_code_permission_request.js') }] },
+      { matcher: '', hooks: [{ type: 'command', command: makeCommand('claude_code_permission_request.js') }] },
     ],
     Stop: [
       { matcher: '', hooks: [{ type: 'command', command: makeCommand('claude_code_stop.js') }] },

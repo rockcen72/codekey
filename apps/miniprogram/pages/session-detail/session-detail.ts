@@ -11,24 +11,35 @@ const RISK_LABELS: Record<string, string> = {
   unknown: '未知',
 };
 
+interface ChatMessage {
+  id: string;
+  type: 'ai' | 'user' | 'system';
+  side: 'left' | 'right';
+  content: string;
+  displayTime: string;
+  typeLabel: string;
+  isTaskComplete: boolean;
+  command: string;
+  summary: string;
+  risk_level: string;
+  riskText: string;
+  pending: boolean;
+  decision: string;
+  decisionText: string;
+  canApprove: boolean;
+  eventId: string;
+}
+
 Page({
   data: {
     sessionId: '',
     session: null as any,
     events: [] as any[],
-    showApproval: false,
-    currentEvent: null as any,
-    riskLevel: 'low',
-    riskLabel: '',
-    replyText: '',
-    // Pre-computed approval card fields (avoid method calls / optional chaining in WXML)
-    approvalCommand: '',
-    approvalSummary: '',
-    approvalCwd: '',
-    approvalDisabled: false,
-    showRiskNotice: false,
+    chatMessages: [] as ChatMessage[],
+    replyTexts: {} as Record<string, string>,
     commandText: '',
     wsConnected: false,
+    scrollToId: '',
   },
 
   onLoad(query: any) {
@@ -49,19 +60,134 @@ Page({
         api.getSession(this.data.sessionId),
         api.getSessionEvents(this.data.sessionId),
       ]);
-      const events = rawEvents.map(e => ({
-        ...e,
-        displayTime: this.formatTime(e.created_at),
-        summary: e.data?.summary || e.data?.command || '',
-        summaryShort: e.data?.summaryShort || '',
-        riskText: RISK_LABELS[e.risk_level as string] || '未知',
-        showPending: e.pending && e.type === 'approval_required',
-        showDecision: !e.pending && e.decision,
-        isTaskComplete: e.type === 'task_complete',
-      }));
-      this.setData({ session: { ...session, agentType: session.agent_type || 'AI Agent' }, events });
+      this.setData({
+        session: { ...session, agentType: session.metadata?.sessionLabel || session.agent_type || 'AI Agent' },
+        events: rawEvents,
+      });
+      this.buildChatMessages(rawEvents);
     } catch (err) {
       console.error('[detail] fetch error:', err);
+    }
+  },
+
+  buildChatMessages(rawEvents: any[]) {
+    const messages: ChatMessage[] = [];
+    let lastDecisionMap: Record<string, string> = {};
+
+    for (const e of rawEvents) {
+      const time = this.formatTime(e.created_at);
+      const command = e.data?.command || '';
+      const summary = e.data?.summary || e.data?.command || '';
+      const summaryShort = e.data?.summaryShort || '';
+
+      if (e.type === 'session_idle') {
+        messages.push({
+          id: e.id + '-sys',
+          type: 'system',
+          side: 'left',
+          content: 'AI 代理等待指令中...',
+          displayTime: time,
+          typeLabel: '',
+          isTaskComplete: false,
+          command: '',
+          summary: '',
+          risk_level: '',
+          riskText: '',
+          pending: false,
+          decision: '',
+          decisionText: '',
+          canApprove: false,
+          eventId: e.id,
+        });
+        continue;
+      }
+
+      if (e.type === 'task_complete') {
+        messages.push({
+          id: e.id,
+          type: 'ai',
+          side: 'left',
+          content: summaryShort || summary,
+          displayTime: time,
+          typeLabel: '任务完成',
+          isTaskComplete: true,
+          command: '',
+          summary: summaryShort || summary,
+          risk_level: '',
+          riskText: '',
+          pending: false,
+          decision: '',
+          decisionText: '',
+          canApprove: false,
+          eventId: e.id,
+        });
+        continue;
+      }
+
+      if (e.type === 'approval_required') {
+        // AI left message: command + risk
+        const canApprove = ['low', 'medium'].includes(e.risk_level || '');
+        const riskText = RISK_LABELS[e.risk_level as string] || '未知';
+
+        messages.push({
+          id: e.id,
+          type: 'ai',
+          side: 'left',
+          content: command || summary,
+          displayTime: time,
+          typeLabel: '命令执行请求',
+          isTaskComplete: false,
+          command,
+          summary,
+          risk_level: e.risk_level || 'unknown',
+          riskText,
+          pending: e.pending,
+          decision: e.decision || '',
+          decisionText: !e.pending ? this.getDecisionText(e.decision) : '',
+          canApprove,
+          eventId: e.id,
+        });
+
+        // User right message: decision
+        if (!e.pending && e.decision) {
+          const decisionContent = this.getDecisionText(e.decision);
+          messages.push({
+            id: e.id + '-decision',
+            type: 'user',
+            side: 'right',
+            content: decisionContent,
+            displayTime: time,
+            typeLabel: '',
+            isTaskComplete: false,
+            command: '',
+            summary: '',
+            risk_level: '',
+            riskText: '',
+            pending: false,
+            decision: e.decision,
+            decisionText: decisionContent,
+            canApprove: false,
+            eventId: e.id,
+          });
+        }
+      }
+    }
+
+    this.setData({ chatMessages: messages }, () => {
+      // Scroll to bottom
+      if (messages.length > 0) {
+        this.setData({ scrollToId: 'msg-' + messages[messages.length - 1].id });
+      }
+    });
+  },
+
+  getDecisionText(decision: string): string {
+    switch (decision) {
+      case 'approve': return '已批准';
+      case 'deny': return '已拒绝';
+      case 'pause': return '已暂缓';
+      case 'reply': return '已回复';
+      default: return decision;
     }
   },
 
@@ -73,11 +199,6 @@ Page({
 
     ws.on('event_push', (payload: any) => {
       if (payload.sessionId === this.data.sessionId) {
-        if (payload.eventType === 'task_complete') {
-          const summary = payload.summaryShort || payload.summary || '';
-          const snippet = summary.length > 80 ? summary.slice(0, 80) + '...' : summary;
-          wx.showToast({ title: '任务完成: ' + snippet, icon: 'none', duration: 3000 });
-        }
         this.fetchDetail();
       }
     });
@@ -91,92 +212,124 @@ Page({
     });
   },
 
-  showApprovalCard(e: any) {
+  // ── Inline approval actions ──
+
+  approveEvent(e: any) {
     const eventId = e.currentTarget.dataset.id;
-    const event = this.data.events.find((ev: any) => ev.id === eventId);
-    if (!event) return;
-    const riskLevel = event.risk_level || 'unknown';
-    const cannotApprove = !this.canApprove(riskLevel);
-    this.setData({
-      showApproval: true,
-      currentEvent: event,
-      riskLevel,
-      riskLabel: RISK_LABELS[riskLevel] || '未知',
-      replyText: '',
-      approvalCommand: event.data?.command || '',
-      approvalSummary: event.data?.summary || '',
-      approvalCwd: event.data?.cwd || '',
-      approvalDisabled: cannotApprove,
-      showRiskNotice: cannotApprove,
-    });
+    this.sendDecision(eventId, 'approve');
   },
 
-  closeApprovalCard() {
-    this.setData({ showApproval: false, currentEvent: null });
+  denyEvent(e: any) {
+    const eventId = e.currentTarget.dataset.id;
+    this.sendDecision(eventId, 'deny');
   },
 
-  approve() {
-    this.sendDecision('approve');
+  pauseEvent(e: any) {
+    const eventId = e.currentTarget.dataset.id;
+    this.sendDecision(eventId, 'pause');
   },
 
-  deny() {
-    this.sendDecision('deny');
-  },
-
-  pause() {
-    this.sendDecision('pause');
-  },
-
-  onReplyInput(e: any) {
-    this.setData({ replyText: e.detail.value });
-  },
-
-  sendReply() {
-    if (this.data.replyText.trim()) {
-      this.sendDecision('reply', this.data.replyText.trim());
-    }
-  },
-
-  sendDecision(decision: string, message = '') {
+  sendDecision(eventId: string, decision: string) {
     const ws = app.globalData.ws as any;
-    if (!ws || !this.data.currentEvent) return;
-
-    const eventId = this.data.currentEvent.id;
-    this.closeApprovalCard();
-
-    // Register one-time error handler BEFORE send
-    let hadError = false;
-    const errorHandler = (errPayload: any) => {
-      hadError = true;
-      if (errPayload.code === 'RISK_TOO_HIGH') {
-        wx.showToast({ title: '无法批准此风险等级', icon: 'none' });
-      } else if (errPayload.code === 'ALREADY_RESPONDED') {
-        wx.showToast({ title: '已处理过此请求', icon: 'none' });
-      } else {
-        wx.showToast({ title: '错误：' + (errPayload.message || errPayload.code), icon: 'none' });
-      }
-      ws.off('error', errorHandler);
-      this.fetchDetail();
-    };
-    ws.on('error', errorHandler);
+    if (!ws) return;
 
     ws.send({
       type: 'approval_response',
-      payload: { sessionId: this.data.sessionId, eventId, decision, message },
+      payload: { sessionId: this.data.sessionId, eventId, decision, message: '' },
     });
 
-    // Optimistic UI — only show success if no error arrived
-    setTimeout(() => {
-      if (!hadError) {
-        ws.off('error', errorHandler);
-        wx.showToast({
-          title: decision === 'approve' ? '已批准' : decision === 'deny' ? '已拒绝' : '已发送',
-          icon: 'success',
-        });
-      }
-      this.fetchDetail();
-    }, 1000);
+    // Optimistic: update local chat to show decision immediately
+    const messages = [...this.data.chatMessages];
+    const aiIdx = messages.findIndex((m: ChatMessage) => m.eventId === eventId && m.type === 'ai');
+    if (aiIdx !== -1) {
+      messages[aiIdx].pending = false;
+      messages[aiIdx].decision = decision;
+      messages[aiIdx].decisionText = this.getDecisionText(decision);
+    }
+    // Add user decision bubble
+    const decisionContent = this.getDecisionText(decision);
+    const dupIdx = messages.findIndex((m: ChatMessage) => m.eventId === eventId + '-decision');
+    if (dupIdx === -1) {
+      messages.push({
+        id: eventId + '-decision',
+        type: 'user',
+        side: 'right',
+        content: decisionContent,
+        displayTime: '',
+        typeLabel: '',
+        isTaskComplete: false,
+        command: '',
+        summary: '',
+        risk_level: '',
+        riskText: '',
+        pending: false,
+        decision,
+        decisionText: decisionContent,
+        canApprove: false,
+        eventId,
+      });
+    }
+    this.setData({ chatMessages: messages }, () => {
+      this.setData({ scrollToId: 'msg-' + messages[messages.length - 1].id });
+    });
+
+    // Re-fetch after a brief delay to sync
+    setTimeout(() => this.fetchDetail(), 1500);
   },
+
+  // ── Reply ──
+
+  onReplyInput(e: any) {
+    const eventId = e.currentTarget.dataset.id;
+    const val = e.detail.value;
+    this.setData({
+      [`replyTexts.${eventId}`]: val,
+    });
+  },
+
+  sendReply(e: any) {
+    const eventId = e.currentTarget.dataset.id;
+    const message = this.data.replyTexts[eventId] || '';
+    if (!message.trim()) return;
+
+    const ws = app.globalData.ws as any;
+    if (!ws) return;
+
+    ws.send({
+      type: 'approval_response',
+      payload: { sessionId: this.data.sessionId, eventId, decision: 'reply', message: message.trim() },
+    });
+
+    // Optimistic: add user reply bubble
+    const messages = [...this.data.chatMessages];
+    const replyId = eventId + '-reply-' + Date.now();
+    messages.push({
+      id: replyId,
+      type: 'user',
+      side: 'right',
+      content: message.trim(),
+      displayTime: '',
+      typeLabel: '',
+      isTaskComplete: false,
+      command: '',
+      summary: '',
+      risk_level: '',
+      riskText: '',
+      pending: false,
+      decision: 'reply',
+      decisionText: message.trim(),
+      canApprove: false,
+      eventId,
+    });
+
+    const replyTexts = { ...this.data.replyTexts };
+    delete replyTexts[eventId];
+
+    this.setData({ chatMessages: messages, replyTexts, scrollToId: 'msg-' + replyId });
+    setTimeout(() => this.fetchDetail(), 1500);
+  },
+
+  // ── Command input ──
 
   onCommandInput(e: any) {
     this.setData({ commandText: e.detail.value });
@@ -188,13 +341,11 @@ Page({
       wx.showToast({ title: '请输入指令', icon: 'none' });
       return;
     }
-
     const ws = app.globalData.ws as any;
     if (!ws || !this.data.wsConnected) {
       wx.showToast({ title: '未连接服务器', icon: 'none' });
       return;
     }
-
     if (!this.data.session?.status || this.data.session.status !== 'active') {
       wx.showToast({ title: '会话未处于活跃状态', icon: 'none' });
       return;
@@ -205,9 +356,32 @@ Page({
       payload: { sessionId: this.data.sessionId, action: 'write_stdin', data: text },
     });
 
-    this.setData({ commandText: '' });
+    // Add sent message to chat
+    const messages = [...this.data.chatMessages];
+    const cmdId = 'cmd-' + Date.now();
+    messages.push({
+      id: cmdId,
+      type: 'user',
+      side: 'right',
+      content: text,
+      displayTime: '',
+      typeLabel: '',
+      isTaskComplete: false,
+      command: '',
+      summary: '',
+      risk_level: '',
+      riskText: '',
+      pending: false,
+      decision: '',
+      decisionText: '',
+      canApprove: false,
+      eventId: '',
+    });
+    this.setData({ chatMessages: messages, commandText: '', scrollToId: 'msg-' + cmdId });
     wx.showToast({ title: '指令已发送', icon: 'success' });
   },
+
+  // ── Navigation ──
 
   goBack() {
     wx.navigateBack();
@@ -216,10 +390,8 @@ Page({
   formatTime(iso: string): string {
     if (!iso) return '';
     const d = new Date(iso);
-    return `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`;
-  },
-
-  canApprove(risk: string): boolean {
-    return ['low', 'medium'].includes(risk);
+    const h = d.getHours().toString().padStart(2, '0');
+    const m = d.getMinutes().toString().padStart(2, '0');
+    return h + ':' + m;
   },
 });

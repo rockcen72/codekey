@@ -7,7 +7,7 @@
   "types": "dist/index.d.ts",
   "scripts": {
     "build": "tsc",
-    "dev": "tsc --watch",
+    "dev": "tsc && node dist/index.js",
     "start": "node dist/index.js",
     "migrate": "node-pg-migrate up --migration-file-language ts",
     "test": "vitest run",

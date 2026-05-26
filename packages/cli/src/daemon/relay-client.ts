@@ -34,7 +34,7 @@ export class RelayClient extends EventEmitter {
 
   connect(): void {
     const url = new URL('/ws', this.relayUrl);
-    url.protocol = url.protocol === 'https:' || url.protocol === 'http:' ? 'wss:' : 'ws:';
+    url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
     url.searchParams.set('device_id', this.deviceId);
     if (this.isPairing) {
       url.searchParams.set('device_secret', this.deviceSecret);
