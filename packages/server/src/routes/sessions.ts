@@ -1,11 +1,21 @@
 import type { FastifyInstance } from 'fastify';
 import type postgres from 'postgres';
+import { randomUUID } from 'node:crypto';
 
 export function sessionRoutes(sql: postgres.Sql) {
   return async function (fastify: FastifyInstance) {
     // Register new session (PC daemon)
     fastify.post('/sessions', async (req, reply) => {
-      reply.code(501).send({ error: 'not implemented' });
+      const { deviceId, agentType } = req.body as { deviceId?: string; agentType?: string };
+      if (!deviceId || !agentType) {
+        return reply.code(400).send({ error: 'deviceId and agentType required' });
+      }
+      const [session] = await sql`
+        INSERT INTO sessions (device_id, agent_type, status, metadata)
+        VALUES (${deviceId}, ${agentType}, 'active', '{}')
+        RETURNING id, created_at
+      `;
+      return { sessionId: session.id, createdAt: session.created_at };
     });
 
     // List sessions (mini program)
@@ -35,7 +45,9 @@ export function sessionRoutes(sql: postgres.Sql) {
 
     // Pause session
     fastify.post('/sessions/:id/pause', async (req, reply) => {
-      reply.code(501).send({ error: 'not implemented' });
+      const { id } = req.params as { id: string };
+      await sql`UPDATE sessions SET status = 'paused' WHERE id = ${id}`;
+      return { success: true };
     });
 
     // Delete session
