@@ -12,6 +12,7 @@ export interface SessionResponse {
   device_id: string;
   agent_type: string;
   status: string;
+  metadata: Record<string, string>;
   created_at: string;
   last_active_at: string;
 }
