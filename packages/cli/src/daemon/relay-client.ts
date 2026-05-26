@@ -65,6 +65,10 @@ export class RelayClient extends EventEmitter {
         if (msg.type === 'session_registered') {
           this.emit('session_registered', msg.payload);
         }
+        if (msg.type === 'command') {
+          this.emit('command', msg.payload);
+          return;
+        }
       } catch {
         // drop malformed messages silently
       }

@@ -1,6 +1,6 @@
 // ── Event Types ──────────────────────────────────────────
 
-export type AgentType = 'claude-code' | 'codex' | 'opencode' | 'generic-pty';
+export type AgentType = 'claude-code' | 'claude-code-hook' | 'codex' | 'opencode' | 'generic-pty';
 
 export type RiskLevel = 'low' | 'medium' | 'high' | 'critical' | 'unknown';
 
