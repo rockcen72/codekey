@@ -82,10 +82,11 @@ export function wsHandler(sql: postgres.Sql) {
           return;
         }
 
+        const pending = msg.payload.eventType === 'approval_required';
         sql`
           INSERT INTO events (session_id, type, data, risk_level, pending)
           VALUES (${pc.sessionId}, ${msg.payload.eventType},
-                  ${msg.payload.data}, ${msg.payload.data.risk ?? null}, true)
+                  ${msg.payload.data}, ${msg.payload.data.risk ?? null}, ${pending})
           RETURNING id
         `.then(([event]) => {
           socket.send(JSON.stringify({
@@ -107,6 +108,7 @@ export function wsHandler(sql: postgres.Sql) {
                     eventId: event.id,
                     eventType: msg.payload.eventType,
                     summary: msg.payload.data.summary ?? msg.payload.data.command ?? '',
+                    summaryShort: msg.payload.data.summaryShort ?? msg.payload.data.summary ?? '',
                     risk: msg.payload.data.risk,
                   },
                 }));
@@ -188,6 +190,39 @@ export function wsHandler(sql: postgres.Sql) {
           });
         }).catch((err) => {
           console.error('approval error:', err);
+          socket.send(JSON.stringify({ type: 'error', code: 'SERVER_ERROR' }));
+        });
+        return;
+      }
+
+      if (msg.type === 'command') {
+        const { sessionId, action, data } = msg.payload ?? {};
+        if (!sessionId || action !== 'write_stdin' || data === undefined) {
+          socket.send(JSON.stringify({ type: 'error', code: 'INVALID_PAYLOAD' }));
+          return;
+        }
+
+        sql`
+          SELECT id FROM sessions
+          WHERE id = ${sessionId} AND device_id = ${deviceId}
+          LIMIT 1
+        `.then((rows) => {
+          if (rows.length === 0) {
+            socket.send(JSON.stringify({ type: 'error', code: 'SESSION_NOT_FOUND' }));
+            return;
+          }
+
+          const pc = pcClients.get(deviceId);
+          if (!pc || pc.socket.readyState !== pc.socket.OPEN) {
+            socket.send(JSON.stringify({ type: 'error', code: 'BRIDGE_NOT_CONNECTED' }));
+            return;
+          }
+
+          pc.socket.send(JSON.stringify({
+            type: 'command',
+            payload: { sessionId, action, data },
+          }));
+        }).catch(() => {
           socket.send(JSON.stringify({ type: 'error', code: 'SERVER_ERROR' }));
         });
         return;
