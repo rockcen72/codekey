@@ -77,6 +77,7 @@ export type AgentEventPayload =
 export interface SessionEventMessage {
   type: 'event';
   payload: {
+    clientEventId?: string;    // ← for PC → server → event_ack roundtrip
     sessionId: string;
     agent: AgentType;
     eventType: AgentEventType;
