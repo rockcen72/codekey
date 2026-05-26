@@ -1,0 +1,35 @@
+services:
+  relay:
+    build:
+      context: .
+      dockerfile: packages/server/Dockerfile
+    ports:
+      - "3000:3000"
+    environment:
+      - PORT=3000
+      - HOST=0.0.0.0
+      - DATABASE_URL=postgres://devtap:devtap@postgres:5432/devtap
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: devtap
+      POSTGRES_PASSWORD: devtap
+      POSTGRES_DB: devtap
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U devtap"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+volumes:
+  pgdata:

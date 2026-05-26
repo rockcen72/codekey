@@ -1,0 +1,28 @@
+{
+  "name": "@devtap/server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "start": "node dist/index.js",
+    "migrate": "node-pg-migrate up --migration-file-language ts"
+  },
+  "dependencies": {
+    "@devtap/shared": "workspace:*",
+    "fastify": "^5.2.0",
+    "@fastify/websocket": "^11.0.0",
+    "@fastify/cors": "^11.0.0",
+    "postgres": "^3.4.0",
+    "uuid": "^11.0.0",
+    "dotenv": "^16.4.0"
+  },
+  "devDependencies": {
+    "@types/uuid": "^10.0.0",
+    "typescript": "^5.7.0",
+    "node-pg-migrate": "^7.0.0"
+  }
+}

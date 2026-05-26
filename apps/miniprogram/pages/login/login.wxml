@@ -1,0 +1,10 @@
+<view class="container">
+  <view class="logo">DevTap</view>
+  <text class="title">AI Agent 远程控制</text>
+  <text class="desc">扫码绑定电脑，远程处理 agent 阻塞</text>
+
+  <button class="scan-btn" bindtap="startScan" wx:if="{{canScan}}">
+    扫码绑定
+  </button>
+  <text class="hint" wx:else>请先在电脑端运行 devtap login</text>
+</view>

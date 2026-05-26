@@ -1,0 +1,15 @@
+{
+  "pages": [
+    "pages/login/login",
+    "pages/bind/bind",
+    "pages/sessions/sessions",
+    "pages/session-detail/session-detail",
+    "pages/settings/settings"
+  ],
+  "window": {
+    "navigationBarTitleText": "DevTap",
+    "navigationBarTextStyle": "black",
+    "backgroundColor": "#ffffff"
+  },
+  "style": "v2"
+}

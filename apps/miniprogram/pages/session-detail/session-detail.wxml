@@ -1,0 +1,50 @@
+<view class="container">
+  <view wx:if="{{!session}}" class="loading">加载中...</view>
+
+  <view wx:else>
+    <!-- Session info -->
+    <view class="info-card">
+      <text class="agent">{{session.agentType}}</text>
+      <text class="project">{{session.projectName}}</text>
+      <text class="status {{session.status}}">{{session.status}}</text>
+    </view>
+
+    <!-- Event timeline -->
+    <scroll-view class="timeline" scroll-y>
+      <view wx:for="{{events}}" wx:key="id" class="event-item">
+        <view class="event-type {{item.type}}">{{item.type}}</view>
+        <view class="event-summary">{{item.data.summary || item.data.command || item.data.question}}</view>
+        <view class="event-time">{{item.createdAt}}</view>
+
+        <!-- Approval button -->
+        <button wx:if="{{item.type === 'approval_required'}}" class="approve-btn"
+          bindtap="showApprovalCard" data-event="{{item}}">
+          处理审批
+        </button>
+      </view>
+    </scroll-view>
+  </view>
+
+  <!-- Approval card modal -->
+  <view wx:if="{{showApprovalCard}}" class="modal-overlay">
+    <view class="approval-card">
+      <text class="card-title">审批请求</text>
+      <text class="risk-label risk-{{riskLevel}}">{{riskLevel}}</text>
+      <text class="command">{{currentEvent.data.command}}</text>
+      <text class="context">{{currentEvent.data.contextSnippet}}</text>
+
+      <view class="actions">
+        <button class="btn-approve" bindtap="approve">批准</button>
+        <button class="btn-deny" bindtap="deny">拒绝</button>
+        <button class="btn-pause" bindtap="pause">暂停</button>
+      </view>
+
+      <view class="reply-section">
+        <input class="reply-input" placeholder="回复 agent..." bindinput="onReplyInput" />
+        <button class="btn-reply" bindtap="sendReply" disabled="{{!replyText}}">发送</button>
+      </view>
+
+      <text class="close" bindtap="closeApprovalCard">关闭</text>
+    </view>
+  </view>
+</view>

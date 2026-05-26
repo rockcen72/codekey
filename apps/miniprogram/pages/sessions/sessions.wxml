@@ -1,0 +1,20 @@
+<view class="container">
+  <view class="header">
+    <text class="title">活跃会话</text>
+    <text class="settings" bindtap="goSettings">设置</text>
+  </view>
+
+  <view wx:if="{{sessions.length === 0}}" class="empty">
+    <text>暂无活跃会话</text>
+    <text class="hint">请在电脑端运行 devtap claude 启动</text>
+  </view>
+
+  <view wx:for="{{sessions}}" wx:key="id" class="session-card" bindtap="openSession" data-id="{{item.id}}">
+    <view class="card-header">
+      <text class="agent">{{item.agentType}}</text>
+      <text class="status {{item.status}}">{{item.status}}</text>
+    </view>
+    <text class="project">{{item.projectName}}</text>
+    <text class="time">{{item.lastActive}}</text>
+  </view>
+</view>

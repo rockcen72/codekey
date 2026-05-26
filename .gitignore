@@ -1,0 +1,14 @@
+node_modules/
+dist/
+.env
+*.local
+~/.devtap/
+.devcontainer/
+.vscode/
+
+# Logs
+*.log
+
+# OS
+.DS_Store
+Thumbs.db

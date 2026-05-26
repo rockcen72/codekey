@@ -1,0 +1,18 @@
+<view class="container">
+  <text class="title">设置</text>
+
+  <view class="section">
+    <text class="section-title">已绑定设备</text>
+    <view wx:for="{{devices}}" wx:key="id" class="device-item">
+      <text>{{item.name}}</text>
+      <text class="time">{{item.lastSeen}}</text>
+      <button class="unbind" bindtap="unbindDevice" data-id="{{item.id}}">解绑</button>
+    </view>
+  </view>
+
+  <view class="section">
+    <text class="section-title">关于</text>
+    <text>DevTap v0.1.0</text>
+    <text>AI Agent 远程控制工具</text>
+  </view>
+</view>
