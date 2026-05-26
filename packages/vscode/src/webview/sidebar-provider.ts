@@ -56,7 +56,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       }
     }
 
-    // Extract pending approvals
+    // Extract pending approvals (per-session for grouped display)
     for (const [sid, evts] of Object.entries(events)) {
       const session = sessions.find(s => s.id === sid);
       for (const e of evts) {
@@ -66,6 +66,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
             command: e.data?.command ?? e.data?.summary ?? '(unknown)',
             agent: session?.agent_type ?? 'unknown',
             risk: e.risk_level ?? 'medium',
+            serverSessionId: sid,
           });
         }
       }

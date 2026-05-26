@@ -7,6 +7,7 @@ export interface PendingApprovalItem {
   command: string;
   agent: string;
   risk: string;
+  serverSessionId: string;
 }
 
 export interface SidebarState {
@@ -42,6 +43,7 @@ function renderDevice(state: SidebarState): string {
     : tag('Unpaired', 'orange');
 
   const bridgeTag = bridge.bridge === 'running' ? tag('Running', 'green')
+    : bridge.bridge === 'connecting' ? tag('Connecting...', 'yellow')
     : bridge.bridge === 'error' ? tag('Error', 'red')
     : tag('Stopped', 'orange');
 
@@ -88,32 +90,45 @@ function renderAgents(state: SidebarState): string {
   </div>`;
 }
 
-function renderApprovals(state: SidebarState): string {
-  if (state.pendingApprovals.length === 0) return '';
-  return `<div class="section">
-    <div class="section-title"><span>PENDING</span>${tag(String(state.pendingApprovals.length), 'red')}</div>
-    ${state.pendingApprovals.map(a => {
-      const rCls = a.risk === 'high' || a.risk === 'critical' ? 'red' : 'orange';
-      return `<div class="item danger">
-        <div class="cmd">${h(a.command)}</div>
-        <div class="row"><span class="muted">${h(a.agent)}</span>${tag(a.risk, rCls)}</div>
-      </div>`;
-    }).join('')}
-  </div>`;
+function renderPendingList(pending: PendingApprovalItem[]): string {
+  if (pending.length === 0) return '';
+  return pending.map(a => {
+    const rCls = a.risk === 'high' || a.risk === 'critical' ? 'red' : 'orange';
+    return `<div class="item danger" style="margin-left:12px">
+      <div class="cmd">${h(a.command)}</div>
+      <div class="row"><span class="muted">${h(a.agent)}</span>${tag(a.risk, rCls)}</div>
+    </div>`;
+  }).join('');
 }
 
 function renderSessions(state: SidebarState): string {
   if (state.sessions.length === 0) return '';
-  const sid = (id: string) => id.length > 12 ? id.slice(0, 8) + '...' + id.slice(-3) : id;
+
+  // Build per-session pending lookup
+  const pendingBySession: Record<string, PendingApprovalItem[]> = {};
+  for (const a of state.pendingApprovals) {
+    if (!pendingBySession[a.serverSessionId]) pendingBySession[a.serverSessionId] = [];
+    pendingBySession[a.serverSessionId]!.push(a);
+  }
+
   return `<div class="section">
     <div class="section-title"><span>SESSIONS</span>${tag(String(state.sessions.length), '')}</div>
     ${state.sessions.map(s => {
-      const evts = state.events[s.id] ?? [];
-      const pending = evts.filter(e => e.pending).length;
-      const sTag = pending > 0 ? tag('pending', 'orange') : tag('idle', '');
-      return `<div class="item">
-        <div class="row"><span>${h(s.agent_type)}</span>${sTag}</div>
-        <div class="muted">${sid(s.id)}</div>
+      const sid = s.id.length > 12 ? s.id.slice(0, 8) + '...' + s.id.slice(-3) : s.id;
+      const claudeSid = s.metadata?.claudeSessionId ?? '';
+      const label = claudeSid ? claudeSid.slice(0, 8) : sid;
+      const perSession = pendingBySession[s.id] ?? [];
+      const sTag = perSession.length > 0 ? tag(`${perSession.length} pending`, 'orange') : tag('idle', '');
+
+      return `<div class="session-group">
+        <div class="item">
+          <div class="row">
+            <span><b>${h(s.agent_type)}</b> ${h(label)}</span>
+            ${sTag}
+          </div>
+          <div class="muted">${h(new Date(s.created_at).toLocaleTimeString())}</div>
+        </div>
+        ${renderPendingList(perSession)}
       </div>`;
     }).join('')}
   </div>`;
@@ -141,7 +156,6 @@ export function renderSidebar(state: SidebarState): string {
 <body>
 ${renderDevice(state)}
 ${renderAgents(state)}
-${renderApprovals(state)}
 ${renderSessions(state)}
 ${renderSubscribe()}
 <script nonce="${NONCE}">
@@ -194,6 +208,7 @@ body {
   font-size: 10px; font-weight: 500; white-space: nowrap;
 }
 .tag.green { background: #173b27; color: #8fe0a5; }
+.tag.yellow { background: #4b4a1b; color: #ffea8a; }
 .tag.orange { background: #4b341b; color: #ffd18a; }
 .tag.red { background: #552424; color: #ffaaa8; }
 .btn {
