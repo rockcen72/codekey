@@ -7,6 +7,11 @@ import {
   type WsClient, type PairingClient,
 } from './connection-registry.js';
 
+/** Grace period timers: device socket close → delay session cleanup by 30s.
+ *  If the device reconnects within that window, the timer is cancelled. */
+const disconnectTimers = new Map<string, NodeJS.Timeout>();
+const DISCONNECT_GRACE_MS = 5_000;
+
 export function wsHandler(sql: postgres.Sql) {
   return function (socket: WebSocket, req: FastifyRequest) {
     const url = new URL(req.url, 'http://localhost');
@@ -26,6 +31,7 @@ export function wsHandler(sql: postgres.Sql) {
     let authed = false;
     let tokenType: string | null = null;
     const pending: Buffer[] = [];
+    const activationRequests = new Map<string, string>(); // clientRequestId → sessionId (idempotency)
 
     socket.on('message', (raw: Buffer) => {
       if (!authed) {
@@ -54,34 +60,99 @@ export function wsHandler(sql: postgres.Sql) {
       }
     }
 
+    /** Shared helper: expire pending events, mark session finished, broadcast to all WS clients.
+     *  Used by detach_session (mini program), deactivate_session (bridge), and disconnect cleanup.
+     *  Returns { ok: true } on success, { ok: false, code } on failure.
+     *  Skips broadcasting to `socket` (sender) to avoid duplicate events. */
+    async function finishSession(
+      sessionId: string,
+      socket?: WebSocket,
+    ): Promise<{ ok: true } | { ok: false; code: string }> {
+      try {
+        const [row] = await sql`
+          SELECT id FROM sessions
+          WHERE id = ${sessionId} AND device_id = ${deviceId} AND status = 'active'
+          LIMIT 1
+        `;
+        if (!row) return { ok: false, code: 'SESSION_NOT_FOUND' };
+
+        await sql.begin(async (tx) => {
+          await tx`
+            UPDATE events SET pending = false, decision = 'expired'
+            WHERE session_id = ${sessionId} AND pending = true
+          `;
+          await tx`
+            UPDATE sessions SET status = 'finished', finished_at = now()
+            WHERE id = ${sessionId} AND status = 'active'
+          `;
+        });
+
+        // Ack to sender
+        if (socket && socket.readyState === socket.OPEN) {
+          socket.send(JSON.stringify({ type: 'session_deactivated', payload: { sessionId } }));
+        }
+
+        // Broadcast to all mini program clients (skip sender)
+        const mpList = clientClients.get(deviceId!);
+        if (mpList) {
+          for (const mp of mpList) {
+            if (mp.socket !== socket && mp.socket.readyState === mp.socket.OPEN) {
+              mp.socket.send(JSON.stringify({ type: 'session_deactivated', payload: { sessionId } }));
+            }
+          }
+        }
+
+        // Notify bridge sidebar (skip sender)
+        const pc = pcClients.get(deviceId!);
+        if (pc && pc.socket !== socket && pc.socket.readyState === pc.socket.OPEN) {
+          pc.socket.send(JSON.stringify({ type: 'session_deactivated', payload: { sessionId } }));
+        }
+
+        return { ok: true };
+      } catch (err) {
+        console.error('finishSession error:', err);
+        return { ok: false, code: 'DB_ERROR' };
+      }
+    }
+
     function handleDeviceMessage(msg: any) {
       if (msg.type === 'register_session') {
         const claudeSessionId = msg.payload?.claudeSessionId ?? null;
         const clientRequestId = msg.payload?.clientRequestId ?? null;
 
+        // Single transaction: check + reuse/insert, no race between SELECT and INSERT
         sql.begin(async (tx) => {
-          let oldSessionId: string | null = null;
+          // Build metadata once (shared between reuse and insert paths)
+          const metadata: Record<string, string> = {};
+          if (claudeSessionId) metadata.claudeSessionId = claudeSessionId;
+          if (msg.payload.windowId) metadata.windowId = msg.payload.windowId;
+          if (msg.payload.sessionLabel) metadata.title = msg.payload.sessionLabel;
+          if (msg.payload.metadata && typeof msg.payload.metadata === 'object') {
+            for (const [key, value] of Object.entries(msg.payload.metadata)) {
+              if (typeof value === 'string' && value.trim()) metadata[key] = value;
+            }
+          }
+          metadata.lastHookAt = new Date().toISOString();
+
           if (claudeSessionId) {
-            // Close only the session for this Claude Code instance
-            const [oldSession] = await tx`
+            // Reuse existing active session for this claudeSessionId
+            const [existing] = await tx`
               SELECT id FROM sessions
               WHERE device_id = ${deviceId} AND status = 'active'
               AND metadata->>'claudeSessionId' = ${claudeSessionId}
               LIMIT 1
             `;
-            if (oldSession) {
-              oldSessionId = oldSession.id;
+            if (existing) {
               await tx`
-                UPDATE events SET pending = false, decision = 'expired'
-                WHERE session_id = ${oldSession.id} AND pending = true
+                UPDATE sessions SET metadata = ${tx.json(metadata)}, last_active_at = now()
+                WHERE id = ${existing.id}
               `;
-              await tx`
-                UPDATE sessions SET status = 'finished', finished_at = now()
-                WHERE id = ${oldSession.id}
-              `;
+              return { sessionId: existing.id, isNew: false };
             }
-          } else {
-            // Legacy (no claudeSessionId): close ALL active sessions
+          }
+
+          // Legacy (no claudeSessionId): close ALL active sessions before creating new
+          if (!claudeSessionId) {
             const oldSessions = await tx`
               SELECT id FROM sessions
               WHERE device_id = ${deviceId} AND status = 'active'
@@ -98,34 +169,36 @@ export function wsHandler(sql: postgres.Sql) {
             `;
           }
 
-          const metadata: Record<string, string> = {};
-          if (claudeSessionId) metadata.claudeSessionId = claudeSessionId;
-          if (msg.payload.sessionLabel) metadata.sessionLabel = msg.payload.sessionLabel;
-          if (msg.payload.windowId) metadata.windowId = msg.payload.windowId;
+          // No existing session found — insert new
           const [newSession] = await tx`
             INSERT INTO sessions (device_id, agent_type, status, metadata)
             VALUES (${deviceId}, ${msg.payload.agentType ?? 'claude-code'}, 'active', ${tx.json(metadata)})
             RETURNING id
           `;
-          return { newSession, oldSessionId };
-        }).then(({ newSession, oldSessionId }) => {
+          return { sessionId: newSession.id, isNew: true };
+        }).then(({ sessionId }) => {
           const pc = pcClients.get(deviceId!);
-          if (pc) {
-            // Phase 1: set pc.sessionId on first registration (primary session).
-            // Also update if the old primary session was just closed by re-registration.
-            if (!pc.sessionId || (oldSessionId && pc.sessionId === oldSessionId)) {
-              pc.sessionId = newSession.id;
-            }
+          if (pc && !pc.sessionId) {
+            pc.sessionId = sessionId;
           }
 
           socket.send(JSON.stringify({
             type: 'session_registered',
-            payload: {
-              clientRequestId,
-              sessionId: newSession.id,
-              claudeSessionId,
-            },
+            payload: { clientRequestId, sessionId, claudeSessionId },
           }));
+
+          // Broadcast to mini program clients
+          const mpList = clientClients.get(deviceId!);
+          if (mpList) {
+            for (const mp of mpList) {
+              if (mp.socket.readyState === mp.socket.OPEN) {
+                mp.socket.send(JSON.stringify({
+                  type: 'session_registered',
+                  payload: { sessionId },
+                }));
+              }
+            }
+          }
         }).catch((err) => {
           console.error('register_session error:', err);
           socket.send(JSON.stringify({ type: 'error', code: 'DB_ERROR' }));
@@ -133,7 +206,156 @@ export function wsHandler(sql: postgres.Sql) {
         return;
       }
 
-      if (msg.type === 'event') {
+      if (msg.type === 'activate_window') {
+      const windowId = msg.payload?.windowId ?? null;
+      const sessionLabel = msg.payload?.sessionLabel ?? null;
+      const clientRequestId = msg.payload?.clientRequestId ?? null;
+      if (!windowId) {
+        socket.send(JSON.stringify({ type: 'error', code: 'INVALID_PAYLOAD' }));
+        return;
+      }
+
+      // True idempotency: same clientRequestId → same session
+      if (clientRequestId) {
+        const existingSid = activationRequests.get(clientRequestId);
+        if (existingSid) {
+          socket.send(JSON.stringify({
+            type: 'session_registered',
+            payload: { clientRequestId, sessionId: existingSid, windowId },
+          }));
+          return;
+        }
+      }
+
+      sql.begin(async (tx) => {
+        const [oldSession] = await tx`
+          SELECT id FROM sessions
+          WHERE device_id = ${deviceId} AND status = 'active'
+          AND metadata->>'windowId' = ${windowId}
+          LIMIT 1
+        `;
+        if (oldSession) {
+          await tx`
+            UPDATE events SET pending = false, decision = 'expired'
+            WHERE session_id = ${oldSession.id} AND pending = true
+          `;
+          await tx`
+            UPDATE sessions SET status = 'finished', finished_at = now()
+            WHERE id = ${oldSession.id}
+          `;
+        }
+
+        const metadata: Record<string, string> = { windowId };
+        if (sessionLabel) metadata.title = sessionLabel;
+        if (msg.payload.source) metadata.source = msg.payload.source;
+        const [newSession] = await tx`
+          INSERT INTO sessions (device_id, agent_type, status, metadata)
+          VALUES (${deviceId}, 'claude-code-hook', 'active', ${tx.json(metadata)})
+          RETURNING id
+        `;
+
+        const pc = pcClients.get(deviceId!);
+        if (pc) {
+          if (!pc.sessionId || (oldSession && pc.sessionId === oldSession.id)) {
+            pc.sessionId = newSession.id;
+          }
+        }
+
+        if (clientRequestId) activationRequests.set(clientRequestId, newSession.id);
+        return { newSession, oldSession };
+      }).then(({ newSession, oldSession }) => {
+        socket.send(JSON.stringify({
+          type: 'session_registered',
+          payload: { clientRequestId, sessionId: newSession.id, windowId },
+        }));
+
+        // Broadcast to mini program clients
+        const mpList = clientClients.get(deviceId!);
+        if (mpList) {
+          for (const mp of mpList) {
+            if (mp.socket.readyState === mp.socket.OPEN) {
+              // Notify about old session being replaced
+              if (oldSession) {
+                mp.socket.send(JSON.stringify({
+                  type: 'session_deactivated',
+                  payload: { sessionId: oldSession.id },
+                }));
+              }
+              mp.socket.send(JSON.stringify({
+                type: 'session_registered',
+                payload: { sessionId: newSession.id, windowId },
+              }));
+            }
+          }
+        }
+      }).catch((err) => {
+        console.error('activate_window error:', err);
+        socket.send(JSON.stringify({ type: 'error', code: 'DB_ERROR' }));
+      });
+      return;
+    }
+
+      if (msg.type === 'attach_session') {
+        const sessionId = msg.payload?.sessionId ?? null;
+        const claudeSessionId = msg.payload?.claudeSessionId ?? null;
+        if (!sessionId || !claudeSessionId) {
+          socket.send(JSON.stringify({ type: 'error', code: 'INVALID_PAYLOAD' }));
+          return;
+        }
+
+        const metadata: Record<string, string> = {
+          claudeSessionId,
+          runtime: 'claude-code',
+          source: 'transcript_attach',
+          attachedAt: new Date().toISOString(),
+        };
+        if (msg.payload.metadata && typeof msg.payload.metadata === 'object') {
+          for (const [key, value] of Object.entries(msg.payload.metadata)) {
+            if (typeof value === 'string' && value.trim()) metadata[key] = value;
+          }
+        }
+
+        sql`
+          UPDATE sessions
+          SET metadata = metadata || ${sql.json(metadata)}, last_active_at = now()
+          WHERE id = ${sessionId}
+            AND device_id = ${deviceId}
+            AND status = 'active'
+            AND (
+              metadata->>'claudeSessionId' = ${claudeSessionId}
+              OR metadata->>'claudeSessionId' IS NULL
+            )
+          RETURNING id
+        `.then(([session]) => {
+          if (!session) {
+            socket.send(JSON.stringify({ type: 'error', code: 'SESSION_NOT_FOUND' }));
+            return;
+          }
+
+          socket.send(JSON.stringify({
+            type: 'session_registered',
+            payload: { sessionId, claudeSessionId },
+          }));
+
+          const mpList = clientClients.get(deviceId!);
+          if (mpList) {
+            for (const mp of mpList) {
+              if (mp.socket.readyState === mp.socket.OPEN) {
+                mp.socket.send(JSON.stringify({
+                  type: 'session_registered',
+                  payload: { sessionId },
+                }));
+              }
+            }
+          }
+        }).catch((err) => {
+          console.error('attach_session error:', err);
+          socket.send(JSON.stringify({ type: 'error', code: 'DB_ERROR' }));
+        });
+        return;
+      }
+
+    if (msg.type === 'event') {
         if (!deviceId) return;
         const pc = pcClients.get(deviceId);
         if (!pc) {
@@ -149,7 +371,7 @@ export function wsHandler(sql: postgres.Sql) {
 
         // Validate session ownership + active status before insert
         sql`
-          SELECT id FROM sessions
+          SELECT id, metadata FROM sessions
           WHERE id = ${sessionId} AND device_id = ${deviceId} AND status = 'active'
           LIMIT 1
         `.then((rows) => {
@@ -159,17 +381,19 @@ export function wsHandler(sql: postgres.Sql) {
           }
 
           const pending = msg.payload.eventType === 'approval_required';
+          const eventData = msg.payload.data ? { ...msg.payload.data } : {};
+          if (msg.payload.clientEventId) eventData.clientEventId = msg.payload.clientEventId;
           sql`
             INSERT INTO events (session_id, type, data, risk_level, pending)
             VALUES (${sessionId}, ${msg.payload.eventType},
-                    ${msg.payload.data}, ${msg.payload.data.risk ?? null}, ${pending})
+                    ${sql.json(eventData)}, ${msg.payload.data?.risk ?? null}, ${pending})
             RETURNING id
           `.then(([event]) => {
             // Bump session activity timestamp (background, non-critical)
             sql`UPDATE sessions SET last_active_at = now() WHERE id = ${sessionId}`.catch(() => {});
             // If event carries windowId/label, persist in session metadata
             if (msg.payload.sessionLabel) {
-              sql`UPDATE sessions SET metadata = metadata || ${sql.json({ sessionLabel: msg.payload.sessionLabel })} WHERE id = ${sessionId}`.catch(() => {});
+              sql`UPDATE sessions SET metadata = metadata || ${sql.json({ title: msg.payload.sessionLabel })} WHERE id = ${sessionId}`.catch(() => {});
             }
             if (msg.payload.windowId) {
               sql`UPDATE sessions SET metadata = metadata || ${sql.json({ windowId: msg.payload.windowId })} WHERE id = ${sessionId}`.catch(() => {});
@@ -182,7 +406,9 @@ export function wsHandler(sql: postgres.Sql) {
               },
             }));
 
-            const mpList = clientClients.get(deviceId!);
+            const sessionSource = rows[0].metadata?.source ?? null;
+            const visibleToMiniProgram = !sessionSource || sessionSource === 'transcript_attach';
+            const mpList = visibleToMiniProgram ? clientClients.get(deviceId!) : undefined;
             if (mpList) {
               for (const mp of mpList) {
                 if (mp.socket.readyState === mp.socket.OPEN) {
@@ -201,15 +427,140 @@ export function wsHandler(sql: postgres.Sql) {
               }
             }
 
-            // task_complete from Stop hook → close the session
-            if (msg.payload.eventType === 'task_complete') {
-              sql`UPDATE sessions SET status = 'finished', finished_at = now() WHERE id = ${sessionId} AND status = 'active'`.catch(() => {});
-            }
+            // task_complete is recorded as an event but does NOT close the session.
+            // Session lifecycle is managed by activate_window / deactivate_session.
           }).catch((err) => {
             console.error('event insert error:', err);
             socket.send(JSON.stringify({ type: 'error', code: 'DB_ERROR' }));
           });
         }).catch(() => {
+          socket.send(JSON.stringify({ type: 'error', code: 'SERVER_ERROR' }));
+        });
+        return;
+      }
+
+      if (msg.type === 'update_session_label') {
+        const sessionId = msg.payload?.sessionId;
+        const label = msg.payload?.label;
+        if (!sessionId || !label) {
+          socket.send(JSON.stringify({ type: 'error', code: 'INVALID_PAYLOAD' }));
+          return;
+        }
+        sql`
+          UPDATE sessions SET metadata = metadata || ${sql.json({ title: label })}
+          WHERE id = ${sessionId} AND device_id = ${deviceId}
+        `.then(() => {
+          socket.send(JSON.stringify({
+            type: 'session_label_updated',
+            payload: { sessionId, label },
+          }));
+
+          // Broadcast to mini program clients so they refresh session name
+          const mpList = clientClients.get(deviceId!);
+          if (mpList) {
+            for (const mp of mpList) {
+              if (mp.socket.readyState === mp.socket.OPEN) {
+                mp.socket.send(JSON.stringify({
+                  type: 'session_label_updated',
+                  payload: { sessionId, label },
+                }));
+              }
+            }
+          }
+        }).catch((err) => {
+          console.error('update_session_label error:', err);
+          socket.send(JSON.stringify({ type: 'error', code: 'DB_ERROR' }));
+        });
+        return;
+      }
+
+      if (msg.type === 'deactivate_session') {
+        const sessionId = msg.payload?.sessionId ?? null;
+        if (!sessionId) {
+          socket.send(JSON.stringify({ type: 'error', code: 'INVALID_PAYLOAD' }));
+          return;
+        }
+
+        finishSession(sessionId, socket).then((result) => {
+          if (result.ok) {
+            const pc = pcClients.get(deviceId!);
+            if (pc && pc.sessionId === sessionId) {
+              pc.sessionId = undefined;
+            }
+          } else {
+            socket.send(JSON.stringify({ type: 'error', code: result.code }));
+          }
+        });
+        return;
+      }
+
+      // Deactivate all sessions matching a windowId prefix (handles both window-level and tab-level)
+      if (msg.type === 'deactivate_by_window') {
+        const windowIdPrefix = msg.payload?.windowIdPrefix ?? null;
+        if (!windowIdPrefix) {
+          socket.send(JSON.stringify({ type: 'error', code: 'INVALID_PAYLOAD' }));
+          return;
+        }
+
+        sql.begin(async (tx) => {
+          const sessions: { id: string }[] = await tx`
+            SELECT id FROM sessions
+            WHERE device_id = ${deviceId} AND status = 'active'
+            AND (metadata->>'windowId' = ${windowIdPrefix}
+                 OR metadata->>'windowId' LIKE ${windowIdPrefix + '\\_%'})
+          `;
+          if (sessions.length === 0) return [] as { id: string }[];
+
+          await tx`
+            UPDATE events SET pending = false, decision = 'expired'
+            WHERE session_id IN (SELECT id FROM sessions
+              WHERE device_id = ${deviceId} AND status = 'active'
+              AND (metadata->>'windowId' = ${windowIdPrefix}
+                   OR metadata->>'windowId' LIKE ${windowIdPrefix + '\\_%'}))
+            AND pending = true
+          `;
+          await tx`
+            UPDATE sessions SET status = 'finished', finished_at = now()
+            WHERE device_id = ${deviceId} AND status = 'active'
+            AND (metadata->>'windowId' = ${windowIdPrefix}
+                 OR metadata->>'windowId' LIKE ${windowIdPrefix + '\\_%'})
+          `;
+          return sessions;
+        }).then((finishedSessions) => {
+          const mpList = clientClients.get(deviceId!);
+          if (mpList && finishedSessions.length > 0) {
+            for (const mp of mpList) {
+              if (mp.socket.readyState === mp.socket.OPEN) {
+                for (const s of finishedSessions) {
+                  mp.socket.send(JSON.stringify({
+                    type: 'session_deactivated',
+                    payload: { sessionId: s.id },
+                  }));
+                }
+              }
+            }
+          }
+          socket.send(JSON.stringify({ type: 'sessions_deactivated', count: finishedSessions.length }));
+        }).catch((err) => {
+          console.error('deactivate_by_window error:', err);
+          socket.send(JSON.stringify({ type: 'error', code: 'DB_ERROR' }));
+        });
+        return;
+      }
+
+      if (msg.type === 'query_attached_sessions') {
+        sql`
+          SELECT id, metadata FROM sessions
+          WHERE device_id = ${deviceId} AND status = 'active'
+          AND metadata->>'source' = 'transcript_attach'
+        `.then((rows: any) => {
+          const sessions = rows.map((r: any) => ({
+            id: r.id,
+            claudeSessionId: r.metadata?.claudeSessionId ?? null,
+          }));
+          socket.send(JSON.stringify({ type: 'attached_sessions', payload: { sessions } }));
+        }).catch((err) => {
+          console.error('query_attached_sessions error:', err);
           socket.send(JSON.stringify({ type: 'error', code: 'SERVER_ERROR' }));
         });
         return;
@@ -269,6 +620,7 @@ export function wsHandler(sql: postgres.Sql) {
             `.then(() => {
               const pc = pcClients.get(deviceId!);
               if (pc && pc.socket.readyState === pc.socket.OPEN) {
+                const clientEventId = claimed.data?.clientEventId ?? null;
                 pc.socket.send(JSON.stringify({
                   type: 'approval_forward',
                   payload: {
@@ -276,6 +628,7 @@ export function wsHandler(sql: postgres.Sql) {
                     eventId: msg.payload.eventId,
                     decision: msg.payload.decision,
                     message: msg.payload.message ?? '',
+                    clientEventId,
                   },
                 }));
               }
@@ -311,17 +664,26 @@ export function wsHandler(sql: postgres.Sql) {
             return;
           }
 
-          if (pc.sessionId !== sessionId) {
-            socket.send(JSON.stringify({ type: 'error', code: 'SESSION_NOT_ACTIVE' }));
-            return;
-          }
-
           pc.socket.send(JSON.stringify({
             type: 'command',
             payload: { sessionId, action, data },
           }));
         }).catch(() => {
           socket.send(JSON.stringify({ type: 'error', code: 'SERVER_ERROR' }));
+        });
+        return;
+      }
+
+      if (msg.type === 'detach_session') {
+        const sessionId = msg.payload?.sessionId ?? null;
+        if (!sessionId) {
+          socket.send(JSON.stringify({ type: 'error', code: 'INVALID_PAYLOAD' }));
+          return;
+        }
+        finishSession(sessionId, socket).then((result) => {
+          if (!result.ok) {
+            socket.send(JSON.stringify({ type: 'error', code: result.code }));
+          }
         });
         return;
       }
@@ -375,7 +737,40 @@ export function wsHandler(sql: postgres.Sql) {
       if (tok.token_type === 'device') {
         const client: WsClient = { socket, deviceId, tokenType: 'device' };
         pcClients.set(deviceId, client);
-        socket.on('close', () => pcClients.delete(deviceId));
+
+        // Cancel any pending disconnect cleanup (device reconnected within grace period)
+        const pendingTimer = disconnectTimers.get(deviceId);
+        if (pendingTimer) {
+          clearTimeout(pendingTimer);
+          disconnectTimers.delete(deviceId);
+        }
+
+        socket.on('close', () => {
+          // Stale socket: a newer connection already replaced this one.
+          // Do NOT delete pcClients or schedule cleanup — the new socket owns the sessions.
+          const current = pcClients.get(deviceId);
+          if (current?.socket !== socket) return;
+
+          pcClients.delete(deviceId);
+
+          // Delay session cleanup by DISCONNECT_GRACE_MS to tolerate brief reconnections
+          const timer = setTimeout(() => {
+            disconnectTimers.delete(deviceId);
+            sql`
+              SELECT id FROM sessions
+              WHERE device_id = ${deviceId} AND status = 'active'
+            `.then((rows: any) => {
+              const activeSessions = rows as { id: string }[];
+              for (const s of activeSessions) {
+                finishSession(s.id);
+              }
+            }).catch((err) => {
+              console.error('device disconnect cleanup error:', err);
+            });
+          }, DISCONNECT_GRACE_MS);
+
+          disconnectTimers.set(deviceId, timer);
+        });
       } else if (tok.token_type === 'client') {
         const client: WsClient = { socket, deviceId, tokenType: 'client' };
         if (!clientClients.has(deviceId)) {

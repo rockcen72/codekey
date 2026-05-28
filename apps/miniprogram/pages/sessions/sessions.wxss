@@ -1,18 +1,292 @@
-.container { display: flex; flex-direction: column; height: 100vh; }
-.header { display: flex; align-items: center; padding: 24rpx 32rpx; border-bottom: 1rpx solid #eee; }
-.title { flex: 1; font-size: 40rpx; font-weight: 700; }
-.ws-indicator { width: 16rpx; height: 16rpx; border-radius: 50%; background: #ccc; margin-right: 16rpx; }
-.ws-indicator.connected { background: #07c160; }
-.settings-link { font-size: 28rpx; color: #07c160; }
-.list { flex: 1; padding: 16rpx 24rpx; }
-.empty { display: flex; flex-direction: column; align-items: center; padding-top: 200rpx; font-size: 32rpx; color: #999; }
-.empty-hint { font-size: 26rpx; color: #ccc; margin-top: 16rpx; text-align: center; }
-.session-card { background: #fff; border-radius: 16rpx; padding: 24rpx; margin-bottom: 16rpx; box-shadow: 0 2rpx 8rpx rgba(0,0,0,0.06); }
-.card-header { display: flex; justify-content: space-between; margin-bottom: 12rpx; }
-.agent { font-size: 30rpx; font-weight: 600; }
-.status { font-size: 22rpx; padding: 4rpx 12rpx; border-radius: 8rpx; background: #f0f0f0; text-transform: uppercase; }
-.status.active { background: #e8f5e9; color: #2e7d32; }
-.status.paused { background: #fff3e0; color: #e65100; }
-.project { font-size: 26rpx; color: #666; }
-.card-footer { margin-top: 12rpx; }
-.time { font-size: 22rpx; color: #999; }
+.page {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--ck-bg);
+}
+
+/* ── Topbar ── */
+
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 32rpx 28rpx 12rpx;
+}
+
+.topbar-left {
+  display: flex;
+  flex-direction: column;
+  gap: 2rpx;
+}
+
+.brand {
+  display: block;
+  font-size: 40rpx;
+  font-weight: 800;
+  color: var(--ck-text);
+  letter-spacing: -0.5rpx;
+}
+
+.brand-sub {
+  display: block;
+  font-size: 22rpx;
+  color: var(--ck-subtle);
+}
+
+.top-actions {
+  display: flex;
+  align-items: center;
+  gap: 10rpx;
+}
+
+.conn-pill {
+  height: 44rpx;
+  display: flex;
+  align-items: center;
+  gap: 6rpx;
+  padding: 0 14rpx;
+  border: 1rpx solid var(--ck-border);
+  border-radius: var(--ck-radius-full);
+  background: var(--ck-surface);
+  font-size: 22rpx;
+  color: var(--ck-muted);
+}
+
+.conn-dot {
+  width: 10rpx;
+  height: 10rpx;
+  border-radius: 50%;
+  background: var(--ck-subtle);
+  transition: background 140ms ease;
+}
+
+.conn-pill.online .conn-dot {
+  background: var(--ck-success);
+}
+
+.icon-btn-wrap {
+  width: 44rpx;
+  height: 44rpx;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--ck-radius-full);
+  border: 1rpx solid var(--ck-border);
+  background: var(--ck-surface);
+}
+
+.icon-btn {
+  font-size: 26rpx;
+  color: var(--ck-muted);
+}
+
+/* ── Metrics chips ── */
+
+.metrics-row {
+  display: flex;
+  gap: 10rpx;
+  padding: 10rpx 28rpx 14rpx;
+}
+
+.metric-chip {
+  display: flex;
+  align-items: center;
+  gap: 6rpx;
+  height: 38rpx;
+  padding: 0 14rpx;
+  border-radius: var(--ck-radius-full);
+  background: var(--ck-surface);
+  border: 1rpx solid var(--ck-border);
+  font-size: 20rpx;
+  color: var(--ck-muted);
+}
+
+.metric-chip.danger {
+  border-color: #fecaca;
+  background: #fef2f2;
+  color: var(--ck-danger);
+}
+
+.metric-dot {
+  width: 8rpx;
+  height: 8rpx;
+  border-radius: 50%;
+}
+
+.metric-dot.active {
+  background: var(--ck-success);
+}
+
+.metric-dot.pending {
+  background: var(--ck-danger);
+}
+
+/* ── Session list ── */
+
+.list {
+  flex: 1;
+  padding: 0 28rpx 28rpx;
+}
+
+/* ── Session card (board card style) ── */
+
+.session-card {
+  display: flex;
+  align-items: stretch;
+  margin-bottom: 14rpx;
+  border: 1rpx solid var(--ck-border);
+  border-radius: var(--ck-radius-md);
+  background: var(--ck-surface);
+  box-shadow: 0 2rpx 8rpx rgba(28, 25, 23, 0.04);
+  transition: box-shadow 140ms ease, transform 140ms ease;
+  overflow: hidden;
+}
+
+.session-card:active {
+  box-shadow: 0 4rpx 12rpx rgba(28, 25, 23, 0.08);
+  transform: translateY(-1rpx);
+}
+
+/* Left accent bar for pending indicator */
+.card-accent {
+  width: 6rpx;
+  flex-shrink: 0;
+  background: transparent;
+  transition: background 140ms ease;
+}
+
+.card-accent.active {
+  /* color set via inline style from agentColor */
+}
+
+.card-body {
+  flex: 1;
+  min-width: 0;
+  padding: 20rpx 16rpx 20rpx 20rpx;
+}
+
+.card-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10rpx;
+}
+
+.card-title-row {
+  display: flex;
+  align-items: center;
+  gap: 8rpx;
+  min-width: 0;
+  flex: 1;
+}
+
+.session-title {
+  font-size: 30rpx;
+  font-weight: 700;
+  color: var(--ck-text);
+  flex: 1;
+  min-width: 0;
+}
+
+/* Agent-color dot before session time */
+.card-time-wrap {
+  display: flex;
+  align-items: center;
+  gap: 6rpx;
+  flex-shrink: 0;
+}
+
+.time-dot {
+  width: 14rpx;
+  height: 14rpx;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.session-time {
+  font-size: 20rpx;
+  color: var(--ck-subtle);
+  white-space: nowrap;
+}
+
+.session-subtitle {
+  display: block;
+  margin-top: 6rpx;
+  font-size: 24rpx;
+  color: var(--ck-muted);
+}
+
+.card-footer {
+  display: flex;
+  align-items: center;
+  gap: 8rpx;
+  margin-top: 12rpx;
+}
+
+.status-tag {
+  display: inline-flex;
+  align-items: center;
+  height: 30rpx;
+  line-height: 30rpx;
+  padding: 0 10rpx;
+  border-radius: var(--ck-radius-sm);
+  background: #f1f5f9;
+  color: var(--ck-muted);
+  font-size: 20rpx;
+}
+
+.status-tag.active {
+  background: #f0fdf4;
+  color: var(--ck-success);
+}
+
+.session-id {
+  font-size: 18rpx;
+  color: var(--ck-subtle);
+}
+
+.detach-btn {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 16rpx;
+  color: var(--ck-subtle);
+  font-size: 20rpx;
+  background: transparent;
+  transition: color 140ms ease;
+}
+
+.detach-btn:active {
+  color: var(--ck-danger);
+}
+
+/* ── Empty state ── */
+
+.empty {
+  padding: 200rpx 40rpx 0;
+  text-align: center;
+}
+
+.empty-icon {
+  display: block;
+  font-size: 72rpx;
+  color: var(--ck-border);
+  margin-bottom: 24rpx;
+}
+
+.empty-title {
+  display: block;
+  font-size: 32rpx;
+  font-weight: 700;
+  color: var(--ck-text);
+}
+
+.empty-text {
+  display: block;
+  margin-top: 10rpx;
+  font-size: 26rpx;
+  color: var(--ck-muted);
+  line-height: 1.6;
+}

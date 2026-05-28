@@ -25,7 +25,7 @@ export async function enableHook(context: vscode.ExtensionContext, statusBar: St
     installHook(scriptsDir);
 
     try {
-      bridgeService.start();
+      bridgeService.ensureStarted();
     } catch (err) {
       uninstallHook();
       const msg = err instanceof Error ? err.message : 'Failed to start bridge';

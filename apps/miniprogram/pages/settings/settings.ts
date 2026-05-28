@@ -1,6 +1,6 @@
-import { getDeviceId, getServerUrl, clearAuth } from '../../services/storage';
+import { getDeviceId, getServerUrl, setServerUrl, clearAuth } from '../../services/storage';
 
-const app = getApp();
+const app = getApp<any>();
 
 Page({
   data: {
@@ -19,6 +19,23 @@ Page({
     wx.navigateBack();
   },
 
+  onServerUrlInput(e: any) {
+    this.setData({ serverUrl: e.detail.value });
+  },
+
+  saveServerUrl() {
+    const url = this.data.serverUrl.trim();
+    if (!url) {
+      wx.showToast({ title: '服务器地址不能为空', icon: 'none' });
+      return;
+    }
+    setServerUrl(url);
+    // Re-init WS with new URL
+    app.destroyWs();
+    app.initWs();
+    wx.showToast({ title: '已保存，重新连接中', icon: 'success' });
+  },
+
   unbindDevice() {
     wx.showModal({
       title: '解绑设备',
@@ -29,10 +46,7 @@ Page({
           // server's DELETE /devices/:id endpoint does not accept.
           // Clear local auth and disconnect WS.
           clearAuth();
-          const ws = app.globalData.ws as any;
-          if (ws) { ws.disconnect(); }
-          app.globalData.ws = null;
-          app.globalData.wsConnected = false;
+          app.destroyWs();
           wx.reLaunch({ url: '/pages/login/login' });
         }
       },

@@ -1,14 +1,12 @@
 type MessageHandler = (payload: any) => void;
 
-const MAX_RECONNECT_ATTEMPTS = 5;
-const RECONNECT_INTERVAL = 5000;
+const RECONNECT_INTERVAL = 3000;
 
 export class WsClient {
   private socketTask: wx.SocketTask | null = null;
   private deviceId: string;
   private token: string;
   private serverUrl: string;
-  private reconnectAttempts = 0;
   private reconnectTimer: number | null = null;
   private heartbeatTimer: number | null = null;
   private destroyed = false;
@@ -36,7 +34,6 @@ export class WsClient {
     });
 
     this.socketTask.onOpen(() => {
-      this.reconnectAttempts = 0;
       this.startHeartbeat();
       this.emit('connected');
     });
@@ -66,9 +63,8 @@ export class WsClient {
         return;
       }
 
-      if (!this.destroyed && this.reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
+      if (!this.destroyed) {
         this.reconnectTimer = setTimeout(() => {
-          this.reconnectAttempts++;
           this.connect();
         }, RECONNECT_INTERVAL);
       }

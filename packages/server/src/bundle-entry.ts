@@ -1,3 +1,8 @@
+/**
+ * Bundle entry point for the relay server.
+ * Unlike src/index.ts, this always starts the server (no import.meta check,
+ * which doesn't work in CJS bundles).
+ */
 import { buildApp } from './app.js';
 
 const PORT = parseInt(process.env.PORT ?? '3000', 10);

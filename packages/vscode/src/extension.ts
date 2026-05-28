@@ -3,7 +3,7 @@ import { loadCredentials } from './auth/credentials.js';
 import { StatusBar } from './status/bar.js';
 import { showDashboard } from './commands/show-dashboard.js';
 import { pairDevice } from './commands/pair.js';
-import { findExistingClaudeTerminal, classifyTerminal, startClaudeCode } from './commands/start-claude.js';
+import { findExistingClaudeTerminal, classifyTerminal, startClaudeCode, ensureCcSessionSync } from './commands/start-claude.js';
 import { enableHook } from './commands/enable-hook.js';
 import { SidebarProvider } from './webview/sidebar-provider.js';
 import { CommandRelayService } from './services/command-relay.js';
@@ -15,6 +15,7 @@ let statusBar: StatusBar | null = null;
 export function activate(context: vscode.ExtensionContext) {
   log('=== CodeKey activating ===');
   log('windowId via vscode.env.sessionId:', vscode.env.sessionId);
+  BridgeStatusService.setExtensionPath(context.extensionUri.fsPath);
   // Don't force-show — let the user open it if they want
 
   // Expose window ID to hook scripts via environment so they can tag hook events
@@ -25,6 +26,9 @@ export function activate(context: vscode.ExtensionContext) {
 
   const creds = loadCredentials();
   log(`creds: ${creds ? 'yes' : 'no'}`);
+
+  // Allow self-signed certificates for relay HTTPS
+  process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
 
   if (creds?.deviceToken) {
     fetch(`${creds.relayUrl}/health`)
@@ -51,6 +55,9 @@ export function activate(context: vscode.ExtensionContext) {
     log(`auto-bound to existing terminal: "${existingTerm.name}"`);
     commandRelay.setTerminal(existingTerm);
   }
+
+  // Bridge + hook + label sync (session created on Attach, not auto)
+  ensureCcSessionSync(context);
 
   // Dynamic binding: detect new Claude Code terminals opened after activation
   context.subscriptions.push(
@@ -90,9 +97,9 @@ export function activate(context: vscode.ExtensionContext) {
         vscode.window.showErrorMessage(`pair error: ${err}`);
       }
     }),
-    vscode.commands.registerCommand('codekey.startClaudeCode', () => {
+    vscode.commands.registerCommand('codekey.startClaudeCode', async () => {
       log('cmd: start');
-      const term = startClaudeCode(context, statusBar!);
+      const term = await startClaudeCode(context, statusBar!);
       if (term) commandRelay.setTerminal(term);
     }),
     vscode.commands.registerCommand('codekey.enableHook', () => {
@@ -108,6 +115,15 @@ export function activate(context: vscode.ExtensionContext) {
 }
 
 export function deactivate() {
+  // Fire-and-forget: tell bridge to deactivate all sessions for this window.
+  // Uses deactivate_by_window which matches both window-level and tab-level sessions.
+  const windowId = vscode.env.sessionId;
+  fetch('http://127.0.0.1:3001/v1/close-window', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ windowId }),
+  }).catch(() => { /* bridge may already be gone */ });
+
   statusBar?.dispose();
   statusBar = null;
   BridgeStatusService.getInstance().dispose();

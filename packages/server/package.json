@@ -24,6 +24,7 @@
   },
   "devDependencies": {
     "@types/uuid": "^10.0.0",
+    "esbuild": "^0.27.7",
     "node-pg-migrate": "^7.0.0",
     "typescript": "^5.7.0",
     "vitest": "^3.2.4"

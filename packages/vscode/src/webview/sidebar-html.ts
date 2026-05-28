@@ -22,12 +22,36 @@ export interface SidebarState {
   pendingApprovals: PendingApprovalItem[];
   sessions: SessionResponse[];
   events: Record<string, EventResponse[]>;
+  claudeSessions: ClaudeSessionItem[];
+}
+
+export interface ClaudeSessionItem {
+  sessionId: string;
+  title: string;
+  cwd: string;
+  updatedAt: string;
+  attached?: boolean;
+  canDetach?: boolean;
 }
 
 // ── Helpers ──────────────────────────────────────────────
 
 function h(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+function truncate(s: string, maxLen: number): string {
+  if (s.length <= maxLen) return s;
+  return s.slice(0, maxLen) + '…';
+}
+
+function formatTime(iso: string): string {
+  if (!iso) return '';
+  const diff = Date.now() - new Date(iso).getTime();
+  if (diff < 60_000) return 'just now';
+  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}m ago`;
+  if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)}h ago`;
+  return new Date(iso).toLocaleDateString();
 }
 
 function tag(text: string, cls: string): string {
@@ -81,10 +105,6 @@ function renderAgents(state: SidebarState): string {
         <div class="muted">${h(a.description)}</div>
         ${a.statusLine ? `<div class="status-line">${h(a.statusLine)}</div>` : ''}
         ${a.lastMessage ? `<div class="last-msg muted">${h(a.lastMessage)}</div>` : ''}
-        ${a.status === 'available' ? `<div class="button-row">
-          <button class="btn btn-primary" data-action="start-agent" data-agent="${h(a.id)}">Launch</button>
-          <button class="btn" data-action="set-default" data-agent="${h(a.id)}">Default</button>
-        </div>` : ''}
       </div>`;
     }).join('')}
   </div>`;
@@ -111,26 +131,66 @@ function renderSessions(state: SidebarState): string {
     pendingBySession[a.serverSessionId]!.push(a);
   }
 
+  // Sort newest first
+  const sorted = state.sessions.slice().sort((a, b) => new Date(b.last_active_at || b.created_at).getTime() - new Date(a.last_active_at || a.created_at).getTime());
+
   return `<div class="section">
     <div class="section-title"><span>SESSIONS</span>${tag(String(state.sessions.length), '')}</div>
-    ${state.sessions.map(s => {
+    ${sorted.map(s => {
       const sid = s.id.length > 12 ? s.id.slice(0, 8) + '...' + s.id.slice(-3) : s.id;
-      const claudeSid = s.metadata?.claudeSessionId ?? '';
-      const label = claudeSid ? claudeSid.slice(0, 8) : sid;
+      const displayTitle = s.metadata?.title || s.metadata?.claudeSessionId?.slice(0, 8) || sid;
       const perSession = pendingBySession[s.id] ?? [];
       const sTag = perSession.length > 0 ? tag(`${perSession.length} pending`, 'orange') : tag('idle', '');
+      const ts = s.last_active_at || s.created_at;
 
       return `<div class="session-group">
         <div class="item">
           <div class="row">
-            <span><b>${h(s.agent_type)}</b> ${h(label)}</span>
+            <span><b>${h(s.agent_type)}</b> ${h(truncate(displayTitle, 40))}</span>
             ${sTag}
           </div>
-          <div class="muted">${h(new Date(s.created_at).toLocaleTimeString())}</div>
+          <div class="row">
+            <span class="muted" style="font-size:10px;font-family:monospace">${h(sid)}</span>
+            <span class="muted" style="font-size:10px">${h(formatTime(ts))}</span>
+          </div>
         </div>
         ${renderPendingList(perSession)}
       </div>`;
     }).join('')}
+  </div>`;
+}
+
+function renderClaudeSessions(state: SidebarState): string {
+  const items = state.claudeSessions.slice().sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+  return `<div class="section">
+    <div class="section-header" style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+      <span class="section-title" style="font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:0.04em">Local Sessions</span>
+      <span style="display:flex;gap:4px">
+        <button class="ico-btn" data-action="refreshClaudeSessions" title="Refresh">↻</button>
+      </span>
+    </div>
+    ${items.length === 0 ? '<div class="muted" style="font-size:11px">No local Claude sessions found</div>' : ''}
+    ${items.map(s => `
+      <div class="item" style="padding:6px 0">
+        <div style="font-weight:500;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${h(s.title || s.sessionId.slice(0, 8))}">${h(truncate(s.title || s.sessionId.slice(0, 8), 60))}</div>
+        <div class="row" style="margin:2px 0">
+          <span class="muted" style="font-size:10px">${h(truncate(s.cwd || '', 50))}</span>
+          <span class="muted" style="font-size:10px">${h(formatTime(s.updatedAt))}</span>
+        </div>
+        <div class="row" style="margin:2px 0">
+          <span class="muted" style="font-size:10px;font-family:monospace">${h(s.sessionId.slice(0, 8))}</span>
+          ${s.canDetach
+            ? `<button class="${s.attached ? 'btn btn-attached' : 'btn'}"
+                 data-action="toggleAttachClaudeSession"
+                 data-session-id="${h(s.sessionId)}"
+                 data-attached="${s.attached ? 'true' : 'false'}"
+                 style="font-size:10px">${s.attached ? 'Attached' : 'Attach'}</button>`
+            : `<button class="btn" data-action="attachClaudeSession"
+                 data-session-id="${h(s.sessionId)}"
+                 style="font-size:10px">Attach</button>`}
+        </div>
+      </div>
+    `).join('')}
   </div>`;
 }
 
@@ -156,6 +216,7 @@ export function renderSidebar(state: SidebarState): string {
 <body>
 ${renderDevice(state)}
 ${renderAgents(state)}
+${renderClaudeSessions(state)}
 ${renderSessions(state)}
 ${renderSubscribe()}
 <script nonce="${NONCE}">
@@ -167,8 +228,14 @@ ${renderSubscribe()}
       : null;
     if (!target) return;
     const action = target.dataset.action;
-    if (action === 'start-agent' || action === 'set-default') {
-      api.postMessage({ action, agent: target.dataset.agent });
+    if (action === 'attachClaudeSession') {
+      api.postMessage({ action, sessionId: target.dataset.sessionId });
+    } else if (action === 'toggleAttachClaudeSession') {
+      api.postMessage({
+        action,
+        sessionId: target.dataset.sessionId,
+        attached: target.dataset.attached === 'true',
+      });
     } else {
       api.postMessage({ action });
     }
@@ -235,4 +302,12 @@ body {
 .item.danger { border-left: 3px solid #e5534b; padding-left: 8px; }
 .cmd { font-family: monospace; font-size: 11px; word-break: break-all; margin-bottom: 4px; }
 .subscription { font-size: 11px; color: var(--vscode-descriptionForeground); text-align: center; padding: 4px 0; }
+.ico-btn { background:none; border:none; color:var(--vscode-textLink-foreground); cursor:pointer; font-size:14px; padding:2px 4px; line-height:1; }
+.ico-btn:hover { opacity:0.8; }
+.session-group { margin-bottom:4px; }
+.btn-attached {
+  background: var(--vscode-button-background);
+  color: var(--vscode-button-foreground);
+  border-color: var(--vscode-button-background);
+}
 `;

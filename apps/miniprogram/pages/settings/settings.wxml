@@ -13,7 +13,7 @@
     </view>
     <view class="info-row">
       <text class="label">服务器</text>
-      <text class="value">{{serverUrl}}</text>
+      <input class="value input" value="{{serverUrl}}" bindinput="onServerUrlInput" bindblur="saveServerUrl" />
     </view>
   </view>
 

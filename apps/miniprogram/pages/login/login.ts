@@ -1,10 +1,12 @@
-import { hasAuth } from '../../services/storage';
+import { hasAuth, getServerUrl, setServerUrl } from '../../services/storage';
 
 Page({
   data: {
     canScan: true,
     showManualInput: false,
     manualCode: '',
+    showServerInput: false,
+    serverUrl: getServerUrl(),
   },
 
   onLoad() {
@@ -42,5 +44,23 @@ Page({
     } else {
       wx.showToast({ title: '配对码必须为 8 位字符', icon: 'none' });
     }
+  },
+
+  toggleServerInput() {
+    this.setData({ showServerInput: !this.data.showServerInput });
+  },
+
+  onServerUrlInput(e: any) {
+    this.setData({ serverUrl: e.detail.value });
+  },
+
+  saveServerUrl() {
+    const url = this.data.serverUrl.trim();
+    if (!url) {
+      wx.showToast({ title: '服务器地址不能为空', icon: 'none' });
+      return;
+    }
+    setServerUrl(url);
+    wx.showToast({ title: '服务器地址已保存', icon: 'success' });
   },
 });

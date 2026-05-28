@@ -26,8 +26,43 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
 
     this._bridgeDisposable = this._bridgeService.onDidChange(() => this._pushState());
 
+    this._bridgeService.ensureStarted();
     this._pushState();
     this._startPolling();
+  }
+
+  private async fetchRecentClaudeSessions(): Promise<SidebarState['claudeSessions']> {
+    try {
+      const res = await fetch('http://127.0.0.1:3001/v1/claude-sessions/recent?limit=20');
+      if (!res.ok) return [];
+      const body = await res.json() as { ok: boolean; sessions?: any[] };
+      return (body.ok ? body.sessions ?? [] : []).map((s: any) => ({
+        sessionId: s.sessionId,
+        title: s.title || '',
+        cwd: s.cwd || '',
+        updatedAt: s.updatedAt || '',
+      }));
+    } catch {
+      return [];
+    }
+  }
+
+  private async attachClaudeSession(sessionId: string): Promise<void> {
+    try {
+      const res = await fetch('http://127.0.0.1:3001/v1/claude-sessions/attach', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sessionId }),
+      });
+      if (res.ok) {
+        vscode.window.showInformationMessage(`Session ${sessionId.slice(0, 8)} attached`);
+      } else {
+        const body = await res.json().catch(() => ({} as Record<string, unknown>));
+        vscode.window.showErrorMessage(`Attach failed: ${(body as Record<string, unknown>).error || res.statusText}`);
+      }
+    } catch {
+      vscode.window.showErrorMessage('Attach failed: bridge not available');
+    }
   }
 
   private async _pushState(): Promise<void> {
@@ -120,6 +155,46 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       return { ...a, runtimeStatus: 'active' as const, statusLine, lastMessage };
     });
 
+    // Check bridge capabilities + attached sessions
+    let canDetach = false;
+    let attachedSessions: string[] = [];
+    try {
+      const healthResp = await fetch('http://127.0.0.1:3001/v1/health');
+      if (healthResp.ok) {
+        const health = await healthResp.json() as { supports?: string[] };
+        canDetach = health.supports?.includes('detach-session') ?? false;
+      }
+    } catch {}
+
+    if (canDetach) {
+      try {
+        const attResp = await fetch('http://127.0.0.1:3001/v1/attached-sessions');
+        if (attResp.ok) {
+          const attBody = await attResp.json() as { attached?: string[] };
+          attachedSessions = attBody.attached ?? [];
+        }
+      } catch {}
+    }
+
+    // Build lookup: claudeSessionId → relay session title (synced tab label)
+    const relayTitleByClaudeSessionId = new Map<string, string>();
+    for (const s of sessions) {
+      const csid = s.metadata?.claudeSessionId;
+      const title = s.metadata?.title;
+      if (csid && title) {
+        relayTitleByClaudeSessionId.set(csid, title);
+      }
+    }
+
+    // Fetch local transcript sessions and overlay relay titles where available
+    const recentSessions = await this.fetchRecentClaudeSessions();
+    const mergedClaudeSessions = recentSessions.map(s => ({
+      ...s,
+      title: relayTitleByClaudeSessionId.get(s.sessionId) || s.title,
+      attached: attachedSessions.includes(s.sessionId),
+      canDetach,
+    }));
+
     const state: SidebarState = {
       deviceStatus,
       phoneName: 'WeChat Mini Program',
@@ -128,6 +203,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       pendingApprovals,
       sessions,
       events,
+      claudeSessions: mergedClaudeSessions,
     };
 
     this._view.webview.html = renderSidebar(state);
@@ -153,10 +229,22 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       case 'hook-settings':
         vscode.commands.executeCommand('codekey.enableHook');
         break;
-      case 'start-agent':
-        vscode.commands.executeCommand('codekey.startClaudeCode');
+      case 'refreshClaudeSessions':
+        this._pushState();
         break;
-      case 'set-default':
+      case 'attachClaudeSession':
+        this.attachClaudeSession(msg.sessionId).then(() => this._pushState());
+        break;
+      case 'toggleAttachClaudeSession':
+        if (msg.attached) {
+          fetch('http://127.0.0.1:3001/v1/detach-session', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ claudeSessionId: msg.sessionId }),
+          }).then(() => this._pushState());
+        } else {
+          this.attachClaudeSession(msg.sessionId).then(() => this._pushState());
+        }
         break;
     }
   }

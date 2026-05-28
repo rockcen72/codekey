@@ -8,9 +8,9 @@
   ],
   "window": {
     "navigationBarTitleText": "CodeKey",
-    "navigationBarTextStyle": "white",
-    "navigationBarBackgroundColor": "#07c160",
-    "backgroundColor": "#f8f8f8"
+    "navigationBarTextStyle": "black",
+    "navigationBarBackgroundColor": "#f5f0eb",
+    "backgroundColor": "#f5f0eb"
   },
   "style": "v2",
   "sitemapLocation": "sitemap.json"

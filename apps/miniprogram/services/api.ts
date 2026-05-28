@@ -43,6 +43,15 @@ export interface Session {
   device_id: string;
   agent_type: string;
   status: string;
+  pending_count?: number;
+  metadata?: {
+    claudeSessionId?: string;
+    runtime?: string;
+    title?: string;
+    cwd?: string;
+    source?: string;
+    windowId?: string;
+  };
   created_at: string;
   last_active_at: string;
 }

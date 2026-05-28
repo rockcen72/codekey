@@ -24,7 +24,8 @@ export type AgentEventType =
   | 'diff_ready'
   | 'error'
   | 'heartbeat'
-  | 'session_idle';
+  | 'session_idle'
+  | 'user_prompt';
 
 // ── Event Data ──────────────────────────────────────────
 
@@ -56,6 +57,15 @@ export interface ErrorEventData {
   cwd?: string;
 }
 
+export interface UserPromptEventData {
+  prompt: string;
+  summary: string;
+  timestamp?: string;
+  index?: number;
+}
+
+export const MAX_PROMPT_LENGTH = 4000;
+
 export interface DiffEventData {
   files: string[];
   summary: string;
@@ -70,7 +80,8 @@ export type AgentEventPayload =
   | ({ type: 'diff_ready' } & DiffEventData)
   | ({ type: 'error' } & ErrorEventData)
   | ({ type: 'heartbeat' } & Record<string, never>)
-  | ({ type: 'session_idle' } & { idleMinutes: number });
+  | ({ type: 'session_idle' } & { idleMinutes: number })
+  | ({ type: 'user_prompt' } & UserPromptEventData);
 
 // ── Wire Protocol ──────────────────────────────────────
 
@@ -128,9 +139,15 @@ export type WsMessage =
   | { type: 'approval_forward'; payload: { sessionId: string; eventId: string; decision: string; message: string } }
   | { type: 'event_ack'; payload: { clientEventId?: string | null; serverEventId: string } }
   | { type: 'session_registered'; payload: { sessionId: string; clientRequestId?: string | null; claudeSessionId?: string | null } }
+  | { type: 'session_deactivated'; payload: { sessionId: string } }
+  | { type: 'attached_sessions'; payload: { sessions: { id: string; claudeSessionId: string | null }[] } }
   | { type: 'pairing_ready'; payload: { deviceId: string } }
   | { type: 'device_token'; payload: { deviceToken: string; deviceId: string } }
-  | { type: 'error'; payload: { code: string } };
+  | { type: 'error'; payload: { code: string } }
+  // Raw-only client-originated messages (sent via sendRaw, not typed serialization):
+  | { type: 'attach_session'; payload: { sessionId: string; claudeSessionId: string; metadata?: SessionMetadataPayload } }
+  | { type: 'detach_session'; payload: { sessionId: string } }
+  | { type: 'query_attached_sessions' };
 
 // ── Device Pairing ─────────────────────────────────────
 
@@ -145,4 +162,15 @@ export interface DeviceInfo {
 export interface PairingCode {
   code: string;
   expiresAt: string;
+}
+
+export interface SessionMetadataPayload {
+  claudeSessionId?: string;
+  runtime?: 'claude-code';
+  title?: string;
+  cwd?: string;
+  source?: 'hook' | 'transcript_attach' | 'managed_acp' | 'provisional_tab';
+  windowId?: string;
+  attachedAt?: string;
+  lastHookAt?: string;
 }

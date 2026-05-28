@@ -1,14 +1,16 @@
-.container { display: flex; flex-direction: column; min-height: 100vh; }
-.header { display: flex; align-items: center; padding: 24rpx 32rpx; border-bottom: 1rpx solid #eee; }
-.back { font-size: 28rpx; color: #07c160; margin-right: 16rpx; }
-.title { font-size: 36rpx; font-weight: 700; }
-.section { padding: 32rpx; border-bottom: 1rpx solid #f0f0f0; }
-.section-title { font-size: 28rpx; color: #999; margin-bottom: 16rpx; display: block; }
-.info-row { display: flex; align-items: center; padding: 12rpx 0; }
-.label { font-size: 28rpx; color: #666; width: 140rpx; }
-.value { font-size: 28rpx; color: #333; flex: 1; }
+.container { display: flex; flex-direction: column; min-height: 100vh; background: var(--ck-bg); }
+.header { display: flex; align-items: center; padding: 28rpx 32rpx 14rpx; border-bottom: 1rpx solid var(--ck-border); background: var(--ck-surface); }
+.back { font-size: 28rpx; color: var(--ck-primary); margin-right: 16rpx; font-weight: 600; }
+.title { font-size: 36rpx; font-weight: 800; color: var(--ck-text); }
+.section { padding: 24rpx 32rpx; }
+.section-title { font-size: 24rpx; font-weight: 700; color: var(--ck-muted); margin-bottom: 14rpx; display: block; text-transform: uppercase; letter-spacing: 1rpx; }
+.info-row { display: flex; align-items: center; padding: 14rpx 0; }
+.label { font-size: 26rpx; color: var(--ck-muted); width: 140rpx; flex-shrink: 0; }
+.value { font-size: 28rpx; color: var(--ck-text); flex: 1; }
 .value.code { font-family: monospace; font-size: 24rpx; }
-.copy-btn { font-size: 24rpx; color: #07c160; padding: 4rpx 12rpx; }
-.unbind-btn { margin-top: 16rpx; background: #e64340; color: #fff; border-radius: 12rpx; height: 80rpx; line-height: 80rpx; font-size: 30rpx; }
-.about { }
-.about-text { font-size: 26rpx; color: #999; display: block; margin-bottom: 8rpx; }
+.value.input { border: 1rpx solid var(--ck-border); border-radius: var(--ck-radius-sm); padding: 8rpx 12rpx; font-size: 24rpx; background: var(--ck-bg); }
+.copy-btn { font-size: 22rpx; color: var(--ck-primary); font-weight: 600; padding: 4rpx 12rpx; border: 1rpx solid var(--ck-border); border-radius: var(--ck-radius-sm); }
+.unbind-btn { margin-top: 20rpx; width: 100%; height: 80rpx; line-height: 80rpx; border-radius: var(--ck-radius-md); background: #fef2f2; color: var(--ck-danger); font-size: 28rpx; font-weight: 700; border: 1rpx solid #fecaca; text-align: center; }
+.unbind-btn:active { background: #fee2e2; }
+.about { padding-bottom: 40rpx; }
+.about-text { font-size: 26rpx; color: var(--ck-muted); display: block; margin-bottom: 8rpx; }

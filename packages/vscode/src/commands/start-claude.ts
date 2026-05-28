@@ -12,64 +12,103 @@ const BRIDGE_URL = 'http://127.0.0.1:3001';
 
 const CLAUDE_CODE_VIEW_TYPE = 'claudeVSCodePanel';
 
+/** Guard: only install bridge/hook once per window. */
+let _bridgeSetupDone = false;
+/** Guard: only one label sync + tab watcher per window. */
+let _tabWatcherSetup = false;
+/** Guard: only one label sync active at a time. */
+let _labelSyncActive = false;
+
 /** Tell the bridge to use this label for the next session registration. */
-function setSessionLabel(label: string): void {
+function setSessionLabel(label: string, windowId?: string): void {
   fetch(`${BRIDGE_URL}/v1/session-label`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ label, windowId: vscode.env.sessionId }),
+    body: JSON.stringify({ label, windowId: windowId || vscode.env.sessionId }),
   }).catch(() => { /* bridge may not be ready yet */ });
 }
 
-/** Find Claude Code webview panel tab and return its label, if visible. */
+/** Find Claude Code webview panel tab and return its label.
+ *  Prefers non-default labels (i.e. not "Claude Code") so that
+ *  multi-tab scenarios pick the tab whose title is already a topic summary. */
 function getClaudeTabLabel(): string | undefined {
+  let fallback: string | undefined;
   for (const group of vscode.window.tabGroups.all) {
     for (const tab of group.tabs) {
-      if (tab.input instanceof vscode.TabInputWebview &&
-          tab.input.viewType === CLAUDE_CODE_VIEW_TYPE) {
-        return tab.label;
+      const isWv = tab.input instanceof vscode.TabInputWebview;
+      const vt = isWv ? (tab.input as any).viewType : undefined;
+      if (isWv) log(`getClaudeTabLabel: tab="${tab.label}" viewType="${vt}"`);
+      if (isWv && vt && vt.endsWith(CLAUDE_CODE_VIEW_TYPE)) {
+        if (tab.label !== 'Claude Code') return tab.label;
+        if (!fallback) fallback = tab.label;
       }
     }
   }
-  return undefined;
+  return fallback;
 }
 
 /**
  * Start watching the Claude Code tab label and sync it to the bridge.
- * The initial label is "Claude Code" and gets updated by the CC extension
- * to reflect the conversation topic (e.g. "分析这段代码").
- * Polls until we get a meaningful label or a max number of attempts.
+ * Two-phase polling:
+ *   - Phase 1 (30s): poll every 1.5s for fast initial label detection
+ *   - Phase 2 (indefinite): poll every 10s to catch later label changes
+ * Also syncs on tab change events for instant feedback.
+ * Returns a Disposable that cleans up all timers and listeners.
  */
-function startTabLabelSync(): void {
-  const seen = new Set<string>();
-  let attempts = 0;
+function startTabLabelSync(windowId: string): vscode.Disposable {
+  if (_labelSyncActive) return { dispose: () => {} };
+  _labelSyncActive = true;
   let lastLabel = '';
+  let fastAttempts = 0;
 
   const syncLabel = () => {
     const lbl = getClaudeTabLabel();
-    if (lbl && lbl !== lastLabel) {
+    log(`syncLabel: getClaudeTabLabel()="${lbl}" lastLabel="${lastLabel}"`);
+    if (lbl && lbl !== 'Claude Code' && lbl !== lastLabel) {
       lastLabel = lbl;
-      if (lbl !== 'Claude Code' || !seen.has(lbl)) {
-        setSessionLabel(lbl);
-      }
-      seen.add(lbl);
+      log(`syncLabel: sending label "${lbl}" for window ${windowId}`);
+      setSessionLabel(lbl);
     }
   };
 
-  // Check every 1.5s for up to 30s, then let tab changes keep us in sync
+  // Phase 1: fast poll every 1.5s for 30s
   syncLabel();
-  const timer = setInterval(() => {
-    attempts++;
+  const fastTimer = setInterval(() => {
+    fastAttempts++;
     syncLabel();
-    if (attempts >= 20) clearInterval(timer);
+    if (fastAttempts >= 20) clearInterval(fastTimer);
   }, 1500);
 
-  // Also catch tab changes (open/close/move) after the poll stops
-  vscode.window.tabGroups.onDidChangeTabs(() => {
-    if (attempts >= 20) {
-      syncLabel(); // one last check
-    }
+  // Phase 2: slow poll every 10s indefinitely (catches late label changes)
+  const slowTimer = setInterval(() => {
+    syncLabel();
+  }, 10_000);
+
+  // Instant sync on tab changes
+  const tabListener = vscode.window.tabGroups.onDidChangeTabs(() => {
+    syncLabel();
   });
+
+  return {
+    dispose: () => {
+      clearInterval(fastTimer);
+      clearInterval(slowTimer);
+      tabListener.dispose();
+    },
+  };
+}
+
+/** Deactivate the session when the CC tab is closed. */
+async function deactivateSessionForWindow(windowId: string): Promise<void> {
+  try {
+    await fetch(`${BRIDGE_URL}/v1/deactivate-session`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ windowId }),
+    });
+  } catch {
+    // bridge may already be gone
+  }
 }
 
 /** Match result for terminal name classification */
@@ -109,6 +148,52 @@ export function findExistingClaudeTerminal(): vscode.Terminal | undefined {
 const CLAUDE_CODE_EXT_ID = 'anthropic.claude-code';
 
 /**
+ * Ensure CC tab session sync is active for this window.
+ * Idempotent — safe to call from activate() and startClaudeCode().
+ *
+ * Behavior:
+ *   - Always: installs hook + starts bridge (idempotent)
+ *   - Starts tab label sync (polls CC tab title and sends to bridge)
+ *
+ * Note: Does NOT auto-create sessions. Sessions are created on-demand
+ * when user clicks Attach in the sidebar or when a hook event fires.
+ *
+ * Returns true if setup succeeded (CC extension installed + credentials exist).
+ */
+export function ensureCcSessionSync(context: vscode.ExtensionContext): boolean {
+  const creds = loadCredentials();
+  if (!creds?.deviceToken) return false;
+
+  const ccExt = vscode.extensions.getExtension(CLAUDE_CODE_EXT_ID);
+  if (!ccExt) return false;
+
+  // Install hook + start bridge (once per window)
+  if (!_bridgeSetupDone) {
+    _bridgeSetupDone = true;
+    const scriptsDir = vscode.Uri.joinPath(context.extensionUri, 'scripts').fsPath;
+    installHook(scriptsDir);
+    bridgeService.ensureStarted();
+  }
+
+  // Tab label sync (once per window) — only syncs labels, does NOT auto-create sessions.
+  // Sessions are created on-demand when user clicks Attach in the sidebar.
+  if (!_tabWatcherSetup) {
+    _tabWatcherSetup = true;
+    const windowId = vscode.env.sessionId;
+    log('ensureCcSessionSync: setting up tab watcher for window', windowId);
+
+    // Clean up old window-level session (from before multi-tab support or session-per-tab)
+    deactivateSessionForWindow(windowId);
+
+    // Start label sync — polls for the CC tab label and sends it to the bridge
+    // so that when user clicks Attach, the session gets the correct title.
+    context.subscriptions.push(startTabLabelSync(windowId));
+  }
+
+  return true;
+}
+
+/**
  * Launch or activate Claude Code.
  *
  * Priority:
@@ -119,10 +204,10 @@ const CLAUDE_CODE_EXT_ID = 'anthropic.claude-code';
  * Returns a terminal only in modes 2/3 (for phone→agent command relay).
  * Returns undefined in mode 1 (hook system handles approval natively).
  */
-export function startClaudeCode(
+export async function startClaudeCode(
   _context: vscode.ExtensionContext,
   statusBar: StatusBar,
-): vscode.Terminal | undefined {
+): Promise<vscode.Terminal | undefined> {
   const creds = loadCredentials();
 
   if (!creds || !creds.deviceToken) {
@@ -137,23 +222,14 @@ export function startClaudeCode(
   log(`ccExt=${!!ccExt} id=${CLAUDE_CODE_EXT_ID}`);
   if (ccExt) {
     log('startClaude: mode1 — starting bridge');
-    const scriptsDir = vscode.Uri.joinPath(_context.extensionUri, 'scripts').fsPath;
-    installHook(scriptsDir);
-    try {
-      bridgeService.start();
-      log('startClaude: bridgeService.start() OK');
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      log(`[CodeKey] bridge start failed: ${msg}`);
-    }
 
+    // Ensure bridge + tab watcher are active (tab watcher handles per-tab session lifecycle)
+    ensureCcSessionSync(_context);
+
+    // Focus editor first to avoid CC picking up an output channel as @-mention reference
+    await vscode.commands.executeCommand('workbench.action.focusActiveEditorGroup');
     // Open/focus Claude Code tab
-    // If a CC editor tab already exists, focus it; otherwise open a new one.
-    vscode.commands.executeCommand('claude-vscode.focus');
-
-    // Watch the tab label and sync to bridge — the CC extension updates
-    // the panel title to reflect the conversation topic (e.g. user's first message).
-    startTabLabelSync();
+    await vscode.commands.executeCommand('claude-vscode.focus');
 
     statusBar.set('paired');
     return; // no terminal to manage — hooks handle the flow

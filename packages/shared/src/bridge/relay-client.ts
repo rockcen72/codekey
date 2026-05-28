@@ -10,7 +10,7 @@ import {
   serializeMessage,
   deserializeMessage,
   createPing,
-} from '@codekey/shared';
+} from '../index.js';
 
 export class RelayClient extends EventEmitter {
   private ws: WebSocket | null = null;
@@ -22,6 +22,7 @@ export class RelayClient extends EventEmitter {
   private reconnectAttempt = 0;
   private intentionalClose = false;
   private pendingEvents: WsMessage[] = [];
+  private pendingRaw: string[] = [];
   private lastEventId: string | null = null;
 
   constructor(deviceId: string, token: string, relayUrl: string, isPairing = false) {
@@ -43,7 +44,7 @@ export class RelayClient extends EventEmitter {
     }
 
     this.intentionalClose = false;
-    this.ws = new WebSocket(url.toString());
+    this.ws = new WebSocket(url.toString(), { rejectUnauthorized: false });
 
     this.ws.on('open', () => {
       this.reconnectAttempt = 0;
@@ -64,6 +65,12 @@ export class RelayClient extends EventEmitter {
         }
         if (msg.type === 'session_registered') {
           this.emit('session_registered', msg.payload);
+        }
+        if (msg.type === 'session_deactivated') {
+          this.emit('session_deactivated', msg.payload);
+        }
+        if (msg.type === 'attached_sessions') {
+          this.emit('attached_sessions', msg.payload);
         }
         if (msg.type === 'command') {
           this.emit('command', msg.payload);
@@ -104,13 +111,13 @@ export class RelayClient extends EventEmitter {
     }
   }
 
-  /** Send pre-serialized raw JSON string.
-   *  NOTE: Unlike sendEvent, sendRaw does NOT buffer messages.
-   *  Only call after WS is open — use waitForConnection() first.
-   */
+  /** Send pre-serialized raw JSON string. Queues if WS not yet connected. */
   sendRaw(json: string): void {
     if (this.ws?.readyState === WebSocket.OPEN) {
       this.ws.send(json);
+    } else {
+      this.pendingRaw.push(json);
+      if (this.pendingRaw.length > 100) this.pendingRaw.shift();
     }
   }
 
@@ -129,7 +136,12 @@ export class RelayClient extends EventEmitter {
   }
 
   private flushPending(): void {
-    if (this.pendingEvents.length === 0) return;
+    for (const raw of this.pendingRaw) {
+      if (this.ws?.readyState === WebSocket.OPEN) {
+        this.ws.send(raw);
+      }
+    }
+    this.pendingRaw = [];
     for (const msg of this.pendingEvents) {
       if (this.ws?.readyState === WebSocket.OPEN) {
         this.ws.send(serializeMessage(msg));

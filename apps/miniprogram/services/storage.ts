@@ -27,7 +27,7 @@ export function hasAuth(): boolean {
 }
 
 export function getServerUrl(): string {
-  return wx.getStorageSync(KEYS.SERVER_URL) || 'http://127.0.0.1:3000';
+  return wx.getStorageSync(KEYS.SERVER_URL) || 'https://81.70.235.58';
 }
 
 export function setServerUrl(url: string): void {

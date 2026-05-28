@@ -22,7 +22,9 @@
     "minifyWXML": true,
     "localPlugins": false,
     "disableUseStrict": false,
-    "useCompilerPlugins": ["typescript"],
+    "useCompilerPlugins": [
+      "typescript"
+    ],
     "condition": false,
     "swc": false,
     "disableSWC": true,
@@ -34,7 +36,7 @@
   },
   "compileType": "miniprogram",
   "libVersion": "3.7.0",
-  "appid": "wx1252c244b75ab1eb",
+  "appid": "wx654efb50a7739cf5",
   "projectname": "CodeKey",
   "condition": {},
   "simulatorPluginLibVersion": {},

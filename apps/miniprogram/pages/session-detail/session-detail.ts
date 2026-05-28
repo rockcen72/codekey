@@ -1,7 +1,7 @@
 import { createApi } from '../../services/api';
 import { getServerUrl } from '../../services/storage';
 
-const app = getApp();
+const app = getApp<any>();
 
 const RISK_LABELS: Record<string, string> = {
   low: '低风险',
@@ -38,22 +38,93 @@ Page({
     chatMessages: [] as ChatMessage[],
     replyTexts: {} as Record<string, string>,
     commandText: '',
+    canSendCommand: false,
     wsConnected: false,
     scrollToId: '',
+    scrollTop: 0,
+    approvalSheetOpen: false,
+    approvalEvent: null as ChatMessage | null,
+    sheetReplyText: '',
   },
 
   onLoad(query: any) {
     const id = query.id || '';
     this.setData({ sessionId: id });
     this.fetchDetail();
-    this.setupWsListener();
+    this.subscribeWs();
+  },
+
+  onShow() {
+    this._startPolling();
+  },
+
+  onHide() {
+    this._stopPolling();
   },
 
   onUnload() {
-    // WS listener removed automatically when page is destroyed
+    this.unsubscribeWs();
+    this._stopPolling();
   },
 
-  async fetchDetail() {
+  subscribeWs() {
+    // Bound closures for proper cleanup
+    this._onEventPushBound = (payload: any) => {
+      if (payload.sessionId === this.data.sessionId) {
+        this.fetchDetail({ scrollToEventId: payload.eventId });
+      }
+    };
+    this._onSessionDeactivatedBound = (payload: any) => {
+      if (payload.sessionId === this.data.sessionId) {
+        wx.showToast({ title: '会话已取消关联', icon: 'none', duration: 2000 });
+        setTimeout(() => wx.navigateBack(), 1500);
+      }
+    };
+    this._onWsConnectedBound = () => {
+      this.setData({ wsConnected: true });
+      this.fetchDetail();
+    };
+    this._onWsDisconnectedBound = () => {
+      this.setData({ wsConnected: false });
+    };
+
+    app.onWsEvent('event_push', this._onEventPushBound);
+    app.onWsEvent('session_deactivated', this._onSessionDeactivatedBound);
+    app.onWsEvent('ws_connected', this._onWsConnectedBound);
+    app.onWsEvent('ws_disconnected', this._onWsDisconnectedBound);
+
+    // Sync current connection state
+    if (app.globalData.wsConnected !== this.data.wsConnected) {
+      this.setData({ wsConnected: app.globalData.wsConnected });
+    }
+  },
+
+  unsubscribeWs() {
+    if (this._onEventPushBound) app.offWsEvent('event_push', this._onEventPushBound);
+    if (this._onSessionDeactivatedBound) app.offWsEvent('session_deactivated', this._onSessionDeactivatedBound);
+    if (this._onWsConnectedBound) app.offWsEvent('ws_connected', this._onWsConnectedBound);
+    if (this._onWsDisconnectedBound) app.offWsEvent('ws_disconnected', this._onWsDisconnectedBound);
+    this._onEventPushBound = undefined;
+    this._onSessionDeactivatedBound = undefined;
+    this._onWsConnectedBound = undefined;
+    this._onWsDisconnectedBound = undefined;
+  },
+
+  _startPolling() {
+    this._stopPolling();
+    this._pollTimer = setInterval(() => this.fetchDetail(), 10_000);
+  },
+
+  _stopPolling() {
+    if (this._pollTimer) {
+      clearInterval(this._pollTimer);
+      this._pollTimer = undefined;
+    }
+  },
+
+  // ── Data fetching ──
+
+  async fetchDetail(options?: { scrollToEventId?: string }) {
     try {
       const api = createApi(getServerUrl());
       const [session, rawEvents] = await Promise.all([
@@ -61,20 +132,37 @@ Page({
         api.getSessionEvents(this.data.sessionId),
       ]);
       this.setData({
-        session: { ...session, agentType: session.metadata?.sessionLabel || session.agent_type || 'AI Agent' },
+        session: {
+          ...session,
+          agentType: session.metadata?.sessionLabel || session.agent_type || 'AI Agent',
+          metadataTitle: session.metadata?.title || '',
+          metadataCwd: session.metadata?.cwd || '',
+          metadataClaudeSessionId: session.metadata?.claudeSessionId || '',
+          metadataSource: session.metadata?.source || '',
+        },
         events: rawEvents,
       });
-      this.buildChatMessages(rawEvents);
+      this.buildChatMessages(rawEvents, options?.scrollToEventId);
     } catch (err) {
       console.error('[detail] fetch error:', err);
     }
   },
 
-  buildChatMessages(rawEvents: any[]) {
+  buildChatMessages(rawEvents: any[], scrollToEventId?: string) {
+    // Keep relay insertion order so prompt replay stays before the approval it triggered.
+    const sorted = [...rawEvents].sort((a, b) => {
+      if (a.created_at !== b.created_at) {
+        return a.created_at < b.created_at ? -1 : 1;
+      }
+      const priority: Record<string, number> = {
+        user_prompt: 0,
+        approval_required: 1,
+      };
+      return (priority[a.type] ?? 2) - (priority[b.type] ?? 2);
+    });
     const messages: ChatMessage[] = [];
-    let lastDecisionMap: Record<string, string> = {};
 
-    for (const e of rawEvents) {
+    for (const e of sorted) {
       const time = this.formatTime(e.created_at);
       const command = e.data?.command || '';
       const summary = e.data?.summary || e.data?.command || '';
@@ -125,7 +213,6 @@ Page({
       }
 
       if (e.type === 'approval_required') {
-        // AI left message: command + risk
         const canApprove = ['low', 'medium'].includes(e.risk_level || '');
         const riskText = RISK_LABELS[e.risk_level as string] || '未知';
 
@@ -148,7 +235,6 @@ Page({
           eventId: e.id,
         });
 
-        // User right message: decision
         if (!e.pending && e.decision) {
           const decisionContent = this.getDecisionText(e.decision);
           messages.push({
@@ -170,15 +256,63 @@ Page({
             eventId: e.id,
           });
         }
+        continue;
+      }
+
+      if (e.type === 'user_prompt') {
+        const prompt = e.data?.prompt || e.data?.summary || '';
+        // Use original transcript timestamp if available, fallback to DB created_at
+        const displayTime = e.data?.timestamp
+          ? this.formatTime(e.data.timestamp)
+          : time;
+        messages.push({
+          id: e.id,
+          type: 'user',
+          side: 'right',
+          content: prompt,
+          displayTime,
+          typeLabel: '',
+          isTaskComplete: false,
+          command: '',
+          summary: prompt,
+          risk_level: '',
+          riskText: '',
+          pending: false,
+          decision: '',
+          decisionText: '',
+          canApprove: false,
+          eventId: e.id,
+        });
+        continue;
       }
     }
 
-    this.setData({ chatMessages: messages }, () => {
-      // Scroll to bottom
-      if (messages.length > 0) {
-        this.setData({ scrollToId: 'msg-' + messages[messages.length - 1].id });
+    if (messages.length > 0) {
+      const pushedIdx = scrollToEventId
+        ? messages.findIndex((m: ChatMessage) => m.eventId === scrollToEventId && m.type === 'ai')
+        : -1;
+      let latestPendingIdx = -1;
+      for (let i = messages.length - 1; i >= 0; i--) {
+        if (messages[i].pending) {
+          latestPendingIdx = i;
+          break;
+        }
       }
-    });
+      const targetIdx = pushedIdx !== -1
+        ? pushedIdx
+        : latestPendingIdx !== -1
+          ? latestPendingIdx
+          : messages.length - 1;
+      const targetId = 'msg-' + messages[targetIdx].id;
+      // Reset scrollToId first so scroll-into-view always detects the change
+      this.setData({ chatMessages: messages, scrollToId: '' }, () => {
+        wx.nextTick(() => {
+          this.setData({ scrollToId: targetId, scrollTop: Date.now() });
+        });
+      });
+    } else {
+      this.setData({ chatMessages: messages });
+    }
   },
 
   getDecisionText(decision: string): string {
@@ -191,25 +325,80 @@ Page({
     }
   },
 
-  setupWsListener() {
-    const ws = app.globalData.ws as any;
-    if (!ws) return;
+  // ── Approval bottom sheet ──
 
-    this.setData({ wsConnected: true });
+  openApprovalSheet(e: any) {
+    const eventId = e.currentTarget.dataset.id;
+    const approvalEvent = this.data.chatMessages.find((m: ChatMessage) => m.eventId === eventId && m.type === 'ai') || null;
+    this.setData({ approvalSheetOpen: !!approvalEvent, approvalEvent, sheetReplyText: '' });
+  },
 
-    ws.on('event_push', (payload: any) => {
-      if (payload.sessionId === this.data.sessionId) {
-        this.fetchDetail();
-      }
+  closeApprovalSheet() {
+    this.setData({ approvalSheetOpen: false, approvalEvent: null, sheetReplyText: '' });
+  },
+
+  approveSheet() {
+    if (!this.data.approvalEvent) return;
+    this.sendDecision(this.data.approvalEvent.eventId, 'approve');
+    this.closeApprovalSheet();
+  },
+
+  denySheet() {
+    if (!this.data.approvalEvent) return;
+    this.sendDecision(this.data.approvalEvent.eventId, 'deny');
+    this.closeApprovalSheet();
+  },
+
+  pauseSheet() {
+    if (!this.data.approvalEvent) return;
+    this.sendDecision(this.data.approvalEvent.eventId, 'pause');
+    this.closeApprovalSheet();
+  },
+
+  onSheetReplyInput(e: any) {
+    this.setData({ sheetReplyText: e.detail.value });
+  },
+
+  sendSheetReply() {
+    const text = this.data.sheetReplyText.trim();
+    if (!text || !this.data.approvalEvent) return;
+
+    const eventId = this.data.approvalEvent.eventId;
+    app.sendWs({
+      type: 'approval_response',
+      payload: { sessionId: this.data.sessionId, eventId, decision: 'reply', message: text },
     });
 
-    ws.on('disconnected', () => {
-      this.setData({ wsConnected: false });
+    const messages = [...this.data.chatMessages];
+    const aiIdx = messages.findIndex((m: ChatMessage) => m.eventId === eventId && m.type === 'ai');
+    if (aiIdx !== -1) {
+      messages[aiIdx].pending = false;
+      messages[aiIdx].decision = 'reply';
+      messages[aiIdx].decisionText = '已回复';
+    }
+    const replyId = eventId + '-reply-' + Date.now();
+    messages.push({
+      id: replyId,
+      type: 'user',
+      side: 'right',
+      content: text,
+      displayTime: '',
+      typeLabel: '',
+      isTaskComplete: false,
+      command: '',
+      summary: '',
+      risk_level: '',
+      riskText: '',
+      pending: false,
+      decision: 'reply',
+      decisionText: '已回复',
+      canApprove: false,
+      eventId,
     });
 
-    ws.on('connected', () => {
-      this.setData({ wsConnected: true });
-    });
+    this.setData({ chatMessages: messages, sheetReplyText: '' });
+    this.closeApprovalSheet();
+    setTimeout(() => this.fetchDetail(), 1500);
   },
 
   // ── Inline approval actions ──
@@ -230,15 +419,11 @@ Page({
   },
 
   sendDecision(eventId: string, decision: string) {
-    const ws = app.globalData.ws as any;
-    if (!ws) return;
-
-    ws.send({
+    app.sendWs({
       type: 'approval_response',
       payload: { sessionId: this.data.sessionId, eventId, decision, message: '' },
     });
 
-    // Optimistic: update local chat to show decision immediately
     const messages = [...this.data.chatMessages];
     const aiIdx = messages.findIndex((m: ChatMessage) => m.eventId === eventId && m.type === 'ai');
     if (aiIdx !== -1) {
@@ -246,7 +431,6 @@ Page({
       messages[aiIdx].decision = decision;
       messages[aiIdx].decisionText = this.getDecisionText(decision);
     }
-    // Add user decision bubble
     const decisionContent = this.getDecisionText(decision);
     const dupIdx = messages.findIndex((m: ChatMessage) => m.eventId === eventId + '-decision');
     if (dupIdx === -1) {
@@ -273,7 +457,6 @@ Page({
       this.setData({ scrollToId: 'msg-' + messages[messages.length - 1].id });
     });
 
-    // Re-fetch after a brief delay to sync
     setTimeout(() => this.fetchDetail(), 1500);
   },
 
@@ -292,16 +475,18 @@ Page({
     const message = this.data.replyTexts[eventId] || '';
     if (!message.trim()) return;
 
-    const ws = app.globalData.ws as any;
-    if (!ws) return;
-
-    ws.send({
+    app.sendWs({
       type: 'approval_response',
       payload: { sessionId: this.data.sessionId, eventId, decision: 'reply', message: message.trim() },
     });
 
-    // Optimistic: add user reply bubble
     const messages = [...this.data.chatMessages];
+    const aiIdx = messages.findIndex((m: ChatMessage) => m.eventId === eventId && m.type === 'ai');
+    if (aiIdx !== -1) {
+      messages[aiIdx].pending = false;
+      messages[aiIdx].decision = 'reply';
+      messages[aiIdx].decisionText = this.getDecisionText('reply');
+    }
     const replyId = eventId + '-reply-' + Date.now();
     messages.push({
       id: replyId,
@@ -317,7 +502,7 @@ Page({
       riskText: '',
       pending: false,
       decision: 'reply',
-      decisionText: message.trim(),
+      decisionText: this.getDecisionText('reply'),
       canApprove: false,
       eventId,
     });
@@ -332,7 +517,8 @@ Page({
   // ── Command input ──
 
   onCommandInput(e: any) {
-    this.setData({ commandText: e.detail.value });
+    const val = e.detail.value;
+    this.setData({ commandText: val, canSendCommand: val.trim() !== '' });
   },
 
   sendCommand() {
@@ -341,8 +527,7 @@ Page({
       wx.showToast({ title: '请输入指令', icon: 'none' });
       return;
     }
-    const ws = app.globalData.ws as any;
-    if (!ws || !this.data.wsConnected) {
+    if (!app.globalData.wsConnected) {
       wx.showToast({ title: '未连接服务器', icon: 'none' });
       return;
     }
@@ -351,12 +536,11 @@ Page({
       return;
     }
 
-    ws.send({
+    app.sendWs({
       type: 'command',
       payload: { sessionId: this.data.sessionId, action: 'write_stdin', data: text },
     });
 
-    // Add sent message to chat
     const messages = [...this.data.chatMessages];
     const cmdId = 'cmd-' + Date.now();
     messages.push({
@@ -377,7 +561,12 @@ Page({
       canApprove: false,
       eventId: '',
     });
-    this.setData({ chatMessages: messages, commandText: '', scrollToId: 'msg-' + cmdId });
+    this.setData({
+      chatMessages: messages,
+      commandText: '',
+      canSendCommand: false,
+      scrollToId: 'msg-' + cmdId,
+    });
     wx.showToast({ title: '指令已发送', icon: 'success' });
   },
 

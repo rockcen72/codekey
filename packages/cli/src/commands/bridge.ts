@@ -1,7 +1,5 @@
 import { Command } from 'commander';
-import { RelayClient } from '../daemon/relay-client.js';
-import { ApprovalBridge } from '../bridge/handler.js';
-import { startBridgeServer } from '../bridge/server.js';
+import { RelayClient, ApprovalBridge, startBridgeServer } from '@codekey/shared/bridge';
 import { DeviceSecretManager } from '../auth/device-secret.js';
 
 export const bridgeCommand = new Command('bridge')

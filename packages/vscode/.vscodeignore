@@ -1,6 +1,9 @@
+build.mjs
 .gitignore
 node_modules/
 src/
 test/
 tsconfig.json
 .vscode/
+*.tsbuildinfo
+dist/**/*.map

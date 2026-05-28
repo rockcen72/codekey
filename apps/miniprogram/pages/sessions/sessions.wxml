@@ -1,28 +1,68 @@
-<view class="container">
-  <view class="header">
-    <text class="title">会话列表</text>
-    <view class="ws-indicator {{wsConnected ? 'connected' : ''}}"></view>
-    <text class="settings-link" bindtap="goToSettings">设置</text>
+<view class="page">
+  <view class="topbar">
+    <view class="topbar-left">
+      <text class="brand">History</text>
+      <text class="brand-sub">CodeKey AI 远程控制</text>
+    </view>
+    <view class="top-actions">
+      <view class="conn-pill {{wsConnected ? 'online' : 'offline'}}">
+        <view class="conn-dot"></view>
+        <text>{{wsConnected ? '已连接' : '离线'}}</text>
+      </view>
+      <view class="icon-btn-wrap" bindtap="goToSettings">
+        <text class="icon-btn">⚙</text>
+      </view>
+    </view>
+  </view>
+
+  <!-- Metrics: compact row -->
+  <view class="metrics-row" wx:if="{{sessions.length > 0 || pendingTotal > 0}}">
+    <text class="metric-chip" wx:if="{{activeTotal > 0}}">
+      <text class="metric-dot active"></text>
+      {{activeTotal}} 活跃
+    </text>
+    <text class="metric-chip danger" wx:if="{{pendingTotal > 0}}">
+      <text class="metric-dot pending"></text>
+      {{pendingTotal}} 待审批
+    </text>
   </view>
 
   <scroll-view class="list" scroll-y>
     <view class="empty" wx:if="{{sessions.length === 0}}">
-      <text>暂无活跃会话</text>
-      <text class="empty-hint">当 AI 代理正在运行时，会话将显示在这里</text>
+      <text class="empty-icon">◌</text>
+      <text class="empty-title">暂无对话记录</text>
+      <text class="empty-text">在 VS Code 中启动 Claude Code 后，关联的会话将出现在这里。</text>
     </view>
 
-    <view class="session-card" wx:for="{{sessions}}" wx:key="id"
-          data-id="{{item.id}}" bindtap="openSession">
-      <view class="card-header">
-        <text class="agent">{{item.agent_type}}</text>
-        <text class="status {{item.status}}">{{item.status}}</text>
-      </view>
+    <view class="session-card {{item.hasPending ? 'has-pending' : ''}}"
+          wx:for="{{sessions}}"
+          wx:key="id"
+          data-id="{{item.id}}"
+          bindtap="openSession">
+      <!-- Agent color indicator: left accent bar -->
+      <view class="card-accent {{item.hasPending ? 'active' : ''}}"
+            style="{{item.hasPending ? 'background:' + item.agentColor : ''}}"></view>
+
       <view class="card-body">
-        <text class="project">{{item.projectName}}</text>
+        <view class="card-top">
+          <view class="card-title-row">
+            <text class="session-title ellipsis">{{item.displayTitle}}</text>
+          </view>
+          <view class="card-time-wrap">
+            <text class="time-dot" style="background: {{item.agentColor}}"></text>
+            <text class="session-time">{{item.displayTime}}</text>
+          </view>
+        </view>
+
+        <text class="session-subtitle ellipsis">{{item.displaySubtitle}}</text>
+
+        <view class="card-footer">
+          <text class="status-tag {{item.status}}">{{item.statusLabel}}</text>
+          <text class="session-id mono" wx:if="{{item.displayClaudeId}}">{{item.displayClaudeId}}</text>
+        </view>
       </view>
-      <view class="card-footer">
-        <text class="time">{{item.displayTime}}</text>
-      </view>
+
+      <view class="detach-btn" data-id="{{item.id}}" catchtap="detachSession">解除</view>
     </view>
   </scroll-view>
 </view>
