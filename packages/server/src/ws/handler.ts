@@ -147,7 +147,7 @@ export function wsHandler(sql: postgres.Sql) {
                 UPDATE sessions SET metadata = ${tx.json(metadata)}, last_active_at = now()
                 WHERE id = ${existing.id}
               `;
-              return { sessionId: existing.id, isNew: false };
+              return { sessionId: existing.id, isNew: false, source: metadata.source ?? null };
             }
           }
 
@@ -175,8 +175,8 @@ export function wsHandler(sql: postgres.Sql) {
             VALUES (${deviceId}, ${msg.payload.agentType ?? 'claude-code'}, 'active', ${tx.json(metadata)})
             RETURNING id
           `;
-          return { sessionId: newSession.id, isNew: true };
-        }).then(({ sessionId }) => {
+          return { sessionId: newSession.id, isNew: true, source: metadata.source ?? null };
+        }).then(({ sessionId, source }) => {
           const pc = pcClients.get(deviceId!);
           if (pc && !pc.sessionId) {
             pc.sessionId = sessionId;
@@ -187,8 +187,8 @@ export function wsHandler(sql: postgres.Sql) {
             payload: { clientRequestId, sessionId, claudeSessionId },
           }));
 
-          // Broadcast to mini program clients
-          const mpList = clientClients.get(deviceId!);
+          const visibleToMiniProgram = source === 'transcript_attach';
+          const mpList = visibleToMiniProgram ? clientClients.get(deviceId!) : undefined;
           if (mpList) {
             for (const mp of mpList) {
               if (mp.socket.readyState === mp.socket.OPEN) {
@@ -269,8 +269,8 @@ export function wsHandler(sql: postgres.Sql) {
           payload: { clientRequestId, sessionId: newSession.id, windowId },
         }));
 
-        // Broadcast to mini program clients
-        const mpList = clientClients.get(deviceId!);
+        const visibleToMiniProgram = msg.payload.source === 'transcript_attach';
+        const mpList = visibleToMiniProgram ? clientClients.get(deviceId!) : undefined;
         if (mpList) {
           for (const mp of mpList) {
             if (mp.socket.readyState === mp.socket.OPEN) {
@@ -407,7 +407,7 @@ export function wsHandler(sql: postgres.Sql) {
             }));
 
             const sessionSource = rows[0].metadata?.source ?? null;
-            const visibleToMiniProgram = !sessionSource || sessionSource === 'transcript_attach';
+            const visibleToMiniProgram = sessionSource === 'transcript_attach';
             const mpList = visibleToMiniProgram ? clientClients.get(deviceId!) : undefined;
             if (mpList) {
               for (const mp of mpList) {

@@ -120,14 +120,16 @@ export class ApprovalBridge {
       const p = payload as { sessionId: string };
       if (!p.sessionId) return;
 
+      const deactivatedClaudeSessionIds: string[] = [];
+
       // Remove from sessions map by serverSessionId
       for (const [csid, ssid] of this.sessions) {
         if (ssid === p.sessionId) {
+          deactivatedClaudeSessionIds.push(csid);
           this.sessions.delete(csid);
           if (this.primarySessionId === ssid) {
             this.primarySessionId = null;
           }
-          break;
         }
       }
 
@@ -141,12 +143,9 @@ export class ApprovalBridge {
         }
       }
 
-      // Also clean up transcriptAttachedIds for any matching claudeSessionId
-      for (const csid of this.transcriptAttachedIds) {
-        if (this.sessions.get(csid) === p.sessionId) {
-          this.transcriptAttachedIds.delete(csid);
-          break;
-        }
+      // Also clean up transcriptAttachedIds for matching claudeSessionIds.
+      for (const csid of deactivatedClaudeSessionIds) {
+        this.transcriptAttachedIds.delete(csid);
       }
     });
   }
@@ -790,7 +789,26 @@ export class ApprovalBridge {
       throw new Error(`No local transcript found for session ${claudeSessionId}`);
     }
     this.transcriptAttachedIds.add(claudeSessionId);
-    const serverSessionId = await this.ensureSession(claudeSessionId, undefined, 'transcript_attach');
+    const existingServerSessionId = this.sessions.get(claudeSessionId);
+    const serverSessionId = existingServerSessionId
+      ?? await this.ensureSession(claudeSessionId, undefined, 'transcript_attach');
+    if (existingServerSessionId) {
+      this.relay.sendRaw(JSON.stringify({
+        type: 'attach_session',
+        payload: {
+          sessionId: existingServerSessionId,
+          claudeSessionId,
+          metadata: {
+            claudeSessionId,
+            runtime: 'claude-code',
+            source: 'transcript_attach',
+            title: transcript.title || '',
+            cwd: transcript.cwd || '',
+            attachedAt: new Date().toISOString(),
+          },
+        },
+      }));
+    }
     // Replay recent user prompts as events (best-effort)
     await this.replayUserPrompts(claudeSessionId, serverSessionId).catch(() => {});
     return serverSessionId;
@@ -816,7 +834,7 @@ export class ApprovalBridge {
 
   /** Return the set of claudeSessionIds that are currently attached (known to the bridge). */
   getAttachedSessionIds(): string[] {
-    return Array.from(this.sessions.keys());
+    return Array.from(this.transcriptAttachedIds).filter((csid) => this.sessions.has(csid));
   }
 
   /** On bridge startup (or reconnection), reconcile attached sessions from relay to survive restarts.

@@ -38,6 +38,14 @@ class FakeRelay extends EventEmitter {
         this.emit('attached_sessions', { sessions: this.attachedSessions });
       });
     }
+    if (msg.type === 'attach_session') {
+      queueMicrotask(() => {
+        this.emit('session_registered', {
+          sessionId: msg.payload.sessionId,
+          claudeSessionId: msg.payload.claudeSessionId,
+        });
+      });
+    }
   }
 
   sendEvent(_sessionId: string, msg: unknown): void {
@@ -208,12 +216,45 @@ describe('ApprovalBridge canonical sessions', () => {
     await approval;
   });
 
+  it('hook-created sessions are not considered attached until attachClaudeSession runs', async () => {
+    const tmpDir = createTranscriptFixture('claude-a', 'Real transcript title');
+    process.env.CLAUDE_CONFIG_DIR = tmpDir;
+    try {
+      const relay = new FakeRelay();
+      const bridge = new ApprovalBridge(relay as any);
+
+      await bridge.ensureSession('claude-a', 'window-1');
+
+      expect(bridge.getAttachedSessionIds()).toEqual([]);
+
+      await bridge.attachClaudeSession('claude-a');
+
+      expect(bridge.getAttachedSessionIds()).toContain('claude-a');
+      const attachMsg = relay.sent
+        .map(m => JSON.parse(m))
+        .find((m: any) => m.type === 'attach_session');
+      expect(attachMsg).toMatchObject({
+        type: 'attach_session',
+        payload: {
+          sessionId: 'server-claude-a',
+          claudeSessionId: 'claude-a',
+        },
+      });
+      expect(attachMsg.payload.metadata.source).toBe('transcript_attach');
+    } finally {
+      delete process.env.CLAUDE_CONFIG_DIR;
+    }
+  });
+
   it('detachClaudeSession sends deactivate_session to relay but does not immediately clear cache', async () => {
+    const tmpDir = createTranscriptFixture('claude-a', 'Real transcript title');
+    process.env.CLAUDE_CONFIG_DIR = tmpDir;
+    try {
     const relay = new FakeRelay();
     const bridge = new ApprovalBridge(relay as any);
 
-    // Register a session first
-    await bridge.ensureSession('claude-a');
+    // Attach a session first
+    await bridge.attachClaudeSession('claude-a');
     expect(relay.sent.length).toBeGreaterThan(0);
 
     // Detach — should send deactivate_session but keep local cache
@@ -229,19 +270,28 @@ describe('ApprovalBridge canonical sessions', () => {
 
     // Cache should NOT be cleared yet — detachClaudeSession is fire-and-forget
     expect(bridge.getAttachedSessionIds()).toContain('claude-a');
+    } finally {
+      delete process.env.CLAUDE_CONFIG_DIR;
+    }
   });
 
-  it('session_deactivated event clears local caches', async () => {
+  it('session_deactivated event clears local session and attached caches', async () => {
+    const tmpDir = createTranscriptFixture('claude-a', 'Real transcript title');
+    process.env.CLAUDE_CONFIG_DIR = tmpDir;
+    try {
     const relay = new FakeRelay();
     const bridge = new ApprovalBridge(relay as any);
 
-    await bridge.ensureSession('claude-a');
+    await bridge.attachClaudeSession('claude-a');
     expect(bridge.getAttachedSessionIds()).toContain('claude-a');
 
     // Simulate relay confirming deactivation
     relay.emit('session_deactivated', { sessionId: 'server-claude-a' });
 
     expect(bridge.getAttachedSessionIds()).not.toContain('claude-a');
+    } finally {
+      delete process.env.CLAUDE_CONFIG_DIR;
+    }
   });
 
   it('reconcileAttachedSessions removes stale transcript sessions absent from relay response', async () => {
