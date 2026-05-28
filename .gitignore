@@ -14,9 +14,15 @@ packages/server/relay.cjs
 # Private project config
 project.private.config.json
 
+# Superpowers planning docs (tracked docs unaffected)
+docs/superpowers/
+
 # Tooling caches
 .codegraph/
 .superpowers/
+
+# Images / screenshots
+*.png
 
 # Logs
 *.log
