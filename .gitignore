@@ -6,6 +6,18 @@ dist/
 .devcontainer/
 .vscode/
 
+# Build artifacts
+*.tsbuildinfo
+*.vsix
+packages/server/relay.cjs
+
+# Private project config
+project.private.config.json
+
+# Tooling caches
+.codegraph/
+.superpowers/
+
 # Logs
 *.log
 
