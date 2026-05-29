@@ -1,6 +1,6 @@
 import * as path from 'node:path';
 import * as fs from 'node:fs';
-import { execSync } from 'node:child_process';
+import { execSync, spawn } from 'node:child_process';
 import * as vscode from 'vscode';
 import { classifyTerminal } from '../commands/start-claude.js';
 import { findCli } from '../cli.js';
@@ -74,6 +74,32 @@ export class CommandRelayService {
     return null;
   }
 
+  /**
+   * Execute a command via CC in one-shot --print mode.
+   * CC resumes the session, processes the prompt, prints output, and exits.
+   * The Stop hook fires on exit, generating task_complete for the mini program.
+   */
+  private _executeCommand(
+    sessionId: string,
+    text: string,
+    binary: { path: string; args: string[] },
+  ): void {
+    try {
+      const child = spawn(binary.path, [...binary.args, '--resume', sessionId, '--print', text], {
+        stdio: 'ignore',
+        windowsHide: true,
+      });
+      child.on('exit', (code) => {
+        console.error('[command-relay] CC --print session=%s exited code=%d', sessionId.slice(0, 8), code);
+      });
+      child.on('error', (err) => {
+        console.error('[command-relay] CC --print spawn error: %s', err.message);
+      });
+    } catch (err) {
+      console.error('[command-relay] CC --print failed: %s', String(err));
+    }
+  }
+
   private async _poll(): Promise<void> {
     if (this._disposed) return;
 
@@ -107,10 +133,9 @@ export class CommandRelayService {
           // Terminal mode: sendText to managed terminal
           term.sendText(cmd.text, true);
         } else if (claudeBinary && cmd.claudeSessionId) {
-          // Tab/panel mode: use a hidden VS Code Terminal + sendText to provide a real TTY.
-          // CC detects TTY and runs in interactive mode → PermissionRequest hook fires for tool
-          // approvals. Pipe stdin (spawn) would make CC skip approval hooks entirely.
-          this._sendToResumeTerminal(cmd.claudeSessionId, cmd.text, cmd.cwd, claudeBinary);
+          // Tab/panel mode: one-shot --print, exits after processing → Stop hook fires
+          // PermissionRequest hook still fires inside the spawned process for tool approvals.
+          this._executeCommand(cmd.claudeSessionId, cmd.text, claudeBinary);
         }
       }
     } catch {
