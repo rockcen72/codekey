@@ -547,6 +547,32 @@ export function wsHandler(sql: postgres.Sql) {
         return;
       }
 
+      if (msg.type === 'resolve_event') {
+        const eventId = msg.payload?.eventId;
+        if (!eventId) return;
+        // Try to find the event by id OR by clientEventId in the data field
+        sql`
+          UPDATE events SET pending = false, decision = 'resolved_by_bridge'
+          WHERE pending = true AND (id = ${eventId} OR data->>'clientEventId' = ${eventId})
+        `.then(() => {
+          // Broadcast to mini program clients so they remove the stale approval
+          const mpList = clientClients.get(deviceId!);
+          if (mpList) {
+            for (const mp of mpList) {
+              if (mp.socket.readyState === mp.socket.OPEN) {
+                mp.socket.send(JSON.stringify({
+                  type: 'event_resolved',
+                  payload: { eventId },
+                }));
+              }
+            }
+          }
+        }).catch((err) => {
+          console.error('resolve_event error:', err);
+        });
+        return;
+      }
+
       if (msg.type === 'query_attached_sessions') {
         sql`
           SELECT id, metadata FROM sessions

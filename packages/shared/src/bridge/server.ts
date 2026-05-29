@@ -260,6 +260,13 @@ function handleRequest(req: IncomingMessage, res: ServerResponse, bridge: Approv
     return;
   }
 
+  if (req.method === 'POST' && url.pathname === '/v1/relay-reconnect') {
+    bridge.relay.reconnect();
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ ok: true }));
+    return;
+  }
+
   if (req.method === 'POST' && url.pathname === '/v1/shutdown') {
     if (!onShutdown) {
       res.writeHead(404, { 'Content-Type': 'application/json' });
@@ -298,12 +305,13 @@ function handleRequest(req: IncomingMessage, res: ServerResponse, bridge: Approv
   }
 
   if (url.pathname === '/v1/health') {
-    const supports = ['register-window', 'window-id', 'session-label', 'approval_forward', 'activate-session', 'deactivate-session', 'claude-sessions/recent', 'claude-sessions/attach', 'detach-session', 'attached-sessions'];
+    const supports = ['register-window', 'window-id', 'session-label', 'approval_forward', 'activate-session', 'deactivate-session', 'claude-sessions/recent', 'claude-sessions/attach', 'detach-session', 'attached-sessions', 'relay-reconnect'];
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({
       ok: true,
       source,
       version: '0.1.0',
+      relay: bridge.relay.status,
       supports,
     }));
     return;

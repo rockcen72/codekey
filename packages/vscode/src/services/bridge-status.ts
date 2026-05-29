@@ -12,6 +12,7 @@ export type HookConfigStatus = 'enabled' | 'installed_only' | 'not_found';
 
 export interface BridgeState {
   bridge: BridgeStatus;
+  relay: 'connected' | 'connecting' | 'disconnected';
   hookInstalled: boolean;
   hookConfig: HookConfigStatus;
 }
@@ -30,7 +31,7 @@ export class BridgeStatusService {
 
   private _process: ChildProcess | null = null;
   private _myPid: number | null = null;
-  private _state: BridgeState = { bridge: 'stopped', hookInstalled: false, hookConfig: 'not_found' };
+  private _state: BridgeState = { bridge: 'stopped', relay: 'disconnected', hookInstalled: false, hookConfig: 'not_found' };
   private _listeners = new Set<Listener>();
   private _healthTimer?: ReturnType<typeof setInterval>;
   private _startedAt = 0;
@@ -224,8 +225,13 @@ export class BridgeStatusService {
     try {
       const resp = await fetch('http://127.0.0.1:3001/v1/health');
       if (resp.ok) {
+        const body = await resp.json() as { relay?: string };
+        const relay = (body.relay ?? 'disconnected') as BridgeState['relay'];
+        const updates: Partial<BridgeState> = { bridge: 'running', relay };
         if (this._state.bridge !== 'running') {
-          this._update({ bridge: 'running' });
+          this._update(updates);
+        } else if (this._state.relay !== relay) {
+          this._update({ relay });
         }
         if (!this._windowRegistered) {
           this._windowRegistered = true;

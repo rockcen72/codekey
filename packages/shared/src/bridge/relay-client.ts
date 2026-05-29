@@ -19,11 +19,26 @@ export class RelayClient extends EventEmitter {
   private relayUrl: string;
   private isPairing: boolean;
   private heartbeatTimer?: ReturnType<typeof setInterval>;
+  private pongTimeoutTimer?: ReturnType<typeof setTimeout>;
+  private connectionTimer?: ReturnType<typeof setTimeout>;
   private reconnectAttempt = 0;
   private intentionalClose = false;
   private pendingEvents: WsMessage[] = [];
   private pendingRaw: string[] = [];
   private lastEventId: string | null = null;
+
+  /** Expose relay WS connection state for health reporting. */
+  get status(): 'connected' | 'connecting' | 'disconnected' {
+    if (!this.ws) return 'disconnected';
+    switch (this.ws.readyState) {
+      case WebSocket.OPEN: return 'connected';
+      case WebSocket.CONNECTING: return 'connecting';
+      default: return 'disconnected';
+    }
+  }
+
+  /** Max time to wait for the WS 'open' event before aborting and retrying. */
+  private static readonly CONNECT_TIMEOUT_MS = 15_000;
 
   constructor(deviceId: string, token: string, relayUrl: string, isPairing = false) {
     super();
@@ -46,7 +61,15 @@ export class RelayClient extends EventEmitter {
     this.intentionalClose = false;
     this.ws = new WebSocket(url.toString(), { rejectUnauthorized: false });
 
+    this.connectionTimer = setTimeout(() => {
+      console.error('[relay-client] connection timeout — aborting and retrying');
+      this.intentionalClose = false; // let reconnect fire
+      this.clearConnectionTimer();
+      this.ws?.close();
+    }, RelayClient.CONNECT_TIMEOUT_MS);
+
     this.ws.on('open', () => {
+      this.clearConnectionTimer();
       this.reconnectAttempt = 0;
       this.startHeartbeat();
       this.flushPending();
@@ -56,7 +79,10 @@ export class RelayClient extends EventEmitter {
     this.ws.on('message', (raw: ArrayBuffer) => {
       try {
         const msg = deserializeMessage(raw);
-        if (msg.type === 'pong') return;
+        if (msg.type === 'pong') {
+          this.clearPongTimeout();
+          return;
+        }
         if (msg.type === 'approval_forward') {
           this.emit('approval_forward', msg.payload);
         }
@@ -132,6 +158,18 @@ export class RelayClient extends EventEmitter {
 
   close(): void {
     this.intentionalClose = true;
+    this.clearPongTimeout();
+    this.clearConnectionTimer();
+    this.ws?.close();
+  }
+
+  /** Force-close and reconnect the WebSocket. The 'close' handler will fire
+   *  intentionalClose=false so scheduleReconnect kicks in immediately. */
+  reconnect(): void {
+    this.clearPongTimeout();
+    this.clearConnectionTimer();
+    this.intentionalClose = false;
+    this.reconnectAttempt = 0;
     this.ws?.close();
   }
 
@@ -153,14 +191,42 @@ export class RelayClient extends EventEmitter {
   private startHeartbeat(): void {
     this.heartbeatTimer = setInterval(() => {
       this.send(createPing());
+      this.restartPongTimeout();
     }, HEARTBEAT_INTERVAL_MS);
+  }
+
+  private restartPongTimeout(): void {
+    this.clearPongTimeout();
+    this.pongTimeoutTimer = setTimeout(() => {
+      console.error('[relay-client] pong timeout — closing connection');
+      this.intentionalClose = false; // let reconnect fire
+      this.ws?.close();
+    }, HEARTBEAT_TIMEOUT_MS);
+  }
+
+  private clearPongTimeout(): void {
+    if (this.pongTimeoutTimer) {
+      clearTimeout(this.pongTimeoutTimer);
+      this.pongTimeoutTimer = undefined;
+    }
+  }
+
+  private clearConnectionTimer(): void {
+    if (this.connectionTimer) {
+      clearTimeout(this.connectionTimer);
+      this.connectionTimer = undefined;
+    }
   }
 
   private stopHeartbeat(): void {
     if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);
+    this.clearPongTimeout();
+    this.clearConnectionTimer();
   }
 
   private scheduleReconnect(): void {
+    this.clearPongTimeout();
+    this.clearConnectionTimer();
     const delay = Math.min(
       RECONNECT_BASE_DELAY_MS * 2 ** this.reconnectAttempt,
       RECONNECT_MAX_DELAY_MS,

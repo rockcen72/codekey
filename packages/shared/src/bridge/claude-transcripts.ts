@@ -1,4 +1,4 @@
-import { createReadStream, existsSync, readdirSync, statSync, fstatSync, openSync, readSync, closeSync } from 'node:fs';
+import { createReadStream, existsSync, readdirSync, statSync, fstatSync, openSync, readSync, closeSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import readline from 'node:readline';
@@ -201,6 +201,59 @@ export interface UserPromptEntry {
   index: number;
 }
 
+export interface ConversationEntry {
+  role: 'user' | 'assistant';
+  text: string;
+  timestamp: string;
+  index: number;
+}
+
+/**
+ * Load a full transcript conversation as user/assistant message pairs.
+ * Filters out tool_use/tool_result blocks and system messages.
+ * Returns entries in chronological order, most recent last.
+ */
+export function loadConversation(sessionId: string, maxEntries = 100): ConversationEntry[] {
+  const transcriptPath = findTranscriptPath(sessionId);
+  if (!transcriptPath) return [];
+
+  const text = readFileSync(transcriptPath, 'utf8');
+  const lines = text.split('\n');
+  const entries: ConversationEntry[] = [];
+
+  for (let i = 0; i < lines.length; i++) {
+    const raw = lines[i].trim();
+    if (!raw) continue;
+    let obj: TranscriptLine;
+    try {
+      obj = JSON.parse(raw);
+    } catch { continue; }
+
+    if (obj.type === 'user' && !obj.isMeta && obj.message?.role === 'user') {
+      const rawText = extractText(obj.message.content);
+      if (rawText) {
+        const text = compactWhitespace(stripContextTags(rawText));
+        if (!isControlOnlyTitle(text)) {
+          entries.push({ role: 'user', text, timestamp: normalizeTimestamp(obj.timestamp), index: i });
+        }
+      }
+    } else if (obj.type === 'assistant' && obj.message?.role === 'assistant') {
+      const rawText = extractText(obj.message.content);
+      if (rawText) {
+        entries.push({
+          role: 'assistant',
+          text: compactWhitespace(rawText),
+          timestamp: normalizeTimestamp(obj.timestamp),
+          index: i,
+        });
+      }
+    }
+  }
+
+  if (entries.length > maxEntries) return entries.slice(entries.length - maxEntries);
+  return entries;
+}
+
 export async function extractUserPrompts(
   sessionId: string,
   maxCount = 20,
@@ -335,10 +388,5 @@ export async function listRecentClaudeTranscripts(limit = 5): Promise<ClaudeTran
     const tb = b.updatedAt ? new Date(b.updatedAt).getTime() : 0;
     return tb - ta;
   });
-  console.error('[transcripts] listRecent: baseDir=%s files=%d unique=%d returned=%d',
-    baseDir, files.length, unique.length, Math.min(unique.length, Math.max(1, Math.min(limit, 100))));
-  for (const s of unique.slice(0, Math.max(1, Math.min(limit, 100)))) {
-    console.error('[transcripts]   session=%s updatedAt=%s title=%s', s.sessionId.slice(0, 8), s.updatedAt, s.title?.slice(0, 40));
-  }
   return unique.slice(0, Math.max(1, Math.min(limit, 100)));
 }

@@ -5,6 +5,7 @@ import { getAgents } from '../agents/registry.js';
 import { BridgeStatusService } from '../services/bridge-status.js';
 import { SessionStore } from '../services/session-store.js';
 import { renderSidebar, type SidebarState } from './sidebar-html.js';
+import { loadConversation } from '../../../shared/src/bridge/claude-transcripts.js';
 import { log } from '../log.js';
 
 const POLL_MS = 5000;
@@ -34,7 +35,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
 
   private async fetchRecentClaudeSessions(): Promise<SidebarState['claudeSessions']> {
     try {
-      const res = await fetch('http://127.0.0.1:3001/v1/claude-sessions/recent?limit=5');
+      const res = await fetch('http://127.0.0.1:3001/v1/claude-sessions/recent?limit=50');
       if (!res.ok) return [];
       const body = await res.json() as { ok: boolean; sessions?: any[] };
       return (body.ok ? body.sessions ?? [] : []).map((s: any) => ({
@@ -60,9 +61,9 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         if (creds?.deviceId) {
           await SessionStore.add(this._context, creds.deviceId, sessionId);
         }
-        vscode.window.showInformationMessage(`Session ${sessionId.slice(0, 8)} attached`);
+        vscode.window.showInformationMessage(`Session ${sessionId.slice(0, 8)} attached — CC tab opening for interaction`);
         // Open the CC extension's editor tab so the user can interact with the session
-        this._resumeClaudeSession();
+        this._resumeClaudeSession(sessionId);
       } else {
         const body = await res.json().catch(() => ({} as Record<string, unknown>));
         vscode.window.showErrorMessage(`Attach failed: ${(body as Record<string, unknown>).error || res.statusText}`);
@@ -72,30 +73,10 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     }
   }
 
-  /** Open the CC extension's editor tab so the user can interact with the attached session.
-   *  If a CC editor tab already exists, just focus the panel — don't create a new tab. */
-  private _resumeClaudeSession(): void {
-    // Check if any CC editor tab is already open
-    let hasTab = false;
-    for (const group of vscode.window.tabGroups.all) {
-      for (const tab of group.tabs) {
-        if (tab.input instanceof vscode.TabInputWebview) {
-          const viewType = (tab.input as any).viewType as string | undefined;
-          if (viewType && viewType.endsWith('claudeVSCodePanel')) {
-            hasTab = true;
-            break;
-          }
-        }
-      }
-      if (hasTab) break;
-    }
-    if (hasTab) {
-      // Tab exists — just focus the CC panel (activity bar), no new editor tab
-      vscode.commands.executeCommand('claude-vscode.focus');
-    } else {
-      // No tab open — open the last used CC editor
-      vscode.commands.executeCommand('claude-vscode.editor.openLast');
-    }
+  /** Open the CC extension's editor tab with the given sessionId.
+   *  Always passes sessionId to editor.open so CC can resume the correct session. */
+  private _resumeClaudeSession(sessionId?: string): void {
+    vscode.commands.executeCommand('claude-vscode.editor.open', sessionId);
   }
 
   private async _pushState(): Promise<void> {
@@ -127,10 +108,14 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     }
 
     // Extract pending approvals (per-session for grouped display)
+    const STALE_APPROVAL_MS = 5 * 60_000; // skip approvals older than 5min
     for (const [sid, evts] of Object.entries(events)) {
       const session = sessions.find(s => s.id === sid);
       for (const e of evts) {
         if (e.pending && e.type === 'approval_required') {
+          // Skip stale pending events that should have been expired by the relay cleanup
+          const age = Date.now() - new Date(e.created_at).getTime();
+          if (age > STALE_APPROVAL_MS) continue;
           pendingApprovals.push({
             id: e.id,
             command: e.data?.command ?? e.data?.summary ?? '(unknown)',
@@ -148,32 +133,28 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       const agentSessions = sessions.filter(s => a.sessionAgentTypes.includes(s.agent_type));
       if (agentSessions.length === 0) return { ...a, runtimeStatus: 'idle' as const };
 
-      let latestEvent: { type: string; data?: any; created_at: string } | null = null;
-      let latestTs = 0;
-      for (const s of agentSessions) {
-        const evts = (events[s.id] || []).slice().sort(
-          (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
-        );
-        if (evts.length > 0) {
-          const ts = new Date(evts[0].created_at).getTime();
-          if (ts > latestTs) {
-            latestTs = ts;
-            latestEvent = evts[0];
-          }
-        }
-      }
+      // Collect all events, sort newest first, skip resolved and stale approvals
+      const allEvts = agentSessions.flatMap(s => (events[s.id] || []))
+        .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+      const activeEvent = allEvts.find(e => {
+        if (e.type !== 'approval_required') return true;
+        if (e.pending === false || ['approve', 'deny', 'expired'].includes(e.decision ?? '')) return false;
+        // Skip stale pending events (older than 5min)
+        if (Date.now() - new Date(e.created_at).getTime() > 5 * 60_000) return false;
+        return true;
+      });
 
       let statusLine: string | undefined;
       let lastMessage: string | undefined;
 
-      if (latestEvent) {
-        switch (latestEvent.type) {
+      if (activeEvent) {
+        switch (activeEvent.type) {
           case 'approval_required':
             statusLine = 'Awaiting approval';
             break;
           case 'task_complete':
             statusLine = 'Task complete';
-            lastMessage = latestEvent.data?.summary;
+            lastMessage = activeEvent.data?.summary;
             break;
           case 'session_idle':
             statusLine = 'Waiting for instruction';
@@ -182,7 +163,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
             statusLine = 'Running...';
         }
       } else {
-        statusLine = 'Running...';
+        statusLine = 'Idle';
       }
 
       return { ...a, runtimeStatus: 'active' as const, statusLine, lastMessage };
@@ -262,14 +243,22 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       case 'hook-settings':
         vscode.commands.executeCommand('codekey.enableHook');
         break;
+      case 'relayReconnect':
+        fetch('http://127.0.0.1:3001/v1/relay-reconnect', { method: 'POST' }).catch(() => {});
+        vscode.window.showInformationMessage('Relay reconnecting...');
+        break;
       case 'refreshClaudeSessions':
         this._pushState();
         break;
       case 'attachClaudeSession':
         this.attachClaudeSession(msg.sessionId).then(() => this._pushState());
         break;
+      case 'getSessionPreview':
+        this._handleSessionPreview(msg.sessionId);
+        break;
       case 'toggleAttachClaudeSession':
         if (msg.attached) {
+          // Already attached — detach
           fetch('http://127.0.0.1:3001/v1/detach-session', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -289,6 +278,41 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
           this.attachClaudeSession(msg.sessionId).then(() => this._pushState());
         }
         break;
+      case 'openSession':
+        this._resumeClaudeSession(msg.sessionId);
+        break;
+      case 'detachSession':
+        fetch('http://127.0.0.1:3001/v1/detach-session', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ claudeSessionId: msg.sessionId }),
+        }).then(async (res) => {
+          if (res.ok) {
+            const creds = loadCredentials();
+            if (creds?.deviceId) {
+              await SessionStore.remove(this._context, creds.deviceId, msg.sessionId);
+            }
+          } else {
+            vscode.window.showErrorMessage(`Detach failed: ${res.statusText}`);
+          }
+          this._pushState();
+        });
+        break;
+    }
+  }
+
+  /** Load last 5 conversation entries and send them back to the webview for inline display. */
+  private _handleSessionPreview(sessionId: string): void {
+    try {
+      const entries = loadConversation(sessionId, 5);
+      const preview = entries.map((e) => ({
+        role: e.role,
+        text: e.text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'),
+        timestamp: e.timestamp,
+      }));
+      this._view?.webview.postMessage({ type: 'sessionPreview', sessionId, entries: preview, count: entries.length });
+    } catch (err) {
+      this._view?.webview.postMessage({ type: 'sessionPreview', sessionId, entries: [], count: 0 });
     }
   }
 

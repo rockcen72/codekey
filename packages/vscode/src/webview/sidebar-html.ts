@@ -60,16 +60,33 @@ function tag(text: string, cls: string): string {
 
 // ── Section renderers ────────────────────────────────────
 
+function renderBrandHeader(): string {
+  return `<div class="brand-header">
+    <svg width="28" height="28" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style="display:block;margin:0 auto 6px">
+      <rect x="6" y="2" width="12" height="20" rx="2.5" stroke="var(--vscode-editor-foreground)" stroke-width="1.5" opacity="0.8"/>
+      <path d="M9.5 9.5L7.5 12L9.5 14.5" stroke="var(--vscode-editor-foreground)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" opacity="0.8"/>
+      <path d="M14.5 9.5L16.5 12L14.5 14.5" stroke="var(--vscode-editor-foreground)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" opacity="0.8"/>
+      <path d="M17 4.5L17.35 5.65L18.5 6L17.35 6.35L17 7.5L16.65 6.35L15.5 6L16.65 5.65Z" fill="var(--vscode-editor-foreground)" opacity="0.8"/>
+    </svg>
+    <div class="brand-title">CodeKey</div>
+    <div class="brand-subtitle">AI Coding Remote</div>
+  </div>`;
+}
+
 function renderDevice(state: SidebarState): string {
   const { deviceStatus, bridge, phoneName } = state;
   const statusTag = deviceStatus === 'paired' ? tag('Paired', 'green')
     : deviceStatus === 'offline' ? tag('Offline', 'red')
     : tag('Unpaired', 'orange');
 
-  const bridgeTag = bridge.bridge === 'running' ? tag('Running', 'green')
-    : bridge.bridge === 'connecting' ? tag('Connecting...', 'yellow')
-    : bridge.bridge === 'error' ? tag('Error', 'red')
-    : tag('Stopped', 'orange');
+  const serverLabel = bridge.bridge === 'running' && bridge.relay === 'connected' ? 'Connected'
+    : bridge.bridge === 'connecting' || bridge.relay === 'connecting' ? 'Connecting...'
+    : bridge.relay === 'disconnected' && bridge.bridge === 'running' ? 'Disconnected'
+    : 'Offline';
+  const serverCls = serverLabel === 'Connected' ? 'green'
+    : serverLabel === 'Connecting...' ? 'yellow'
+    : 'red';
+  const serverTag = tag(serverLabel, serverCls);
 
   const hookLabel = bridge.hookConfig === 'enabled' ? 'Enabled'
     : bridge.hookInstalled ? 'Installed'
@@ -82,11 +99,12 @@ function renderDevice(state: SidebarState): string {
   return `<div class="section">
     <div class="section-title"><span>DEVICE</span>${statusTag}</div>
     <div class="row"><span class="muted">Phone</span><span>${h(phoneName)}</span></div>
-    <div class="row"><span class="muted">Bridge</span>${bridgeTag}</div>
+    <div class="row"><span class="muted">Server</span>${serverTag}</div>
     <div class="row"><span class="muted">Hook</span>${hookTag}</div>
     <div class="button-row">
       <button class="btn" data-action="pair">${deviceStatus === 'paired' ? 'Re-Pair' : 'Pair Device'}</button>
       <button class="btn" data-action="hook-settings">Hook</button>
+      <button class="btn" data-action="relayReconnect" style="font-size:10px">Reconnect</button>
     </div>
   </div>`;
 }
@@ -172,27 +190,35 @@ function renderClaudeSessions(state: SidebarState): string {
       </span>
     </div>
     ${items.length === 0 ? '<div class="muted" style="font-size:11px">No local Claude sessions found</div>' : ''}
+    <div class="session-scroll">
     ${items.map(s => `
-      <div class="item" style="padding:6px 0">
-        <div style="font-weight:500;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${h(s.title || s.sessionId.slice(0, 8))}">${h(truncate(s.title || s.sessionId.slice(0, 8), 60))}</div>
+      <div class="item session-item" style="padding:6px 0">
+        <div class="session-title-row" data-action="togglePreview" data-session-id="${h(s.sessionId)}" style="cursor:pointer">
+          <span class="chevron">▶</span>
+          <span class="session-title" title="${h(s.title || s.sessionId.slice(0, 8))}">${h(truncate(s.title || s.sessionId.slice(0, 8), 60))}</span>
+        </div>
         <div class="row" style="margin:2px 0">
           <span class="muted" style="font-size:10px">${h(truncate(s.cwd || '', 50))}</span>
           <span class="muted" style="font-size:10px">${h(formatTime(s.updatedAt))}</span>
         </div>
         <div class="row" style="margin:2px 0">
           <span class="muted" style="font-size:10px;font-family:monospace">${h(s.sessionId.slice(0, 8))}</span>
-          ${s.canDetach
-            ? `<button class="${s.attached ? 'btn btn-attached' : 'btn'}"
-                 data-action="toggleAttachClaudeSession"
-                 data-session-id="${h(s.sessionId)}"
-                 data-attached="${s.attached ? 'true' : 'false'}"
-                 style="font-size:10px">${s.attached ? 'Attached' : 'Attach'}</button>`
-            : `<button class="btn" data-action="attachClaudeSession"
-                 data-session-id="${h(s.sessionId)}"
-                 style="font-size:10px">Attach</button>`}
+          <span style="display:flex;gap:4px">
+            <button class="${s.attached ? 'btn btn-attached' : 'btn'}"
+                data-action="toggleAttachClaudeSession"
+                data-session-id="${h(s.sessionId)}"
+                data-attached="${s.attached ? 'true' : 'false'}"
+                style="font-size:10px;width:60px">${s.attached ? '已推送' : '推送远程'}</button>
+            <button class="btn"
+                data-action="openSession"
+                data-session-id="${h(s.sessionId)}"
+                style="font-size:10px;width:60px">打开会话</button>
+          </span>
         </div>
+        <div class="preview" id="preview-${h(s.sessionId)}" style="display:none"></div>
       </div>
     `).join('')}
+    </div>
   </div>`;
 }
 
@@ -216,6 +242,7 @@ export function renderSidebar(state: SidebarState): string {
 <style>${STYLES}</style>
 </head>
 <body>
+${renderBrandHeader()}
 ${renderDevice(state)}
 ${renderAgents(state)}
 ${renderClaudeSessions(state)}
@@ -224,20 +251,71 @@ ${renderSubscribe()}
 <script nonce="${NONCE}">
 (function() {
   const api = acquireVsCodeApi();
+
+  // Listen for session preview data from extension host
+  window.addEventListener('message', function(e) {
+    if (e.data && e.data.type === 'sessionPreview') {
+      var sid = e.data.sessionId;
+      var container = document.getElementById('preview-' + sid);
+      if (!container) return;
+      if (e.data.count === 0) {
+        container.innerHTML = '<div class="preview-empty">No conversation found</div>';
+      } else {
+        var html = '';
+        for (var i = 0; i < e.data.entries.length; i++) {
+          var entry = e.data.entries[i];
+          var side = entry.role === 'user' ? 'right' : 'left';
+          var label = entry.role === 'user' ? 'You' : 'Claude';
+          var ts = entry.timestamp ? new Date(entry.timestamp).toLocaleTimeString() : '';
+          html += '<div class="pv-msg pv-msg-' + side + '">'
+            + '<div class="pv-label">' + label + ' <span class="pv-time">' + ts + '</span></div>'
+            + '<div class="pv-bubble pv-bubble-' + side + '">' + entry.text + '</div>'
+            + '</div>';
+        }
+        container.innerHTML = html;
+      }
+      container.style.display = 'block';
+    }
+  });
+
   document.addEventListener('click', function(e) {
-    const target = e.target instanceof HTMLElement
-      ? e.target.closest('button[data-action]')
+    var target = e.target instanceof HTMLElement
+      ? e.target.closest('[data-action]')
       : null;
     if (!target) return;
-    const action = target.dataset.action;
-    if (action === 'attachClaudeSession') {
-      api.postMessage({ action, sessionId: target.dataset.sessionId });
+    var action = target.dataset.action;
+
+    if (action === 'togglePreview') {
+      var sid = target.dataset.sessionId;
+      var container = document.getElementById('preview-' + sid);
+      if (!container) return;
+      var item = target.closest('.session-item');
+      var chevron = target.querySelector('.chevron');
+      if (!chevron) chevron = item?.querySelector('.chevron');
+      if (container.style.display === 'block') {
+        // Collapse
+        container.style.display = 'none';
+        if (chevron) chevron.textContent = '▶';
+      } else {
+        // Expand: show loading, request data
+        container.innerHTML = '<div class="preview-empty">Loading...</div>';
+        container.style.display = 'block';
+        if (chevron) chevron.textContent = '▼';
+        api.postMessage({ action: 'getSessionPreview', sessionId: sid });
+      }
+      return;
+    }
+
+    if (action === 'openSession') {
+      api.postMessage({ action: 'openSession', sessionId: target.dataset.sessionId });
     } else if (action === 'toggleAttachClaudeSession') {
       api.postMessage({
         action,
         sessionId: target.dataset.sessionId,
         attached: target.dataset.attached === 'true',
       });
+    } else if (action === 'attachClaudeSession' || action === 'detachSession') {
+      api.postMessage({ action, sessionId: target.dataset.sessionId });
     } else {
       api.postMessage({ action });
     }
@@ -312,4 +390,24 @@ body {
   color: var(--vscode-button-foreground);
   border-color: var(--vscode-button-background);
 }
+.brand-header { padding: 16px 12px 8px; text-align: center; border-bottom: 1px solid var(--vscode-panel-border); }
+.brand-title { font-size: 18px; font-weight: 700; letter-spacing: 0.02em; }
+.brand-subtitle { font-size: 11px; color: var(--vscode-descriptionForeground); margin-top: 2px; }
+.session-title-row { display: flex; align-items: center; gap: 4px; }
+.session-title { font-weight:500; font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex:1; }
+.session-title-row:hover .session-title { color: var(--vscode-textLink-foreground); }
+.chevron { font-size: 9px; color: var(--vscode-descriptionForeground); flex-shrink:0; width: 12px; text-align: center; }
+.session-title-row:hover .chevron { color: var(--vscode-textLink-foreground); }
+.session-scroll { max-height: 380px; overflow-y: auto; overflow-x: hidden; }
+.session-scroll::-webkit-scrollbar { width: 5px; }
+.session-scroll::-webkit-scrollbar-thumb { background: var(--vscode-scrollbarSlider-background); border-radius: 3px; }
+.session-scroll::-webkit-scrollbar-thumb:hover { background: var(--vscode-scrollbarSlider-hoverBackground); }
+.preview { padding: 6px 0 2px 16px; border-top: none; }
+.preview-empty { font-size: 11px; color: var(--vscode-descriptionForeground); padding: 8px 0; text-align: center; }
+.pv-msg { margin-bottom: 8px; }
+.pv-label { font-size: 10px; font-weight: 600; margin-bottom: 2px; color: var(--vscode-descriptionForeground); }
+.pv-time { font-size: 9px; font-weight: 400; color: var(--vscode-descriptionForeground); }
+.pv-bubble { padding: 6px 10px; border-radius: 6px; font-size: 11px; line-height: 1.4; white-space: pre-wrap; word-wrap: break-word; }
+.pv-bubble-left { background: var(--vscode-textCodeBlock-background); }
+.pv-bubble-right { background: var(--vscode-button-background); color: var(--vscode-button-foreground); }
 `;

@@ -679,10 +679,31 @@ export class ApprovalBridge {
         for (const [key, val] of this.pendingByServerEventId) {
           if (val === entry) this.pendingByServerEventId.delete(key);
         }
+        // Notify relay to mark the event as resolved (timeout)
+        this._resolveEventOnRelay(clientEventId);
         resolve({ approved: false });
       }, 120_000);
+      // Wrap resolve to also notify relay on normal approval_forward resolution
+      const originalResolve = resolve;
+      entry.resolve = (value) => {
+        this._resolveEventOnRelay(clientEventId);
+        originalResolve(value);
+      };
       this.pendingByServerEventId.set(clientEventId, entry);
     });
+  }
+
+  /** Notify relay that an approval event has been resolved (approved/denied/timeout).
+   *  Relay marks the event as pending=false so the mini program stops showing it. */
+  private _resolveEventOnRelay(eventId: string): void {
+    try {
+      this.relay.sendRaw(JSON.stringify({
+        type: 'resolve_event',
+        payload: { eventId },
+      }));
+    } catch {
+      // best-effort, don't block on failure
+    }
   }
 
   /** Forward non-approval hook event (task_complete, session_idle) to relay. */
