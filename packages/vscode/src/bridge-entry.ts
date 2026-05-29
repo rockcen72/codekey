@@ -35,8 +35,27 @@ async function main(): Promise<void> {
   const bridge = new ApprovalBridge(relay);
 
   bridge.listenRelayCommands();
-  const close = await startBridgeServer(bridge, 3001, 'vscode-bundled');
+  const close = await startBridgeServer(bridge, 3001, 'vscode-bundled', () => {
+    clearInterval(parentTimer);
+    clearInterval(reconcileTimer);
+    console.error('[bridge-entry] shutting down via /v1/shutdown');
+    bridge.deactivateAll().finally(() => {
+      close();
+      relay.close();
+      process.exit(0);
+    });
+  });
   console.error('[bridge-entry] HTTP server listening on port 3001');
+
+  // Periodic reconcile: sync in-memory attached-session state with the relay
+  // every 60s. This handles cases where a detach from the mini program updates
+  // the DB but the session_deactivated WS broadcast doesn't reach the bridge.
+  const RECONCILE_MS = 60_000;
+  const reconcileTimer = setInterval(() => {
+    bridge.reconcileAttachedSessions().catch(() => {
+      console.error('[bridge-entry] periodic reconcileAttachedSessions failed');
+    });
+  }, RECONCILE_MS);
 
   relay.on('connected', () => {
     console.error('[bridge-entry] connected to relay');
@@ -54,6 +73,7 @@ async function main(): Promise<void> {
   const parentTimer = setInterval(() => {
     if (!isParentAlive()) {
       clearInterval(parentTimer);
+      clearInterval(reconcileTimer);
       console.error('[bridge-entry] parent process exited, deactivating sessions');
       bridge.deactivateAll().finally(() => {
         close();
@@ -63,8 +83,8 @@ async function main(): Promise<void> {
     }
   }, PARENT_CHECK_MS);
 
-  process.on('SIGINT', () => { clearInterval(parentTimer); close(); relay.close(); process.exit(0); });
-  process.on('SIGTERM', () => { clearInterval(parentTimer); close(); relay.close(); process.exit(0); });
+  process.on('SIGINT', () => { clearInterval(parentTimer); clearInterval(reconcileTimer); close(); relay.close(); process.exit(0); });
+  process.on('SIGTERM', () => { clearInterval(parentTimer); clearInterval(reconcileTimer); close(); relay.close(); process.exit(0); });
 }
 
 main().catch((err) => {

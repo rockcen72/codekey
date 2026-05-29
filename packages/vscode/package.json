@@ -65,10 +65,9 @@
     "package": "vsce package --no-dependencies",
     "test": "echo 'No tests yet'"
   },
-  "dependencies": {
-    "@codekey/shared": "*"
-  },
+  "dependencies": {},
   "devDependencies": {
+    "@codekey/shared": "*",
     "@types/vscode": "^1.96.0",
     "esbuild": "^0.25.12",
     "typescript": "^5.7.0"

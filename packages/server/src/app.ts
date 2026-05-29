@@ -1,6 +1,7 @@
 import Fastify from 'fastify';
 import fastifyWebsocket from '@fastify/websocket';
 import fastifyCors from '@fastify/cors';
+import { WebSocketServer } from 'ws';
 import { deviceRoutes } from './routes/devices.js';
 import { sessionRoutes } from './routes/sessions.js';
 import { auditRoutes } from './routes/audit.js';
@@ -11,6 +12,7 @@ import type postgres from 'postgres';
 const CLEANUP_INTERVAL_MS = 60_000; // check every 60s
 const PENDING_TTL_MS = 5 * 60_000;  // expire events pending >5min
 const SESSION_IDLE_TTL_MS = 30 * 60_000; // close sessions idle >30min
+const WS_HEARTBEAT_MS = 10_000; // ping bridge every 10s to detect dead connections
 
 async function runCleanup(sql: postgres.Sql): Promise<void> {
   // 1. Expire stuck pending events (global TTL)
@@ -73,5 +75,22 @@ export async function buildApp(databaseUrl: string) {
   // Auto-expire pending events older than PENDING_TTL_MS
   const stopCleanup = startAutoCleanup(sql);
 
-  return { app, sql, stopCleanup };
+  // Heartbeat: ping all connected bridges every WS_HEARTBEAT_MS to detect dead connections.
+  // When VS Code closes, the bridge process is killed without a clean TCP close, so the
+  // server needs active probing to detect the disconnection.
+  // Individual WebSocket connections set __isAlive = true on 'pong' events (see ws/handler.ts).
+  const heartbeatTimer = setInterval(() => {
+    const wss = (app as any).websocketServer as WebSocketServer;
+    if (!wss) return;
+    wss.clients.forEach((ws) => {
+      if ((ws as any).__isAlive === false) {
+        ws.terminate();
+        return;
+      }
+      (ws as any).__isAlive = false;
+      ws.ping();
+    });
+  }, WS_HEARTBEAT_MS);
+
+  return { app, sql, stopCleanup, heartbeatTimer };
 }

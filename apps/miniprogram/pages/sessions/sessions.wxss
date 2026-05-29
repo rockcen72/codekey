@@ -99,6 +99,7 @@
   background: var(--ck-surface);
   border: 1rpx solid var(--ck-border);
   font-size: 20rpx;
+  line-height: 38rpx;
   color: var(--ck-muted);
 }
 
@@ -129,12 +130,30 @@
   padding: 0 28rpx 28rpx;
 }
 
-/* ── Session card (board card style) ── */
+/* ── Swipe-to-delete container ── */
+
+.swipe-wrap {
+  overflow: hidden;
+  margin-bottom: 14rpx;
+  border-radius: var(--ck-radius-md);
+}
+
+.swipe-inner {
+  display: flex;
+  transition: transform 200ms ease;
+}
+
+.swipe-inner.swiped {
+  transform: translateX(-140rpx);
+}
+
+/* ── Session card ── */
 
 .session-card {
   display: flex;
   align-items: stretch;
-  margin-bottom: 14rpx;
+  flex-shrink: 0;
+  width: 100%;
   border: 1rpx solid var(--ck-border);
   border-radius: var(--ck-radius-md);
   background: var(--ck-surface);
@@ -148,22 +167,28 @@
   transform: translateY(-1rpx);
 }
 
-/* Left accent bar for pending indicator */
-.card-accent {
-  width: 6rpx;
-  flex-shrink: 0;
-  background: transparent;
-  transition: background 140ms ease;
+.session-card.connected {
+  border-color: #fed7aa;
 }
 
-.card-accent.active {
-  /* color set via inline style from agentColor */
+/* Connection status bar: always visible */
+.conn-bar {
+  width: 6rpx;
+  flex-shrink: 0;
+  background: var(--ck-border);
+  transition: background 200ms ease;
 }
+
+.conn-bar.online {
+  background: #ea580c;  /* Claude Code orange */
+}
+
+/* ── Card body ── */
 
 .card-body {
   flex: 1;
   min-width: 0;
-  padding: 20rpx 16rpx 20rpx 20rpx;
+  padding: 20rpx 20rpx 20rpx 16rpx;
 }
 
 .card-top {
@@ -189,18 +214,10 @@
   min-width: 0;
 }
 
-/* Agent-color dot before session time */
 .card-time-wrap {
   display: flex;
   align-items: center;
   gap: 6rpx;
-  flex-shrink: 0;
-}
-
-.time-dot {
-  width: 14rpx;
-  height: 14rpx;
-  border-radius: 50%;
   flex-shrink: 0;
 }
 
@@ -224,42 +241,33 @@
   margin-top: 12rpx;
 }
 
-.status-tag {
-  display: inline-flex;
-  align-items: center;
-  height: 30rpx;
-  line-height: 30rpx;
-  padding: 0 10rpx;
-  border-radius: var(--ck-radius-sm);
-  background: #f1f5f9;
-  color: var(--ck-muted);
-  font-size: 20rpx;
-}
-
-.status-tag.active {
-  background: #f0fdf4;
-  color: var(--ck-success);
-}
-
 .session-id {
   font-size: 18rpx;
   color: var(--ck-subtle);
 }
 
-.detach-btn {
+/* ── Delete button (revealed on swipe) ── */
+
+.delete-area {
   flex-shrink: 0;
+  width: 140rpx;
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 0 16rpx;
-  color: var(--ck-subtle);
-  font-size: 20rpx;
-  background: transparent;
-  transition: color 140ms ease;
+  background: #fef2f2;
+  border: 1rpx solid #fecaca;
+  border-radius: 0 var(--ck-radius-md) var(--ck-radius-md) 0;
+  cursor: pointer;
 }
 
-.detach-btn:active {
-  color: var(--ck-danger);
+.delete-area:active {
+  background: #fee2e2;
+}
+
+.delete-text {
+  color: #dc2626;
+  font-size: 26rpx;
+  font-weight: 600;
 }
 
 /* ── Empty state ── */
@@ -279,7 +287,7 @@
 .empty-title {
   display: block;
   font-size: 32rpx;
-  font-weight: 700;
+  font-weight: 800;
   color: var(--ck-text);
 }
 

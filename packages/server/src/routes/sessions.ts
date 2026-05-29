@@ -23,7 +23,7 @@ export function sessionRoutes(sql: postgres.Sql) {
     fastify.get('/sessions', { preHandler: [tokenAuth(sql)] }, async (req, reply) => {
       const { deviceAuth } = req as unknown as { deviceAuth: { deviceId: string } };
       const { windowId } = req.query as { windowId?: string };
-      let query = sql`SELECT s.*, (SELECT COUNT(*) FROM events e WHERE e.session_id = s.id AND e.pending = true)::int AS pending_count FROM sessions s WHERE s.device_id = ${deviceAuth.deviceId} AND s.status = 'active' AND s.metadata->>'source' = 'transcript_attach'`;
+      let query = sql`SELECT s.*, (SELECT COUNT(*) FROM events e WHERE e.session_id = s.id AND e.pending = true)::int AS pending_count FROM sessions s WHERE s.device_id = ${deviceAuth.deviceId} AND s.status = 'active' AND s.metadata->>'source' = 'transcript_attach' AND coalesce(s.metadata->>'claudeSessionId', '') <> ''`;
       if (windowId) {
         query = sql`${query} AND s.metadata->>'windowId' = ${windowId}`;
       }

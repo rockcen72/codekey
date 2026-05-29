@@ -17,14 +17,14 @@
 
   <!-- Metrics: compact row -->
   <view class="metrics-row" wx:if="{{sessions.length > 0 || pendingTotal > 0}}">
-    <text class="metric-chip" wx:if="{{activeTotal > 0}}">
-      <text class="metric-dot active"></text>
-      {{activeTotal}} 活跃
-    </text>
-    <text class="metric-chip danger" wx:if="{{pendingTotal > 0}}">
-      <text class="metric-dot pending"></text>
-      {{pendingTotal}} 待审批
-    </text>
+    <view class="metric-chip" wx:if="{{activeTotal > 0}}">
+      <view class="metric-dot active"></view>
+      <text>{{activeTotal}} 活跃</text>
+    </view>
+    <view class="metric-chip danger" wx:if="{{pendingTotal > 0}}">
+      <view class="metric-dot pending"></view>
+      <text>{{pendingTotal}} 待审批</text>
+    </view>
   </view>
 
   <scroll-view class="list" scroll-y>
@@ -34,35 +34,42 @@
       <text class="empty-text">在 VS Code 中启动 Claude Code 后，关联的会话将出现在这里。</text>
     </view>
 
-    <view class="session-card {{item.hasPending ? 'has-pending' : ''}}"
-          wx:for="{{sessions}}"
-          wx:key="id"
+    <view class="swipe-wrap" wx:for="{{sessions}}" wx:key="id"
           data-id="{{item.id}}"
-          bindtap="openSession">
-      <!-- Agent color indicator: left accent bar -->
-      <view class="card-accent {{item.hasPending ? 'active' : ''}}"
-            style="{{item.hasPending ? 'background:' + item.agentColor : ''}}"></view>
+          bindtouchstart="onTouchStart"
+          bindtouchend="onTouchEnd">
+      <!-- Swipe-inner: card + delete button side by side -->
+      <view class="swipe-inner {{item.swiped ? 'swiped' : ''}}">
+        <!-- Main card -->
+        <view class="session-card {{item.hasPending ? 'has-pending' : ''}} {{item.connected ? 'connected' : ''}}"
+              data-id="{{item.id}}"
+              bindtap="openSession">
+          <!-- Connection status bar: orange (connected) / gray (offline) -->
+          <view class="conn-bar {{item.connected ? 'online' : 'offline'}}"></view>
 
-      <view class="card-body">
-        <view class="card-top">
-          <view class="card-title-row">
-            <text class="session-title ellipsis">{{item.displayTitle}}</text>
-          </view>
-          <view class="card-time-wrap">
-            <text class="time-dot" style="background: {{item.agentColor}}"></text>
-            <text class="session-time">{{item.displayTime}}</text>
+          <view class="card-body">
+            <view class="card-top">
+              <view class="card-title-row">
+                <text class="session-title ellipsis">{{item.displayTitle}}</text>
+              </view>
+              <view class="card-time-wrap">
+                <text class="session-time">{{item.displayTime}}</text>
+              </view>
+            </view>
+
+            <text class="session-subtitle ellipsis">{{item.displaySubtitle}}</text>
+
+            <view class="card-footer">
+              <text class="session-id mono" wx:if="{{item.displayClaudeId}}">{{item.displayClaudeId}}</text>
+            </view>
           </view>
         </view>
 
-        <text class="session-subtitle ellipsis">{{item.displaySubtitle}}</text>
-
-        <view class="card-footer">
-          <text class="status-tag {{item.status}}">{{item.statusLabel}}</text>
-          <text class="session-id mono" wx:if="{{item.displayClaudeId}}">{{item.displayClaudeId}}</text>
+        <!-- Delete button revealed on swipe -->
+        <view class="delete-area" data-id="{{item.id}}" catchtap="deleteSession">
+          <text class="delete-text">删除</text>
         </view>
       </view>
-
-      <view class="detach-btn" data-id="{{item.id}}" catchtap="detachSession">解除</view>
     </view>
   </scroll-view>
 </view>

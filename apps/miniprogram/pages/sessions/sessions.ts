@@ -1,42 +1,16 @@
 import { createApi, Session } from '../../services/api';
 import { getServerUrl } from '../../services/storage';
 
-const AGENT_COLORS: Record<string, string> = {
-  'claude-code': '#ea580c',
-  'claude': '#2563eb',
-  'cursor': '#059669',
-  'windsurf': '#0891b2',
-  'github-copilot': '#d97706',
-};
-
-function agentColor(session: Session): string {
-  const runtime = session.metadata?.runtime || session.agent_type || '';
-  for (const [key, color] of Object.entries(AGENT_COLORS)) {
-    if (runtime.includes(key)) return color;
-  }
-  return '#2563eb';
-}
-
-function sessionTitle(session: Session): string {
-  return session.metadata?.title
-    || session.metadata?.claudeSessionId?.slice(0, 8)
-    || session.id.slice(0, 8);
-}
-
-function sessionSubtitle(session: Session): string {
-  return session.metadata?.cwd
-    || session.metadata?.runtime
-    || session.agent_type;
-}
-
 const app = getApp<any>();
 
 Page({
   data: {
     sessions: [] as any[],
     wsConnected: false,
+    deviceOnline: true,
     pendingTotal: 0,
     activeTotal: 0,
+    _swipedSessionId: null as string | null,
   },
 
   onShow() {
@@ -53,7 +27,6 @@ Page({
   subscribeWs() {
     app.initWs();
 
-    // Create bound closures so cleanup works
     this._onEventPushBound = (payload: any) => {
       if (payload.eventType === 'task_complete') {
         const summary = payload.summaryShort || payload.summary || '';
@@ -64,6 +37,14 @@ Page({
     };
     this._onFetchSessionsBound = () => this.fetchSessions();
     this._onWsDisconnectedBound = () => this.setData({ wsConnected: false });
+    this._onDeviceOfflineBound = () => {
+      this.setData({ deviceOnline: false });
+      this._updateConnectedStates(false);
+    };
+    this._onDeviceOnlineBound = () => {
+      this.setData({ deviceOnline: true });
+      this._updateConnectedStates(true);
+    };
 
     app.onWsEvent('event_push', this._onEventPushBound);
     app.onWsEvent('session_registered', this._onFetchSessionsBound);
@@ -71,8 +52,10 @@ Page({
     app.onWsEvent('session_label_updated', this._onFetchSessionsBound);
     app.onWsEvent('ws_connected', this._onFetchSessionsBound);
     app.onWsEvent('ws_disconnected', this._onWsDisconnectedBound);
+    app.onWsEvent('device_offline', this._onDeviceOfflineBound);
+    app.onWsEvent('device_online', this._onDeviceOnlineBound);
 
-    // Sync current connection state
+    // Sync initial connection states
     if (app.globalData.wsConnected !== this.data.wsConnected) {
       this.setData({ wsConnected: app.globalData.wsConnected });
     }
@@ -81,6 +64,8 @@ Page({
   unsubscribeWs() {
     if (this._onEventPushBound) app.offWsEvent('event_push', this._onEventPushBound);
     if (this._onWsDisconnectedBound) app.offWsEvent('ws_disconnected', this._onWsDisconnectedBound);
+    if (this._onDeviceOfflineBound) app.offWsEvent('device_offline', this._onDeviceOfflineBound);
+    if (this._onDeviceOnlineBound) app.offWsEvent('device_online', this._onDeviceOnlineBound);
     if (this._onFetchSessionsBound) {
       app.offWsEvent('session_registered', this._onFetchSessionsBound);
       app.offWsEvent('session_deactivated', this._onFetchSessionsBound);
@@ -90,6 +75,8 @@ Page({
     this._onEventPushBound = undefined;
     this._onFetchSessionsBound = undefined;
     this._onWsDisconnectedBound = undefined;
+    this._onDeviceOfflineBound = undefined;
+    this._onDeviceOnlineBound = undefined;
   },
 
   _startPolling() {
@@ -104,33 +91,43 @@ Page({
     }
   },
 
+  /** Recompute connected states without a re-fetch (used on device online/offline). */
+  _updateConnectedStates(deviceOnline: boolean) {
+    const sessions = this.data.sessions.map(s => ({
+      ...s,
+      connected: s.status === 'active' && deviceOnline,
+    }));
+    const activeTotal = sessions.filter(s => s.connected).length;
+    this.setData({ sessions, activeTotal });
+  },
+
   async fetchSessions() {
     try {
       const api = createApi(getServerUrl());
       const raw = await api.getSessions();
+      const deviceOnline = this.data.deviceOnline;
       const sessions = raw.map(s => {
         const pendingCount = Number((s as any).pendingCount || (s as any).pending_count || 0);
         const title = sessionTitle(s);
         const subtitle = sessionSubtitle(s);
-        const runtime = s.metadata?.runtime || s.agent_type || 'agent';
         const claudeId = s.metadata?.claudeSessionId || '';
 
         return {
           ...s,
           displayTitle: title,
           displaySubtitle: subtitle,
-          displayRuntime: runtime,
+          displayRuntime: s.metadata?.runtime || s.agent_type || 'agent',
           displayClaudeId: claudeId ? claudeId.slice(0, 8) : '',
           displayTime: this.formatTime(s.last_active_at),
           pendingCount,
           hasPending: pendingCount > 0,
-          agentColor: agentColor(s),
-          statusLabel: s.status === 'active' ? '在线' : '离线',
+          connected: s.status === 'active' && deviceOnline,
+          swiped: false,
         };
       });
 
       const pendingTotal = sessions.reduce((sum, item) => sum + item.pendingCount, 0);
-      const activeTotal = sessions.filter((item) => item.status === 'active').length;
+      const activeTotal = sessions.filter((item) => item.connected).length;
 
       this.setData({ sessions, pendingTotal, activeTotal });
     } catch (err) {
@@ -138,36 +135,85 @@ Page({
     }
   },
 
-  openSession(e: any) {
-    const id = e.currentTarget.dataset.id;
-    wx.navigateTo({ url: `/pages/session-detail/session-detail?id=${id}` });
+  // ── Swipe-to-delete ──
+
+  onTouchStart(e: any) {
+    this._swipeStartX = e.touches[0].clientX;
+    this._swipingId = e.currentTarget.dataset.id;
   },
 
-  detachSession(e: any) {
-    const sessionId = e.currentTarget.dataset.id;
-    if (!app.globalData.wsConnected) {
-      wx.showToast({ title: '未连接服务器，无法取消关联', icon: 'none' });
-      return;
+  onTouchEnd(e: any) {
+    if (!this._swipingId) return;
+    const delta = e.changedTouches[0].clientX - this._swipeStartX;
+    if (delta < -50) {
+      // Swipe left: open delete for this item, close others
+      this._openSwipe(this._swipingId);
+    } else {
+      // Tap or short move: close any open swipe; let bindtap handle navigation
+      this._closeAllSwipes();
     }
+    this._swipeStartX = 0;
+    this._swipingId = null;
+  },
+
+  _openSwipe(id: string) {
+    const sessions = this.data.sessions.map(s => ({
+      ...s,
+      swiped: s.id === id,
+    }));
+    this.setData({ sessions });
+  },
+
+  _closeAllSwipes() {
+    const sessions = this.data.sessions.map(s => ({
+      ...s,
+      swiped: false,
+    }));
+    this.setData({ sessions });
+  },
+
+  // ── Delete / detach ──
+
+  deleteSession(e: any) {
+    const sessionId = e.currentTarget.dataset.id;
+    const sessions = this.data.sessions;
+    const session = sessions.find((s: any) => s.id === sessionId);
+
+    if (!session) return;
 
     wx.showModal({
-      title: '取消关联',
-      content: '将结束此会话的 CodeKey 连接并过期待处理的审批请求。',
+      title: '删除会话',
+      content: '将从列表中移除此会话。如果会话仍处于连接状态，将同时解除关联。',
       success: (res) => {
-        if (res.confirm) {
-          app.sendWs({ type: 'detach_session', payload: { sessionId } });
-
-          // Optimistically remove from list
-          const sessions = this.data.sessions.filter((s: any) => s.id !== sessionId);
-          const pendingTotal = sessions.reduce((sum, s) => sum + (s.pendingCount || 0), 0);
-          const activeTotal = sessions.filter((s: any) => s.status === 'active').length;
-          this.setData({ sessions, pendingTotal, activeTotal });
-
-          // Reconcile from server after 3s
-          setTimeout(() => this.fetchSessions(), 3000);
+        if (!res.confirm) {
+          this._closeAllSwipes();
+          return;
         }
+
+        // If still connected, detach first
+        if (session.connected && app.globalData.wsConnected) {
+          app.sendWs({ type: 'detach_session', payload: { sessionId } });
+        }
+
+        // Remove from list
+        const updated = sessions.filter((s: any) => s.id !== sessionId);
+        const pendingTotal = updated.reduce((sum, s) => sum + (s.pendingCount || 0), 0);
+        const activeTotal = updated.filter((s: any) => s.connected).length;
+        this.setData({ sessions: updated, pendingTotal, activeTotal });
+
+        // Re-fetch after 2s to reconcile
+        setTimeout(() => this.fetchSessions(), 2000);
       },
     });
+  },
+
+  // ── Navigation ──
+
+  openSession(e: any) {
+    // Close any open swipe before navigating
+    this._closeAllSwipes();
+    const id = e.currentTarget.dataset.id;
+    wx.navigateTo({ url: `/pages/session-detail/session-detail?id=${id}` });
   },
 
   goToSettings() {
@@ -185,3 +231,17 @@ Page({
     return new Date(iso).toLocaleDateString();
   },
 });
+
+// ── Helpers ──
+
+function sessionTitle(session: Session): string {
+  return session.metadata?.title
+    || session.metadata?.claudeSessionId?.slice(0, 8)
+    || session.id.slice(0, 8);
+}
+
+function sessionSubtitle(session: Session): string {
+  return session.metadata?.cwd
+    || session.metadata?.runtime
+    || session.agent_type;
+}

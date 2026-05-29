@@ -114,16 +114,16 @@ function renderPendingList(pending: PendingApprovalItem[]): string {
   if (pending.length === 0) return '';
   return pending.map(a => {
     const rCls = a.risk === 'high' || a.risk === 'critical' ? 'red' : 'orange';
-    return `<div class="item danger" style="margin-left:12px">
-      <div class="cmd">${h(a.command)}</div>
-      <div class="row"><span class="muted">${h(a.agent)}</span>${tag(a.risk, rCls)}</div>
+    const cmd = a.command.length > 55 ? a.command.slice(0, 52) + '…' : a.command;
+    return `<div class="item danger" style="margin-left:12px;padding:4px 0;display:flex;align-items:center;gap:4px;font-size:11px;overflow:hidden">
+      <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:monospace">${h(cmd)}</span>
+      <span class="muted" style="flex-shrink:0">${h(a.agent)}</span>
+      ${tag(a.risk, rCls)}
     </div>`;
   }).join('');
 }
 
 function renderSessions(state: SidebarState): string {
-  if (state.sessions.length === 0) return '';
-
   // Build per-session pending lookup
   const pendingBySession: Record<string, PendingApprovalItem[]> = {};
   for (const a of state.pendingApprovals) {
@@ -131,37 +131,39 @@ function renderSessions(state: SidebarState): string {
     pendingBySession[a.serverSessionId]!.push(a);
   }
 
-  // Sort newest first
-  const sorted = state.sessions.slice().sort((a, b) => new Date(b.last_active_at || b.created_at).getTime() - new Date(a.last_active_at || a.created_at).getTime());
+  // Only show sessions that have pending approvals
+  const active = Object.entries(pendingBySession);
+  if (active.length === 0) return '';
 
   return `<div class="section">
-    <div class="section-title"><span>SESSIONS</span>${tag(String(state.sessions.length), '')}</div>
-    ${sorted.map(s => {
-      const sid = s.id.length > 12 ? s.id.slice(0, 8) + '...' + s.id.slice(-3) : s.id;
-      const displayTitle = s.metadata?.title || s.metadata?.claudeSessionId?.slice(0, 8) || sid;
-      const perSession = pendingBySession[s.id] ?? [];
-      const sTag = perSession.length > 0 ? tag(`${perSession.length} pending`, 'orange') : tag('idle', '');
-      const ts = s.last_active_at || s.created_at;
-
+    <div class="section-title"><span>APPROVALS</span>${tag(String(active.length), 'orange')}</div>
+    ${active.map(([sessionId, pending]) => {
+      const s = state.sessions.find(s => s.id === sessionId);
+      const sid = s?.id ? (s.id.length > 12 ? s.id.slice(0, 8) + '…' + s.id.slice(-3) : s.id) : sessionId.slice(0, 8);
+      const label = s?.metadata?.claudeSessionId?.slice(0, 8) || sid;
+      const ts = s?.last_active_at || s?.created_at || '';
       return `<div class="session-group">
-        <div class="item">
-          <div class="row">
-            <span><b>${h(s.agent_type)}</b> ${h(truncate(displayTitle, 40))}</span>
-            ${sTag}
-          </div>
-          <div class="row">
-            <span class="muted" style="font-size:10px;font-family:monospace">${h(sid)}</span>
-            <span class="muted" style="font-size:10px">${h(formatTime(ts))}</span>
+        <div class="item" style="padding:4px 0">
+          <div class="row" style="margin:0">
+            <span style="font-size:11px"><b>${h(s?.agent_type || '?')}</b> ${h(label)}</span>
+            <span style="display:flex;align-items:center;gap:4px">
+              <span class="muted" style="font-size:10px">${h(formatTime(ts))}</span>
+              ${tag(`${pending.length} pending`, 'orange')}
+            </span>
           </div>
         </div>
-        ${renderPendingList(perSession)}
+        ${renderPendingList(pending)}
       </div>`;
     }).join('')}
   </div>`;
 }
 
 function renderClaudeSessions(state: SidebarState): string {
-  const items = state.claudeSessions.slice().sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+  const items = state.claudeSessions.slice().sort((a, b) => {
+    const ta = a.updatedAt ? new Date(a.updatedAt).getTime() : 0;
+    const tb = b.updatedAt ? new Date(b.updatedAt).getTime() : 0;
+    return tb - ta;
+  });
   return `<div class="section">
     <div class="section-header" style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
       <span class="section-title" style="font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:0.04em">Local Sessions</span>

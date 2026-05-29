@@ -3,8 +3,8 @@ import { type AddressInfo } from 'node:net';
 import { ApprovalBridge, type HookEventBody } from './handler.js';
 import { listRecentClaudeTranscripts } from './claude-transcripts.js';
 
-export function startBridgeServer(bridge: ApprovalBridge, port = 3001, source = 'cli'): Promise<() => void> {
-  const server = createServer((req, res) => handleRequest(req, res, bridge, source));
+export function startBridgeServer(bridge: ApprovalBridge, port = 3001, source = 'cli', onShutdown?: () => void): Promise<() => void> {
+  const server = createServer((req, res) => handleRequest(req, res, bridge, source, onShutdown));
 
   return new Promise((resolve) => {
     server.listen(port, '127.0.0.1', () => {
@@ -15,7 +15,7 @@ export function startBridgeServer(bridge: ApprovalBridge, port = 3001, source = 
   });
 }
 
-function handleRequest(req: IncomingMessage, res: ServerResponse, bridge: ApprovalBridge, source: string): void {
+function handleRequest(req: IncomingMessage, res: ServerResponse, bridge: ApprovalBridge, source: string, onShutdown?: () => void): void {
   const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
 
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -257,6 +257,43 @@ function handleRequest(req: IncomingMessage, res: ServerResponse, bridge: Approv
     const attached = bridge.getAttachedSessionIds();
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ ok: true, attached }));
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/v1/shutdown') {
+    if (!onShutdown) {
+      res.writeHead(404, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: false, error: 'no shutdown callback registered' }));
+      return;
+    }
+    let body = '';
+    req.on('data', (chunk) => { body += chunk; });
+    req.on('end', () => {
+      try {
+        const { windowId } = JSON.parse(body);
+        if (windowId) bridge.deactivateByWindow(windowId);
+
+        // Check remaining windows with 60s TTL: stale windows (crashed VS Code)
+        // don't block shutdown.
+        const STALE_WINDOW_MS = 60_000;
+        const now = Date.now();
+        let activeCount = 0;
+        for (const [, lastSeen] of bridge.getActiveWindows()) {
+          if (now - lastSeen < STALE_WINDOW_MS) activeCount++;
+        }
+        if (activeCount > 0) {
+          res.writeHead(409, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: false, error: 'other windows still active', activeCount }));
+          return;
+        }
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: true }));
+        onShutdown();
+      } catch {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: false, error: 'invalid payload' }));
+      }
+    });
     return;
   }
 

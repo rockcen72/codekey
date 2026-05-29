@@ -4,6 +4,7 @@ import { CommandQueue } from './command-queue.js';
 import {
   resolveClaudeTranscript,
   extractUserPrompts,
+  resolveTranscriptCwd,
 } from './claude-transcripts.js';
 import { MAX_PROMPT_LENGTH } from '../types.js';
 import type { AgentEventPayload, SessionEventMessage } from '../types.js';
@@ -17,6 +18,7 @@ export interface HookEventBody {
   eventType: 'task_complete' | 'session_idle';
   claudeSessionId?: string;
   codekeyWindowId?: string;
+  lastAssistantMessage?: string;
   data: {
     type: 'task_complete';
     summary: string;
@@ -35,6 +37,7 @@ interface PendingApproval {
 interface ApprovalHookBody {
   claudeSessionId?: string;
   codekeyWindowId?: string;
+  source?: string; // 'permission_request' from CC hook, empty from restart replay
   rawEvent?: Record<string, unknown>;
 }
 
@@ -46,6 +49,13 @@ interface ApprovalText {
 
 export class ApprovalBridge {
   readonly commandQueue = new CommandQueue();
+
+  // Startup grace period: reject hook events without explicit windowId
+  // during the first N seconds. CC extension restart replays old events
+  // from the hook queue — without this guard they flood the bridge.
+  private static readonly STALE_EVENT_GRACE_MS = 30_000;
+  private _startTime = Date.now();
+
   private sessions = new Map<string, string>(); // claudeSessionId → serverSessionId
   private inFlightSessions = new Map<string, Promise<string>>(); // claudeSessionId → registering promise
   private registeredClientRequests = new Map<string, (sid: string) => void>(); // clientRequestId → resolve
@@ -61,6 +71,9 @@ export class ApprovalBridge {
   private pendingDeactivations = new Set<string>(); // windowIds to deactivate once in-flight activation completes
   private transcriptAttachedIds = new Set<string>(); // claudeSessionIds attached via attachClaudeSession (for reconciliation)
   private sentPromptKeys = new Set<string>();     // "claudeSessionId:index" — prevents re-attach duplicates
+  // Tracks number of phone commands claimed but not yet acknowledged via session_idle.
+  // Used to gate task_complete synthesis from session_idle events.
+  private pendingPhoneDeliveryCount = new Map<string, number>(); // serverSessionId → count
 
   // ── Phone command dedup ─────────────────────────────────────
   private static readonly PHONE_COMMAND_DEDUP_MS = 10 * 60 * 1000;
@@ -446,11 +459,58 @@ export class ApprovalBridge {
   /** Forward a PermissionRequest hook event to relay. */
   async handleApproval(body: unknown): Promise<{ approved: boolean }> {
     const payload = body as ApprovalHookBody;
-    const claudeSessionId = payload.claudeSessionId ?? '';
-    if (!claudeSessionId) return { approved: false };
+    let claudeSessionId = payload.claudeSessionId ?? '';
+
+    // Fallback: try to extract sessionId from rawEvent using broad field detection
+    if (!claudeSessionId && payload.rawEvent) {
+      const raw = payload.rawEvent as Record<string, unknown>;
+      // Try all plausible field names
+      for (const key of Object.keys(raw)) {
+        if (key.toLowerCase().includes('session') && typeof raw[key] === 'string' && (raw[key] as string).trim()) {
+          claudeSessionId = raw[key] as string;
+          console.error('[bridge] handleApproval: resolved claudeSessionId from rawEvent key=%s value=%s', key, claudeSessionId);
+          break;
+        }
+      }
+      // Try nested metadata
+      if (!claudeSessionId && raw.metadata && typeof raw.metadata === 'object') {
+        const meta = raw.metadata as Record<string, unknown>;
+        for (const key of Object.keys(meta)) {
+          if (key.toLowerCase().includes('session') && typeof meta[key] === 'string' && (meta[key] as string).trim()) {
+            claudeSessionId = meta[key] as string;
+            console.error('[bridge] handleApproval: resolved claudeSessionId from rawEvent.metadata key=%s', key);
+            break;
+          }
+        }
+      }
+    }
+
+    if (!claudeSessionId) {
+      console.error('[bridge] handleApproval: no claudeSessionId in payload or rawEvent, rawEvent keys=%s', payload.rawEvent ? Object.keys(payload.rawEvent).join(',') : '(none)');
+      return { approved: false };
+    }
+
+    // Guard: skip approvals without windowId for unknown sessions (stale hook events
+    // replayed on CC extension restart, before the VS Code window has registered).
+    // Real-time PermissionRequest events from the CC hook are tagged with source='permission_request'
+    // and bypass this guard so user terminal commands are never blocked.
+    const explicitWindowId = payload.codekeyWindowId || '';
+    const isPermissionRequest = payload.source === 'permission_request';
+    const hasKnownSession = this.sessions.has(claudeSessionId) || this.inFlightSessions.has(claudeSessionId);
+    if (!explicitWindowId && !hasKnownSession && !isPermissionRequest) {
+      if (Date.now() - this._startTime < ApprovalBridge.STALE_EVENT_GRACE_MS) {
+        console.error('[bridge] ignoring stale approval without windowId (grace, session=%s)', claudeSessionId);
+        return { approved: false };
+      }
+      const fallback = this._getActiveWindowId();
+      if (!fallback) {
+        console.error('[bridge] ignoring approval without windowId for unknown session (session=%s)', claudeSessionId);
+        return { approved: false };
+      }
+    }
 
     // Determine windowId: from hook request body, or fall back to most recent active window
-    const windowId = payload.codekeyWindowId || this._getActiveWindowId() || '';
+    const windowId = explicitWindowId || this._getActiveWindowId() || '';
     const approvalText = this.approvalText(payload);
     const fingerprint = this.approvalFingerprint(claudeSessionId, windowId, payload);
     const existing = this.pendingApprovalFingerprints.get(fingerprint);
@@ -578,8 +638,8 @@ export class ApprovalBridge {
       return { approved: false };
     }
 
-    // Replay latest prompts BEFORE sending approval — guarantees ordering
-    await this.replayUserPrompts(claudeSessionId, serverSessionId).catch(() => {});
+    // Replay latest prompts asynchronously — don't block approval_required
+    this.replayUserPrompts(claudeSessionId, serverSessionId).catch(() => {});
 
     const clientEventId = randomUUID();
 
@@ -633,6 +693,11 @@ export class ApprovalBridge {
     const explicitWindowId = body.codekeyWindowId || '';
     const hasKnownSession = this.sessions.has(claudeSessionId) || this.inFlightSessions.has(claudeSessionId);
     if (!explicitWindowId && !hasKnownSession) {
+      if (Date.now() - this._startTime < ApprovalBridge.STALE_EVENT_GRACE_MS) {
+        console.error('[bridge] ignoring stale hook event without windowId (grace, event=%s, session=%s)',
+          body.eventType, claudeSessionId);
+        return;
+      }
       console.error('[bridge] ignoring hook event without windowId for unknown session (event=%s, session=%s)',
         body.eventType, claudeSessionId);
       return;
@@ -679,23 +744,82 @@ export class ApprovalBridge {
 
     this.relay.sendEvent(serverSessionId, relayMsg);
 
+    // Synthesize task_complete from session_idle if a phone command was pending.
+    if (body.eventType === 'session_idle' && body.lastAssistantMessage) {
+      const pendingCount = this.pendingPhoneDeliveryCount.get(serverSessionId) ?? 0;
+      if (pendingCount > 0) {
+        this.pendingPhoneDeliveryCount.set(serverSessionId, pendingCount - 1);
+        const msg: SessionEventMessage = {
+          type: 'event',
+          payload: {
+            sessionId: serverSessionId,
+            agent: 'claude-code-hook',
+            eventType: 'task_complete',
+            data: {
+              type: 'task_complete',
+              summary: body.lastAssistantMessage,
+              summaryShort: body.lastAssistantMessage.slice(0, 200),
+            },
+            ts: new Date().toISOString(),
+          },
+        };
+        this.relay.sendEvent(serverSessionId, msg);
+      }
+    }
+
     // Note: task_complete does NOT clean up local caches — session lifecycle
     // is managed by activateSession / deactivateSession (VSCode tab close).
   }
 
   listenRelayCommands(): void {
-    this.relay.on('command', (payload: { sessionId?: string; action: string; data: string }) => {
+    this.relay.on('command', (payload: { sessionId?: string; claudeSessionId?: string; action: string; data: string }) => {
       if (payload.action !== 'write_stdin') return;
       if (!payload.sessionId) return;
-      // Normalized text is recorded via recordClaimedPhoneCommand at claim time, not here.
-      // This method only queues the command for the relay-based command pipeline.
+
+      const claudeSessionId = payload.claudeSessionId
+        ?? Array.from(this.sessions.entries())
+            .find(([, serverSessionId]) => serverSessionId === payload.sessionId)?.[0];
+
+      const hasWindowSession = Array.from(this.windowSessions.entries())
+        .some(([, serverSessionId]) => serverSessionId === payload.sessionId);
+
+      if (!claudeSessionId && !hasWindowSession) {
+        console.error('[bridge] command dropped: no session mapping for sessionId=%s hasWindowSession=%s sessions=%s', payload.sessionId, hasWindowSession, JSON.stringify([...this.sessions.entries()]));
+        return;
+      }
+
+      // Resolve cwd so command-relay can launch CC in the correct project directory
+      const cwd = claudeSessionId ? resolveTranscriptCwd(claudeSessionId) ?? undefined : undefined;
+      console.error('[bridge] command queued: sessionId=%s claudeSessionId=%s cwd=%s text=%s', payload.sessionId, claudeSessionId, cwd, payload.data);
       this.commandQueue.push({
         id: randomUUID(),
         sessionId: payload.sessionId,
+        claudeSessionId: claudeSessionId ?? undefined,
+        cwd,
         text: payload.data,
         source: 'relay:command',
         timestamp: new Date().toISOString(),
       });
+
+      // Emit user_prompt event so the mini program can see the phone command in the conversation.
+      // Without this, phone commands only exist in the in-memory command queue and disappear
+      // on page refresh — they must be persisted as events in the relay DB.
+      const relayMsg: SessionEventMessage = {
+        type: 'event',
+        payload: {
+          clientEventId: `phone:${payload.sessionId}:${Date.now()}`,
+          sessionId: payload.sessionId,
+          agent: 'claude-code-hook',
+          eventType: 'user_prompt',
+          data: {
+            type: 'user_prompt',
+            prompt: payload.data,
+            summary: payload.data.slice(0, 200),
+          },
+          ts: new Date().toISOString(),
+        },
+      };
+      this.relay.sendEvent(payload.sessionId, relayMsg);
     });
   }
 
@@ -748,6 +872,9 @@ export class ApprovalBridge {
     entries.push({ fingerprint: fp, recordedAt: now });
     while (entries.length > ApprovalBridge.MAX_PHONE_COMMANDS_PER_SESSION) entries.shift();
     this.recentPhoneCommandsBySession.set(serverSessionId, entries);
+    // Increment pending delivery counter for task_complete synthesis
+    const count = this.pendingPhoneDeliveryCount.get(serverSessionId) ?? 0;
+    this.pendingPhoneDeliveryCount.set(serverSessionId, count + 1);
   }
 
   /** Check and consume one matching fingerprint (one-shot). */
@@ -810,7 +937,7 @@ export class ApprovalBridge {
       }));
     }
     // Replay recent user prompts as events (best-effort)
-    await this.replayUserPrompts(claudeSessionId, serverSessionId).catch(() => {});
+    this.replayUserPrompts(claudeSessionId, serverSessionId).catch(() => {});
     return serverSessionId;
   }
 
@@ -832,6 +959,11 @@ export class ApprovalBridge {
     return { ok: true };
   }
 
+  /** Return registered windows with lastSeen timestamps (for /v1/shutdown TTL guard). */
+  getActiveWindows(): Map<string, number> {
+    return new Map(this.activeWindows);
+  }
+
   /** Return the set of claudeSessionIds that are currently attached (known to the bridge). */
   getAttachedSessionIds(): string[] {
     return Array.from(this.transcriptAttachedIds).filter((csid) => this.sessions.has(csid));
@@ -843,8 +975,14 @@ export class ApprovalBridge {
   async reconcileAttachedSessions(): Promise<void> {
     if (!this.relay) return;
 
+    // Capture pre-reconciliation set so we can re-register sessions
+    // the relay may have finished during a WS disconnect (cleanup timer).
+    const prevAttached = new Set(this.transcriptAttachedIds);
+    let responded = false;
+
     return new Promise<void>((resolve) => {
       const handler = (payload: unknown) => {
+        responded = true;
         const p = payload as { sessions: { id: string; claudeSessionId: string | null }[] };
 
         // Build the new set of claudeSessionIds from relay
@@ -876,14 +1014,34 @@ export class ApprovalBridge {
         this.transcriptAttachedIds = newAttached;
 
         resolve();
+
+        // Re-register any previously-attached sessions that the relay lost
+        // (e.g. finished during WS disconnect cleanup). This is a best-effort
+        // recovery so the mini program can see and interact with these sessions.
+        for (const csid of prevAttached) {
+          if (!newAttached.has(csid)) {
+            console.error('[bridge] reconcile: re-registering lost session %s', csid);
+            this.ensureSession(csid, undefined, 'transcript_attach').catch((err) => {
+              console.error('[bridge] reconcile: re-register failed for %s: %s', csid, err);
+            });
+          }
+        }
       };
 
       this.relay.once('attached_sessions', handler);
       this.relay.sendRaw(JSON.stringify({ type: 'query_attached_sessions' }));
 
-      // Timeout: don't block startup
+      // Timeout: if the relay never responded, re-register to be safe
       setTimeout(() => {
-        this.relay.off('attached_sessions', handler);
+        if (!responded) {
+          this.relay.off('attached_sessions', handler);
+          for (const csid of prevAttached) {
+            console.error('[bridge] reconcile: timeout, re-registering session %s', csid);
+            this.ensureSession(csid, undefined, 'transcript_attach').catch((err) => {
+              console.error('[bridge] reconcile: re-register failed for %s: %s', csid, err);
+            });
+          }
+        }
         resolve();
       }, 5_000);
     }).catch(() => {});

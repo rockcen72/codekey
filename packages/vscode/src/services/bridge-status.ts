@@ -171,9 +171,30 @@ export class BridgeStatusService {
     this._startHealthCheck();
   }
 
-  /** Stop the bridge child process. Only kills our own spawned process. */
-  stop(): void {
+  /** Stop the bridge child process. Tries graceful /v1/shutdown first. */
+  async stop(): Promise<void> {
     if (this._process) {
+      // Try graceful shutdown first: bridge-entry clears timers, deactivateAll, exits.
+      try {
+        const windowId = process.env.CODEKEY_WINDOW_ID || '';
+        await fetch('http://127.0.0.1:3001/v1/shutdown', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ windowId }),
+          signal: AbortSignal.timeout(3000),
+        });
+        this._process = null;
+        this._myPid = null;
+        this._stopHealthCheck();
+        this._update({ bridge: 'stopped' });
+        return; // bridge self-terminated
+      } catch {
+        // Graceful shutdown failed — fall through to kill.
+        // Possible reasons: adopted bridge (no onShutdown callback), other windows
+        // active, bridge already gone, or timeout.
+        log('[CodeKey] graceful shutdown failed, falling back to kill');
+      }
+
       this._process.kill();
       this._process = null;
       this._myPid = null;
@@ -183,8 +204,7 @@ export class BridgeStatusService {
   }
 
   restart(): void {
-    this.stop();
-    this.ensureStarted();
+    this.stop().then(() => this.ensureStarted());
   }
 
   dispose(): void {

@@ -40,6 +40,7 @@ Page({
     commandText: '',
     canSendCommand: false,
     wsConnected: false,
+    deviceOnline: true,
     scrollToId: '',
     scrollTop: 0,
     approvalSheetOpen: false,
@@ -55,6 +56,7 @@ Page({
   },
 
   onShow() {
+    this.fetchDetail();
     this._startPolling();
   },
 
@@ -87,11 +89,19 @@ Page({
     this._onWsDisconnectedBound = () => {
       this.setData({ wsConnected: false });
     };
+    this._onDeviceOfflineBound = () => {
+      this.setData({ deviceOnline: false });
+    };
+    this._onDeviceOnlineBound = () => {
+      this.setData({ deviceOnline: true });
+    };
 
     app.onWsEvent('event_push', this._onEventPushBound);
     app.onWsEvent('session_deactivated', this._onSessionDeactivatedBound);
     app.onWsEvent('ws_connected', this._onWsConnectedBound);
     app.onWsEvent('ws_disconnected', this._onWsDisconnectedBound);
+    app.onWsEvent('device_offline', this._onDeviceOfflineBound);
+    app.onWsEvent('device_online', this._onDeviceOnlineBound);
 
     // Sync current connection state
     if (app.globalData.wsConnected !== this.data.wsConnected) {
@@ -104,10 +114,16 @@ Page({
     if (this._onSessionDeactivatedBound) app.offWsEvent('session_deactivated', this._onSessionDeactivatedBound);
     if (this._onWsConnectedBound) app.offWsEvent('ws_connected', this._onWsConnectedBound);
     if (this._onWsDisconnectedBound) app.offWsEvent('ws_disconnected', this._onWsDisconnectedBound);
+    if (this._onDeviceOfflineBound) app.offWsEvent('device_offline', this._onDeviceOfflineBound);
+    if (this._onDeviceOnlineBound) app.offWsEvent('device_online', this._onDeviceOnlineBound);
     this._onEventPushBound = undefined;
     this._onSessionDeactivatedBound = undefined;
     this._onWsConnectedBound = undefined;
     this._onWsDisconnectedBound = undefined;
+    this._onDeviceOfflineBound = undefined;
+    this._onDeviceOnlineBound = undefined;
+    this._onDeviceOfflineBound = undefined;
+    this._onDeviceOnlineBound = undefined;
   },
 
   _startPolling() {
@@ -531,6 +547,10 @@ Page({
       wx.showToast({ title: '未连接服务器', icon: 'none' });
       return;
     }
+    if (!this.data.deviceOnline) {
+      wx.showToast({ title: '设备离线，无法发送指令', icon: 'none' });
+      return;
+    }
     if (!this.data.session?.status || this.data.session.status !== 'active') {
       wx.showToast({ title: '会话未处于活跃状态', icon: 'none' });
       return;
@@ -541,31 +561,9 @@ Page({
       payload: { sessionId: this.data.sessionId, action: 'write_stdin', data: text },
     });
 
-    const messages = [...this.data.chatMessages];
-    const cmdId = 'cmd-' + Date.now();
-    messages.push({
-      id: cmdId,
-      type: 'user',
-      side: 'right',
-      content: text,
-      displayTime: '',
-      typeLabel: '',
-      isTaskComplete: false,
-      command: '',
-      summary: '',
-      risk_level: '',
-      riskText: '',
-      pending: false,
-      decision: '',
-      decisionText: '',
-      canApprove: false,
-      eventId: '',
-    });
     this.setData({
-      chatMessages: messages,
       commandText: '',
       canSendCommand: false,
-      scrollToId: 'msg-' + cmdId,
     });
     wx.showToast({ title: '指令已发送', icon: 'success' });
   },

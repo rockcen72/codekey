@@ -1,6 +1,8 @@
 export interface PendingCommand {
   id: string;
   sessionId: string;
+  claudeSessionId?: string;
+  cwd?: string;
   text: string;
   source: string;
   timestamp: string;
@@ -26,8 +28,14 @@ export class CommandQueue {
     return claimed;
   }
 
-  peek(): { id: string; text: string }[] {
-    return this.items.map(c => ({ id: c.id, text: c.text }));
+  peek(): { id: string; sessionId: string; claudeSessionId?: string; cwd?: string; text: string }[] {
+    return this.items.map(c => ({
+      id: c.id,
+      sessionId: c.sessionId,
+      claudeSessionId: c.claudeSessionId,
+      cwd: c.cwd,
+      text: c.text,
+    }));
   }
 
   get length(): number { return this.items.length; }

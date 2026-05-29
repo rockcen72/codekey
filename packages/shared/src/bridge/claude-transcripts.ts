@@ -1,4 +1,4 @@
-import { createReadStream, existsSync, readdirSync, statSync } from 'node:fs';
+import { createReadStream, existsSync, readdirSync, statSync, fstatSync, openSync, readSync, closeSync } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import readline from 'node:readline';
@@ -53,6 +53,32 @@ export function findTranscriptPath(sessionId: string): string | null {
     const filePath = path.join(projectsDir, dir, `${sid}.jsonl`);
     if (existsSync(filePath)) return filePath;
   }
+  return null;
+}
+
+/** Sync helper: read the start of a transcript to extract the cwd field. */
+export function resolveTranscriptCwd(sessionId: string): string | null {
+  const transcriptPath = findTranscriptPath(sessionId);
+  if (!transcriptPath) return null;
+  try {
+    const fd = openSync(transcriptPath, 'r');
+    try {
+      // Read first 64KB — early metadata lines can be large (hook_success attachment)
+      const buf = Buffer.alloc(65536);
+      const bytesRead = readSync(fd, buf, 0, 65536, 0);
+      const text = buf.toString('utf8', 0, bytesRead);
+      const lines = text.split('\n');
+      for (let i = 0; i < lines.length; i++) {
+        if (!lines[i].trim()) continue;
+        try {
+          const obj = JSON.parse(lines[i]);
+          if (obj.cwd) return obj.cwd.trim();
+        } catch { /* skip malformed — may be truncated at buffer boundary */ }
+      }
+    } finally {
+      closeSync(fd);
+    }
+  } catch { /* ignore */ }
   return null;
 }
 
@@ -218,49 +244,101 @@ export async function extractUserPrompts(
   return prompts.slice(start);
 }
 
-export async function listRecentClaudeTranscripts(limit = 20): Promise<ClaudeTranscriptMetadata[]> {
+/** Read the last ~64KB of a JSONL file and return the latest timestamp found. */
+function lastTranscriptTimestamp(filePath: string): string {
+  try {
+    const fd = openSync(filePath, 'r');
+    try {
+      const size = fstatSync(fd).size;
+      if (size === 0) return '';
+      const readSize = Math.min(size, 65536);
+      const buf = Buffer.alloc(readSize);
+      readSync(fd, buf, 0, readSize, size - readSize);
+      const lines = buf.toString('utf8').split('\n').filter(l => l.trim());
+      for (let i = lines.length - 1; i >= 0; i--) {
+        try {
+          const line = JSON.parse(lines[i]);
+          if (line.timestamp) {
+            const ts = normalizeTimestamp(line.timestamp);
+            if (ts) return ts;
+          }
+        } catch { /* skip malformed lines */ }
+      }
+    } finally {
+      closeSync(fd);
+    }
+  } catch { /* ignore */ }
+  return '';
+}
+
+export async function listRecentClaudeTranscripts(limit = 5): Promise<ClaudeTranscriptMetadata[]> {
   const baseDir = claudeConfigDir();
   const projectsDir = path.join(baseDir, 'projects');
 
-  let entries: { file: string; mtime: number }[];
+  // Collect all .jsonl files
+  const files: string[] = [];
   try {
     const dirs = readdirSync(projectsDir, { withFileTypes: true });
-    entries = [];
     for (const dir of dirs) {
       if (!dir.isDirectory()) continue;
       const dirPath = path.join(projectsDir, dir.name);
-      const files = readdirSync(dirPath);
-      for (const file of files) {
+      for (const file of readdirSync(dirPath)) {
         if (!file.endsWith('.jsonl')) continue;
-        const fullPath = path.join(dirPath, file);
-        try {
-          const st = statSync(fullPath);
-          entries.push({ file: fullPath, mtime: st.mtimeMs });
-        } catch {
-          // skip inaccessible files
-        }
+        files.push(path.join(dirPath, file));
       }
     }
   } catch {
     return [];
   }
 
-  entries.sort((a, b) => b.mtime - a.mtime);
-  entries = entries.slice(0, Math.max(1, Math.min(limit, 100)));
-
+  // Parse each file (first 200 lines for metadata) and sort by last timestamp
   const sessions: ClaudeTranscriptMetadata[] = [];
-  for (const item of entries) {
-    const sessionId = path.basename(item.file, '.jsonl');
+  for (const fullPath of files) {
+    const sessionId = path.basename(fullPath, '.jsonl');
     const lines: string[] = [];
     const reader = readline.createInterface({
-      input: createReadStream(item.file, { encoding: 'utf8' }),
+      input: createReadStream(fullPath, { encoding: 'utf8' }),
       crlfDelay: Infinity,
     });
     for await (const line of reader) {
       if (line.trim()) lines.push(line);
       if (lines.length >= 200) break;
     }
-    sessions.push(parseClaudeTranscriptLines(lines, sessionId, item.file));
+    const meta = parseClaudeTranscriptLines(lines, sessionId, fullPath);
+    // Override updatedAt with the file's LAST timestamp (newest activity).
+    // parseClaudeTranscriptLines only sees the first 200 lines, which are the
+    // OLDEST lines — new lines are appended to the end. Reading the tail gives
+    // us the real latest activity for correct newest-first ordering.
+    const lastTs = lastTranscriptTimestamp(fullPath);
+    if (lastTs) {
+      meta.updatedAt = lastTs;
+    } else {
+      // Fallback to file's modification time if tail read fails (e.g. file lock race on Windows)
+      try { meta.updatedAt = statSync(fullPath).mtime.toISOString(); } catch {}
+    }
+    sessions.push(meta);
   }
-  return sessions;
+
+  // Dedup by sessionId: if same session in multiple project dirs, keep newest updatedAt
+  const dedupMap = new Map<string, ClaudeTranscriptMetadata>();
+  for (const s of sessions) {
+    const existing = dedupMap.get(s.sessionId);
+    if (!existing || s.updatedAt > existing.updatedAt) {
+      dedupMap.set(s.sessionId, s);
+    }
+  }
+  const unique = Array.from(dedupMap.values());
+
+  // Sort by updatedAt (transcript content timestamp), newest first
+  unique.sort((a, b) => {
+    const ta = a.updatedAt ? new Date(a.updatedAt).getTime() : 0;
+    const tb = b.updatedAt ? new Date(b.updatedAt).getTime() : 0;
+    return tb - ta;
+  });
+  console.error('[transcripts] listRecent: baseDir=%s files=%d unique=%d returned=%d',
+    baseDir, files.length, unique.length, Math.min(unique.length, Math.max(1, Math.min(limit, 100))));
+  for (const s of unique.slice(0, Math.max(1, Math.min(limit, 100)))) {
+    console.error('[transcripts]   session=%s updatedAt=%s title=%s', s.sessionId.slice(0, 8), s.updatedAt, s.title?.slice(0, 40));
+  }
+  return unique.slice(0, Math.max(1, Math.min(limit, 100)));
 }

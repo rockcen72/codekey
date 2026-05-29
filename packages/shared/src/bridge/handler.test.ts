@@ -105,7 +105,7 @@ describe('ApprovalBridge canonical sessions', () => {
     relay.emit('command', { sessionId: sessionB, action: 'write_stdin', data: 'next step' });
 
     expect(bridge.commandQueue.peek()).toEqual([
-      { id: expect.any(String), text: 'next step' },
+      { id: expect.any(String), sessionId: sessionB, claudeSessionId: 'claude-b', text: 'next step' },
     ]);
   });
 
@@ -358,6 +358,11 @@ describe('ApprovalBridge canonical sessions', () => {
     });
   });
 
+  /** Wait for pending async operations (replayUserPrompts reads transcript files). */
+  async function flushAsync(): Promise<void> {
+    await new Promise(resolve => setTimeout(resolve, 200));
+  }
+
   describe('user_prompt replay', () => {
     it('does not replay phone-originated commands as user_prompt events', async () => {
       const tmpDir = createTranscriptFixture('claude-a', 'Phone sent command');
@@ -373,6 +378,7 @@ describe('ApprovalBridge canonical sessions', () => {
 
         // Attach — should NOT replay the phone-originated command
         await bridge.attachClaudeSession('claude-a');
+        await flushAsync();
 
         const promptEvents = relay.sent
           .map(m => JSON.parse(m))
@@ -390,6 +396,7 @@ describe('ApprovalBridge canonical sessions', () => {
         const relay = new FakeRelay();
         const bridge = new ApprovalBridge(relay as any);
         await bridge.attachClaudeSession('claude-a');
+        await flushAsync();
         const promptEvents = relay.sent
           .map(m => JSON.parse(m))
           .filter((m: any) => m.type === 'event' && m.payload.eventType === 'user_prompt');
@@ -408,8 +415,10 @@ describe('ApprovalBridge canonical sessions', () => {
         const relay = new FakeRelay();
         const bridge = new ApprovalBridge(relay as any);
         await bridge.attachClaudeSession('claude-a');
+        await flushAsync();
         const beforeCount = relay.sent.length;
         await bridge.attachClaudeSession('claude-a');
+        await flushAsync();
         const newPromptEvents = relay.sent.slice(beforeCount)
           .map(m => JSON.parse(m))
           .filter((m: any) => m.payload?.eventType === 'user_prompt');
@@ -419,14 +428,14 @@ describe('ApprovalBridge canonical sessions', () => {
       }
     });
 
-    it('replays user_prompt before approval_required during handleApproval', async () => {
+    it('user_prompt arrives asynchronously after approval_required in handleApproval', async () => {
       const tmpDir = createTranscriptFixture('claude-a', 'Fix the login bug');
       process.env.CLAUDE_CONFIG_DIR = tmpDir;
       try {
         const relay = new FakeRelay();
         const bridge = new ApprovalBridge(relay as any);
 
-        // Trigger handleApproval — this should replay prompt THEN send approval
+        // Trigger handleApproval — approval_required is sent immediately, user_prompt arrives async
         const approvalPromise = bridge.handleApproval({
           claudeSessionId: 'claude-a',
           codekeyWindowId: 'window-1',
@@ -435,12 +444,7 @@ describe('ApprovalBridge canonical sessions', () => {
             tool_input: { command: 'npm test', cwd: 'F:\\Work\\Codekey' },
           },
         });
-
-        // Use setTimeout to wait — extractUserPrompts reads the transcript file
-        // asynchronously and needs the I/O to complete in the poll phase.
-        await new Promise(resolve => setTimeout(resolve, 100));
-        await new Promise(resolve => setImmediate(resolve));
-
+        await new Promise(resolve => setTimeout(resolve, 200));
         const events = relay.sent
           .map(m => JSON.parse(m))
           .filter((m: any) => m.type === 'event');
@@ -451,7 +455,7 @@ describe('ApprovalBridge canonical sessions', () => {
 
         expect(promptIdx).toBeGreaterThanOrEqual(0);
         expect(approvalIdx).toBeGreaterThanOrEqual(0);
-        expect(promptIdx).toBeLessThan(approvalIdx);
+        expect(promptIdx).toBeGreaterThan(approvalIdx);
 
         // Resolve the pending approval using the APPROVAL event's clientEventId
         // (not the user_prompt event's clientEventId)
@@ -487,6 +491,7 @@ describe('ApprovalBridge canonical sessions', () => {
         await bridge.ensureSession('claude-b');
         // attachClaudeSession must still see tmpDirB — don't restore yet
         await bridge.attachClaudeSession('claude-b');
+        await flushAsync();
 
         const promptEventsB = relay.sent
           .map(m => JSON.parse(m))
@@ -509,6 +514,7 @@ describe('ApprovalBridge canonical sessions', () => {
 
         // First attach — should suppress (one-shot consumed)
         await bridge.attachClaudeSession('claude-a');
+        await flushAsync();
         const afterFirst = relay.sent
           .map(m => JSON.parse(m))
           .filter((m: any) => m.payload?.eventType === 'user_prompt');
@@ -519,6 +525,7 @@ describe('ApprovalBridge canonical sessions', () => {
 
         // Second attach — fingerprint was consumed, should now replay
         await bridge.attachClaudeSession('claude-a');
+        await flushAsync();
         const afterSecond = relay.sent
           .map(m => JSON.parse(m))
           .filter((m: any) => m.payload?.eventType === 'user_prompt');
@@ -546,6 +553,7 @@ describe('ApprovalBridge canonical sessions', () => {
 
         // Attach — fingerprint is stale, prompt should be replayed
         await bridge.attachClaudeSession('claude-a');
+        await flushAsync();
 
         const promptEvents = relay.sent
           .map(m => JSON.parse(m))

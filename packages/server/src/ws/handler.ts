@@ -187,7 +187,7 @@ export function wsHandler(sql: postgres.Sql) {
             payload: { clientRequestId, sessionId, claudeSessionId },
           }));
 
-          const visibleToMiniProgram = source === 'transcript_attach';
+          const visibleToMiniProgram = !!claudeSessionId;
           const mpList = visibleToMiniProgram ? clientClients.get(deviceId!) : undefined;
           if (mpList) {
             for (const mp of mpList) {
@@ -269,7 +269,8 @@ export function wsHandler(sql: postgres.Sql) {
           payload: { clientRequestId, sessionId: newSession.id, windowId },
         }));
 
-        const visibleToMiniProgram = msg.payload.source === 'transcript_attach';
+        const visibleToMiniProgram = msg.payload.source === 'transcript_attach'
+          || !!msg.payload.metadata?.claudeSessionId;
         const mpList = visibleToMiniProgram ? clientClients.get(deviceId!) : undefined;
         if (mpList) {
           for (const mp of mpList) {
@@ -321,10 +322,7 @@ export function wsHandler(sql: postgres.Sql) {
           WHERE id = ${sessionId}
             AND device_id = ${deviceId}
             AND status = 'active'
-            AND (
-              metadata->>'claudeSessionId' = ${claudeSessionId}
-              OR metadata->>'claudeSessionId' IS NULL
-            )
+            AND metadata->>'claudeSessionId' = ${claudeSessionId}
           RETURNING id
         `.then(([session]) => {
           if (!session) {
@@ -406,8 +404,9 @@ export function wsHandler(sql: postgres.Sql) {
               },
             }));
 
-            const sessionSource = rows[0].metadata?.source ?? null;
-            const visibleToMiniProgram = sessionSource === 'transcript_attach';
+            const sessionMetadata = rows[0].metadata ?? {};
+            const visibleToMiniProgram = sessionMetadata.source === 'transcript_attach'
+              || !!sessionMetadata.claudeSessionId;
             const mpList = visibleToMiniProgram ? clientClients.get(deviceId!) : undefined;
             if (mpList) {
               for (const mp of mpList) {
@@ -553,6 +552,7 @@ export function wsHandler(sql: postgres.Sql) {
           SELECT id, metadata FROM sessions
           WHERE device_id = ${deviceId} AND status = 'active'
           AND metadata->>'source' = 'transcript_attach'
+          AND coalesce(metadata->>'claudeSessionId', '') <> ''
         `.then((rows: any) => {
           const sessions = rows.map((r: any) => ({
             id: r.id,
@@ -649,7 +649,7 @@ export function wsHandler(sql: postgres.Sql) {
         }
 
         sql`
-          SELECT id FROM sessions
+          SELECT id, metadata FROM sessions
           WHERE id = ${sessionId} AND device_id = ${deviceId}
           LIMIT 1
         `.then((rows) => {
@@ -664,9 +664,10 @@ export function wsHandler(sql: postgres.Sql) {
             return;
           }
 
+          const claudeSessionId = (rows[0] as any).metadata?.claudeSessionId ?? null;
           pc.socket.send(JSON.stringify({
             type: 'command',
-            payload: { sessionId, action, data },
+            payload: { sessionId, action, data, claudeSessionId },
           }));
         }).catch(() => {
           socket.send(JSON.stringify({ type: 'error', code: 'SERVER_ERROR' }));
@@ -737,6 +738,12 @@ export function wsHandler(sql: postgres.Sql) {
       if (tok.token_type === 'device') {
         const client: WsClient = { socket, deviceId, tokenType: 'device' };
         pcClients.set(deviceId, client);
+
+        // Heartbeat ping/pong: set alive initially, reset on pong reply.
+        // When VS Code closes abruptly, the bridge WebSocket won't close cleanly on
+        // Windows. The server pings every 10s and terminates sockets that don't reply.
+        (socket as any).__isAlive = true;
+        socket.on('pong', () => { (socket as any).__isAlive = true; });
 
         // Cancel any pending disconnect cleanup (device reconnected within grace period)
         const pendingTimer = disconnectTimers.get(deviceId);

@@ -2,7 +2,7 @@ import { Command } from 'commander';
 import { spawn, execSync } from 'node:child_process';
 
 function findClaude(): string | null {
-  const candidates = ['npx', 'npx.cmd', 'claude', 'claude.cmd'];
+  const candidates = ['claude', 'claude.cmd', 'npx', 'npx.cmd'];
   for (const cmd of candidates) {
     try {
       const which = (process.platform === 'win32'
@@ -18,6 +18,7 @@ export const claudeCommand = new Command('claude')
   .description('Launch Claude Code')
   .argument('[args...]', 'Arguments to pass to Claude Code')
   .option('--relay <url>', 'Ignored — retained for backward compat with VS Code extension')
+  .allowUnknownOption(true)
   .action(async (args: string[], _options: { relay?: string }) => {
     const claudeBin = findClaude();
     if (!claudeBin) {
@@ -36,7 +37,7 @@ export const claudeCommand = new Command('claude')
 
     const child = spawn(claudeBin, claudeArgs, {
       stdio: 'inherit',
-      shell: process.platform === 'win32',
+      shell: process.platform === 'win32' && /\.(cmd|bat)$/i.test(claudeBin),
     });
 
     child.on('exit', (code) => {
