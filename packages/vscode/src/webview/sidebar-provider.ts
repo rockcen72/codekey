@@ -61,9 +61,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         if (creds?.deviceId) {
           await SessionStore.add(this._context, creds.deviceId, sessionId);
         }
-        vscode.window.showInformationMessage(`Session ${sessionId.slice(0, 8)} attached — CC tab opening for interaction`);
-        // Open the CC extension's editor tab so the user can interact with the session
-        this._resumeClaudeSession(sessionId);
+        vscode.window.showInformationMessage(`Session ${sessionId.slice(0, 8)} pushed to remote`);
       } else {
         const body = await res.json().catch(() => ({} as Record<string, unknown>));
         vscode.window.showErrorMessage(`Attach failed: ${(body as Record<string, unknown>).error || res.statusText}`);
@@ -71,12 +69,6 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     } catch {
       vscode.window.showErrorMessage('Attach failed: bridge not available');
     }
-  }
-
-  /** Open the CC extension's editor tab with the given sessionId.
-   *  Always passes sessionId to editor.open so CC can resume the correct session. */
-  private _resumeClaudeSession(sessionId?: string): void {
-    vscode.commands.executeCommand('claude-vscode.editor.open', sessionId);
   }
 
   private async _pushState(): Promise<void> {
@@ -277,9 +269,6 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         } else {
           this.attachClaudeSession(msg.sessionId).then(() => this._pushState());
         }
-        break;
-      case 'openSession':
-        this._resumeClaudeSession(msg.sessionId);
         break;
       case 'detachSession':
         fetch('http://127.0.0.1:3001/v1/detach-session', {

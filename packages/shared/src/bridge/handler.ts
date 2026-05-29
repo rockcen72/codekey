@@ -75,6 +75,12 @@ export class ApprovalBridge {
   // Used to gate task_complete synthesis from session_idle events.
   private pendingPhoneDeliveryCount = new Map<string, number>(); // serverSessionId → count
 
+  // ── Hook event dedup (CC --resume replay guard) ──────────────
+  // CC --resume replays historical hook events. Track fingerprints
+  // of forwarded events to prevent re-sending old task_complete etc.
+  private static readonly HOOK_DEDUP_TTL_MS = 24 * 60 * 60 * 1000;
+  private _forwardedHookFingerprints = new Map<string, number>(); // fingerprint → forwardedAt
+
   // ── Phone command dedup ─────────────────────────────────────
   private static readonly PHONE_COMMAND_DEDUP_MS = 10 * 60 * 1000;
   private static readonly MAX_PHONE_COMMANDS_PER_SESSION = 50;
@@ -490,14 +496,18 @@ export class ApprovalBridge {
       return { approved: false };
     }
 
-    // Guard: skip approvals without windowId for unknown sessions (stale hook events
-    // replayed on CC extension restart, before the VS Code window has registered).
-    // Real-time PermissionRequest events from the CC hook are tagged with source='permission_request'
-    // and bypass this guard so user terminal commands are never blocked.
-    const explicitWindowId = payload.codekeyWindowId || '';
+    // Replay guard: approvals from CC --resume replay lack source='permission_request'.
+    // Auto-reject them so CC doesn't block on historical events.
     const isPermissionRequest = payload.source === 'permission_request';
+    if (!isPermissionRequest) {
+      console.error('[bridge] auto-rejecting replay approval (session=%s tool=%s)',
+        claudeSessionId, payload.rawEvent?.tool_name || 'unknown');
+      return { approved: false };
+    }
+
+    const explicitWindowId = payload.codekeyWindowId || '';
     const hasKnownSession = this.sessions.has(claudeSessionId) || this.inFlightSessions.has(claudeSessionId);
-    if (!explicitWindowId && !hasKnownSession && !isPermissionRequest) {
+    if (!explicitWindowId && !hasKnownSession) {
       if (Date.now() - this._startTime < ApprovalBridge.STALE_EVENT_GRACE_MS) {
         console.error('[bridge] ignoring stale approval without windowId (grace, session=%s)', claudeSessionId);
         return { approved: false };
@@ -753,6 +763,17 @@ export class ApprovalBridge {
         ts: new Date().toISOString(),
       },
     };
+
+    // Dedup: CC --resume replays historical hook events. Skip if we've
+    // already forwarded an event with identical content for this session.
+    const hookFp = `${serverSessionId}|${body.eventType}|${JSON.stringify(data)}`;
+    const lastForwarded = this._forwardedHookFingerprints.get(hookFp);
+    if (lastForwarded && Date.now() - lastForwarded < ApprovalBridge.HOOK_DEDUP_TTL_MS) {
+      console.error('[bridge] ignoring duplicate hook event (fp match, event=%s session=%s)',
+        body.eventType, claudeSessionId);
+      return;
+    }
+    this._forwardedHookFingerprints.set(hookFp, Date.now());
     // Attach per-window identifiers so the server can associate this session
     // with the correct VSCode window and display the correct label.
     if (windowId) {

@@ -37,7 +37,6 @@ function getClaudeTabLabel(): string | undefined {
     for (const tab of group.tabs) {
       const isWv = tab.input instanceof vscode.TabInputWebview;
       const vt = isWv ? (tab.input as any).viewType : undefined;
-      if (isWv) log(`getClaudeTabLabel: tab="${tab.label}" viewType="${vt}"`);
       if (isWv && vt && vt.endsWith(CLAUDE_CODE_VIEW_TYPE)) {
         if (tab.label !== 'Claude Code') return tab.label;
         if (!fallback) fallback = tab.label;
@@ -63,7 +62,6 @@ function startTabLabelSync(windowId: string): vscode.Disposable {
 
   const syncLabel = () => {
     const lbl = getClaudeTabLabel();
-    log(`syncLabel: getClaudeTabLabel()="${lbl}" lastLabel="${lastLabel}"`);
     if (lbl && lbl !== 'Claude Code' && lbl !== lastLabel) {
       lastLabel = lbl;
       log(`syncLabel: sending label "${lbl}" for window ${windowId}`);

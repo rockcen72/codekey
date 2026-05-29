@@ -15,6 +15,7 @@ function isParentAlive(): boolean {
 }
 
 async function main(): Promise<void> {
+  const startedAt = Date.now();
   const args = process.argv.slice(2);
   const flag = (name: string): string => {
     const i = args.indexOf(name);
@@ -44,7 +45,7 @@ async function main(): Promise<void> {
       relay.close();
       process.exit(0);
     });
-  });
+  }, startedAt);
   console.error('[bridge-entry] HTTP server listening on port 3001');
 
   // Periodic reconcile: sync in-memory attached-session state with the relay

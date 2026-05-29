@@ -3,8 +3,8 @@ import { type AddressInfo } from 'node:net';
 import { ApprovalBridge, type HookEventBody } from './handler.js';
 import { listRecentClaudeTranscripts } from './claude-transcripts.js';
 
-export function startBridgeServer(bridge: ApprovalBridge, port = 3001, source = 'cli', onShutdown?: () => void): Promise<() => void> {
-  const server = createServer((req, res) => handleRequest(req, res, bridge, source, onShutdown));
+export function startBridgeServer(bridge: ApprovalBridge, port = 3001, source = 'cli', onShutdown?: () => void, startedAt?: number): Promise<() => void> {
+  const server = createServer((req, res) => handleRequest(req, res, bridge, source, onShutdown, startedAt));
 
   return new Promise((resolve) => {
     server.listen(port, '127.0.0.1', () => {
@@ -15,7 +15,7 @@ export function startBridgeServer(bridge: ApprovalBridge, port = 3001, source = 
   });
 }
 
-function handleRequest(req: IncomingMessage, res: ServerResponse, bridge: ApprovalBridge, source: string, onShutdown?: () => void): void {
+function handleRequest(req: IncomingMessage, res: ServerResponse, bridge: ApprovalBridge, source: string, onShutdown?: () => void, startedAt?: number): void {
   const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
 
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -313,6 +313,7 @@ function handleRequest(req: IncomingMessage, res: ServerResponse, bridge: Approv
       version: '0.1.0',
       relay: bridge.relay.status,
       supports,
+      startedAt: startedAt ?? 0,
     }));
     return;
   }

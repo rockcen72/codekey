@@ -4,6 +4,7 @@ import { execSync, spawn } from 'node:child_process';
 import * as vscode from 'vscode';
 import { classifyTerminal } from '../commands/start-claude.js';
 import { findCli } from '../cli.js';
+import { log } from '../log.js';
 
 const POLL_MS = 2000;
 const BRIDGE_URL = 'http://127.0.0.1:3001';
@@ -49,13 +50,20 @@ export class CommandRelayService {
 
   /** Find a Claude Code binary.
    *  1. codekey CLI
-   *  2. CC extension bundled binary
-   *  3. Global claude on PATH
+   *  2. Global claude on PATH (supports --resume with user's sessions)
+   *  3. CC extension bundled binary (does NOT support --resume)
    */
   private _findClaudeBinary(): { path: string; args: string[] } | null {
     const cliPath = findCli();
     if (cliPath) return { path: cliPath, args: ['claude'] };
 
+    // Global claude on PATH — has access to user's session transcripts
+    try {
+      const which = execSync(process.platform === 'win32' ? 'where claude.exe' : 'which claude', { encoding: 'utf-8', timeout: 3000 }).trim().split('\n')[0];
+      if (which && fs.existsSync(which)) return { path: which, args: [] };
+    } catch { /* not in PATH */ }
+
+    // CC extension bundled binary — fallback only (no --resume support)
     const ccExt = vscode.extensions.getExtension('anthropic.claude-code');
     if (ccExt) {
       const binaryName = process.platform === 'win32' ? 'claude.exe' : 'claude';
@@ -64,12 +72,6 @@ export class CommandRelayService {
         if (fs.existsSync(binaryPath)) return { path: binaryPath, args: [] };
       } catch { /* ignore */ }
     }
-
-    // Fallback: global claude binary on PATH
-    try {
-      const which = execSync(process.platform === 'win32' ? 'where claude.exe' : 'which claude', { encoding: 'utf-8', timeout: 3000 }).trim().split('\n')[0];
-      if (which && fs.existsSync(which)) return { path: which, args: [] };
-    } catch { /* not in PATH */ }
 
     return null;
   }
@@ -83,20 +85,27 @@ export class CommandRelayService {
     sessionId: string,
     text: string,
     binary: { path: string; args: string[] },
+    cwd?: string,
   ): void {
     try {
+      log('[command-relay] spawning CC --resume %s --print %s cwd=%s', sessionId.slice(0, 8), text.slice(0, 40), cwd ?? '(default)');
       const child = spawn(binary.path, [...binary.args, '--resume', sessionId, '--print', text], {
-        stdio: 'ignore',
+        stdio: ['ignore', 'pipe', 'pipe'],
         windowsHide: true,
+        cwd,
       });
+      let stdout = '';
+      let stderr = '';
+      child.stdout?.on('data', (chunk) => { stdout += chunk.toString(); });
+      child.stderr?.on('data', (chunk) => { stderr += chunk.toString(); });
       child.on('exit', (code) => {
-        console.error('[command-relay] CC --print session=%s exited code=%d', sessionId.slice(0, 8), code);
+        log('[command-relay] CC --print session=%s exited code=%d stdout=%s stderr=%s', sessionId.slice(0, 8), code, stdout.slice(0, 500), stderr.slice(0, 500));
       });
       child.on('error', (err) => {
-        console.error('[command-relay] CC --print spawn error: %s', err.message);
+        log('[command-relay] CC --print spawn error: %s', err.message);
       });
     } catch (err) {
-      console.error('[command-relay] CC --print failed: %s', String(err));
+      log('[command-relay] CC --print failed: %s', String(err));
     }
   }
 
@@ -111,11 +120,11 @@ export class CommandRelayService {
 
       const term = this._findManagedTerminal();
       const claudeBinary = term ? null : this._findClaudeBinary();
-      console.error('[command-relay] _poll: commands=%d term=%s claudeBinary=%s', commands.length, !!term, !!claudeBinary);
-      console.error('[command-relay] terminals:', vscode.window.terminals.map(t => ({ name: t.name, exitStatus: t.exitStatus })));
+      log('[command-relay] _poll: commands=%d term=%s claudeBinary=%s', commands.length, !!term, !!claudeBinary);
+      log('[command-relay] terminals:', vscode.window.terminals.map(t => ({ name: t.name, exitStatus: t.exitStatus })));
       const deliverable = commands.filter(c => term || (claudeBinary && c.claudeSessionId));
       if (deliverable.length === 0) {
-        console.error('[command-relay] no deliverable target, command_ids=%s', commands.map(c => c.id).join(','));
+        log('[command-relay] no deliverable target, command_ids=%s', commands.map(c => c.id).join(','));
         return;
       }
 
@@ -129,13 +138,13 @@ export class CommandRelayService {
       const claimed = await claimResp.json() as { id: string; claudeSessionId?: string; cwd?: string; text: string }[];
 
       for (const cmd of claimed) {
+        log('[command-relay] dispatch: claudeSessionId=%s text=%s term=%s', cmd.claudeSessionId ?? '(none)', cmd.text.slice(0, 60), !!term);
         if (term) {
           // Terminal mode: sendText to managed terminal
           term.sendText(cmd.text, true);
         } else if (claudeBinary && cmd.claudeSessionId) {
-          // Tab/panel mode: one-shot --print, exits after processing → Stop hook fires
-          // PermissionRequest hook still fires inside the spawned process for tool approvals.
-          this._executeCommand(cmd.claudeSessionId, cmd.text, claudeBinary);
+          // Resume terminal mode: hidden terminal with --resume, send text via stdin
+          this._sendToResumeTerminal(cmd.claudeSessionId, cmd.text, cmd.cwd, claudeBinary);
         }
       }
     } catch {
@@ -178,14 +187,16 @@ export class CommandRelayService {
     // Reuse existing terminal for this session
     let term = this._resumeTerminals.get(sessionId);
     if (term && !vscode.window.terminals.includes(term)) {
-      console.error('[command-relay] resume terminal for session=%s was closed externally, cleaning up', sessionId.slice(0, 8));
+      log('[command-relay] resume terminal for session=%s was closed externally, cleaning up', sessionId.slice(0, 8));
       this._resumeTerminals.delete(sessionId);
       term = undefined;
     }
 
     const isNewTerminal = !term;
+    log('[command-relay] _sendToResumeTerminal: sessionId=%s (len=%d) isNew=%s',
+      sessionId, sessionId.length, isNewTerminal);
     if (!term) {
-      console.error('[command-relay] creating resume terminal for session=%s binary=%s cwd=%s',
+      log('[command-relay] creating resume terminal for session=%s binary=%s cwd=%s',
         sessionId.slice(0, 8), binary.path, cwd ?? '(default)');
       term = vscode.window.createTerminal({
         name: `CodeKey: ${sessionId.slice(0, 8)}`,
@@ -208,13 +219,13 @@ export class CommandRelayService {
     if (isNewTerminal) {
       // Give CC time to load the session transcript and enter its read loop
       // before writing the first command. Newer / larger transcripts take longer.
-      console.error('[command-relay] new terminal, delaying sendText by 3s for session=%s', sessionId.slice(0, 8));
+      log('[command-relay] new terminal, delaying sendText by 5s for session=%s', sessionId.slice(0, 8));
       setTimeout(() => {
-        console.error('[command-relay] sendText to resume terminal session=%s text=%s', sessionId.slice(0, 8), text);
+        log('[command-relay] sendText to resume terminal session=%s text=%s', sessionId.slice(0, 8), text);
         term!.sendText(text, true);
-      }, 3000);
+      }, 5000);
     } else {
-      console.error('[command-relay] sendText to resume terminal session=%s text=%s', sessionId.slice(0, 8), text);
+      log('[command-relay] sendText to resume terminal session=%s text=%s', sessionId.slice(0, 8), text);
       term!.sendText(text, true);
     }
   }

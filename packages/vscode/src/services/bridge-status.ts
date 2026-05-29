@@ -1,7 +1,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
-import { spawn, type ChildProcess } from 'node:child_process';
+import { spawn, execSync, type ChildProcess } from 'node:child_process';
 import * as vscode from 'vscode';
 import { loadCredentials } from '../auth/credentials.js';
 import { getHookPath } from '../hook/installer.js';
@@ -82,24 +82,33 @@ export class BridgeStatusService {
     try {
       const resp = await fetch('http://127.0.0.1:3001/v1/health', { signal: AbortSignal.timeout(2000) });
       if (resp.ok) {
-        const body = await resp.json() as { source?: string; supports?: string[] };
+        const body = await resp.json() as { source?: string; supports?: string[]; startedAt?: number };
         const source = body.source ?? '';
         const supports = body.supports ?? [];
 
         if (BridgeStatusService.REQUIRED_CAPS.every(c => supports.includes(c))) {
-          // Compatible bridge — adopt it
-          log(`[CodeKey] adopted existing bridge (source=${source})`);
-          this._startHealthCheck();
+          // Check if bridge is stale (started before current build)
+          const buildTime = this._getBuildTime();
+          const bridgeStartedAt = body.startedAt ?? 0;
+          if (buildTime > 0 && bridgeStartedAt > 0 && bridgeStartedAt < buildTime) {
+            log(`[CodeKey] stale bridge detected (bridgeStartedAt=${bridgeStartedAt} < buildTime=${buildTime}), replacing`);
+            this._forceKillBridgeOnPort();
+            // Fall through to spawn bundled
+          } else {
+            // Compatible bridge — adopt it
+            log(`[CodeKey] adopted existing bridge (source=${source})`);
+            this._startHealthCheck();
+            return;
+          }
+        } else {
+          // Incompatible version — warn user to close it manually, never auto-kill external bridges
+          log(`[CodeKey] incompatible bridge detected (source=${source}), supports=${JSON.stringify(supports)}`);
+          await vscode.window.showWarningMessage(
+            'An incompatible CodeKey bridge is already running on port 3001. Please close it first (Ctrl+C in the terminal) so the extension can start its bundled bridge.',
+          );
+          this._update({ bridge: 'error' });
           return;
         }
-
-        // Incompatible version — warn user to close it manually, never auto-kill external bridges
-        log(`[CodeKey] incompatible bridge detected (source=${source}), supports=${JSON.stringify(supports)}`);
-        await vscode.window.showWarningMessage(
-          'An incompatible CodeKey bridge is already running on port 3001. Please close it first (Ctrl+C in the terminal) so the extension can start its bundled bridge.',
-        );
-        this._update({ bridge: 'error' });
-        return;
       }
     } catch { /* no orphan */ }
 
@@ -172,35 +181,73 @@ export class BridgeStatusService {
     this._startHealthCheck();
   }
 
-  /** Stop the bridge child process. Tries graceful /v1/shutdown first. */
+  /** Stop the bridge process. Tries graceful /v1/shutdown first, falls back to force-kill. */
   async stop(): Promise<void> {
-    if (this._process) {
-      // Try graceful shutdown first: bridge-entry clears timers, deactivateAll, exits.
-      try {
-        const windowId = process.env.CODEKEY_WINDOW_ID || '';
-        await fetch('http://127.0.0.1:3001/v1/shutdown', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ windowId }),
-          signal: AbortSignal.timeout(3000),
-        });
-        this._process = null;
-        this._myPid = null;
-        this._stopHealthCheck();
-        this._update({ bridge: 'stopped' });
-        return; // bridge self-terminated
-      } catch {
-        // Graceful shutdown failed — fall through to kill.
-        // Possible reasons: adopted bridge (no onShutdown callback), other windows
-        // active, bridge already gone, or timeout.
-        log('[CodeKey] graceful shutdown failed, falling back to kill');
-      }
+    // Try graceful shutdown first
+    try {
+      const windowId = process.env.CODEKEY_WINDOW_ID || '';
+      await fetch('http://127.0.0.1:3001/v1/shutdown', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ windowId }),
+        signal: AbortSignal.timeout(3000),
+      });
+      this._process = null;
+      this._myPid = null;
+      this._stopHealthCheck();
+      this._update({ bridge: 'stopped' });
+      return;
+    } catch {
+      log('[CodeKey] graceful shutdown failed, falling back to kill');
+    }
 
+    // Kill owned process by handle
+    if (this._process) {
       this._process.kill();
       this._process = null;
       this._myPid = null;
       this._stopHealthCheck();
       this._update({ bridge: 'stopped' });
+      return;
+    }
+
+    // Adopted bridge: force-kill by port
+    this._forceKillBridgeOnPort();
+    this._stopHealthCheck();
+    this._update({ bridge: 'stopped' });
+  }
+
+  /** Get the mtime of the bundled bridge-entry.cjs (our build timestamp). */
+  private _getBuildTime(): number {
+    try {
+      const p = path.join(BridgeStatusService._extensionPath, 'dist', 'bridge-entry.cjs');
+      return fs.statSync(p).mtimeMs;
+    } catch {
+      return 0;
+    }
+  }
+
+  /** Force-kill any process listening on port 3001. */
+  private _forceKillBridgeOnPort(): void {
+    try {
+      if (process.platform === 'win32') {
+        const out = execSync('netstat -ano | findstr :3001', { encoding: 'utf-8', timeout: 5000 });
+        const lines = out.trim().split(/\r?\n/);
+        const killed = new Set<string>();
+        for (const line of lines) {
+          const m = line.match(/(\d+)\s*$/);
+          if (m && m[1] && !killed.has(m[1])) {
+            const pid = m[1];
+            killed.add(pid);
+            log(`[CodeKey] force-killing bridge on port 3001 (PID=${pid})`);
+            execSync(`taskkill /F /PID ${pid}`, { encoding: 'utf-8', timeout: 5000 });
+          }
+        }
+      } else {
+        execSync("lsof -ti :3001 | xargs kill -9 2>/dev/null; true", { timeout: 5000 });
+      }
+    } catch {
+      // Process may already be gone
     }
   }
 
@@ -210,6 +257,7 @@ export class BridgeStatusService {
 
   dispose(): void {
     this.stop();
+    this._forceKillBridgeOnPort();
     this._listeners.clear();
   }
 

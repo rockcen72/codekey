@@ -209,10 +209,6 @@ function renderClaudeSessions(state: SidebarState): string {
                 data-session-id="${h(s.sessionId)}"
                 data-attached="${s.attached ? 'true' : 'false'}"
                 style="font-size:10px;width:60px">${s.attached ? '已推送' : '推送远程'}</button>
-            <button class="btn"
-                data-action="openSession"
-                data-session-id="${h(s.sessionId)}"
-                style="font-size:10px;width:60px">打开会话</button>
           </span>
         </div>
         <div class="preview" id="preview-${h(s.sessionId)}" style="display:none"></div>
@@ -306,9 +302,7 @@ ${renderSubscribe()}
       return;
     }
 
-    if (action === 'openSession') {
-      api.postMessage({ action: 'openSession', sessionId: target.dataset.sessionId });
-    } else if (action === 'toggleAttachClaudeSession') {
+    if (action === 'toggleAttachClaudeSession') {
       api.postMessage({
         action,
         sessionId: target.dataset.sessionId,
