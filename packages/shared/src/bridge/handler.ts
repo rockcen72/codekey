@@ -32,6 +32,7 @@ export interface HookEventBody {
 interface PendingApproval {
   resolve: (value: { approved: boolean }) => void;
   timer: NodeJS.Timeout;
+  serverSessionId: string;
 }
 
 interface ApprovalHookBody {
@@ -125,6 +126,13 @@ export class ApprovalBridge {
       }
       if (entry) {
         clearTimeout(entry.timer);
+        // Notify relay to mark the event as resolved (pending=false) immediately,
+        // so the sidebar's next poll sees the updated state instead of waiting
+        // for a hook event to trigger cleanup.
+        this._resolveEventOnRelay(fwd.eventId);
+        if (fwd.clientEventId && fwd.clientEventId !== fwd.eventId) {
+          this._resolveEventOnRelay(fwd.clientEventId);
+        }
         // Clean up ALL keys pointing to this entry (clientEventId + serverEventId)
         for (const [key, val] of this.pendingByServerEventId) {
           if (val === entry) this.pendingByServerEventId.delete(key);
@@ -682,8 +690,19 @@ export class ApprovalBridge {
 
     this.relay.sendEvent(serverSessionId, relayMsg);
 
+    // Resolve any existing pending approvals for this same session so approvals
+    // don't accumulate in the sidebar when the user handles them inline in CC.
+    for (const [key, val] of this.pendingByServerEventId) {
+      if (val.serverSessionId === serverSessionId) {
+        clearTimeout(val.timer);
+        this._resolveEventOnRelay(key);
+        val.resolve({ approved: false });
+        this.pendingByServerEventId.delete(key);
+      }
+    }
+
     return new Promise<{ approved: boolean }>((resolve) => {
-      const entry: PendingApproval = { resolve, timer: null as any };
+      const entry: PendingApproval = { resolve, timer: null as any, serverSessionId };
       entry.timer = setTimeout(() => {
         // Clean up ALL keys (clientEventId + serverEventId fallback)
         for (const [key, val] of this.pendingByServerEventId) {
@@ -786,27 +805,43 @@ export class ApprovalBridge {
 
     this.relay.sendEvent(serverSessionId, relayMsg);
 
-    // Synthesize task_complete from session_idle if a phone command was pending.
+    // Resolve any pending approvals for this session. When the user approves
+    // or denies directly in CC (typing 'y'/'n'), the bridge never receives an
+    // approval_forward from the relay, so the event stays pending until the
+    // 120s timeout. Clean up immediately so the mini program doesn't show
+    // stale pending approvals.
+    for (const [key, entry] of this.pendingByServerEventId) {
+      clearTimeout(entry.timer);
+      this._resolveEventOnRelay(key);
+      this.pendingByServerEventId.delete(key);
+      entry.resolve({ approved: false });
+    }
+
+    // Synthesize task_complete from session_idle to surface the assistant's response
+    // on the mini program. The notification hook fires session_idle after every
+    // CC response — without this synthesis, text-only replies (no tool calls) would
+    // be invisible on the phone since session_idle only shows a status message.
     if (body.eventType === 'session_idle' && body.lastAssistantMessage) {
+      // Decrement pending phone delivery counter so cross-attach dedup stays accurate
       const pendingCount = this.pendingPhoneDeliveryCount.get(serverSessionId) ?? 0;
       if (pendingCount > 0) {
         this.pendingPhoneDeliveryCount.set(serverSessionId, pendingCount - 1);
-        const msg: SessionEventMessage = {
-          type: 'event',
-          payload: {
-            sessionId: serverSessionId,
-            agent: 'claude-code-hook',
-            eventType: 'task_complete',
-            data: {
-              type: 'task_complete',
-              summary: body.lastAssistantMessage,
-              summaryShort: body.lastAssistantMessage.slice(0, 200),
-            },
-            ts: new Date().toISOString(),
-          },
-        };
-        this.relay.sendEvent(serverSessionId, msg);
       }
+      const msg: SessionEventMessage = {
+        type: 'event',
+        payload: {
+          sessionId: serverSessionId,
+          agent: 'claude-code-hook',
+          eventType: 'task_complete',
+          data: {
+            type: 'task_complete',
+            summary: body.lastAssistantMessage,
+            summaryShort: body.lastAssistantMessage.slice(0, 200),
+          },
+          ts: new Date().toISOString(),
+        },
+      };
+      this.relay.sendEvent(serverSessionId, msg);
     }
 
     // Note: task_complete does NOT clean up local caches — session lifecycle
@@ -1001,6 +1036,18 @@ export class ApprovalBridge {
     return { ok: true };
   }
 
+  /** Send prune_sessions to relay to clean up finished transcript-attached sessions
+   *  that are no longer in the sidebar's keep list. Safe to call periodically —
+   *  no-op if the keep list is empty. */
+  pruneSessions(): void {
+    const keepClaudeSessionIds = Array.from(this.transcriptAttachedIds);
+    if (keepClaudeSessionIds.length === 0) return;
+    this.relay.sendRaw(JSON.stringify({
+      type: 'prune_sessions',
+      payload: { keepClaudeSessionIds },
+    }));
+  }
+
   /** Return registered windows with lastSeen timestamps (for /v1/shutdown TTL guard). */
   getActiveWindows(): Map<string, number> {
     return new Map(this.activeWindows);
@@ -1009,6 +1056,11 @@ export class ApprovalBridge {
   /** Return the set of claudeSessionIds that are currently attached (known to the bridge). */
   getAttachedSessionIds(): string[] {
     return Array.from(this.transcriptAttachedIds).filter((csid) => this.sessions.has(csid));
+  }
+
+  /** Return all claudeSessionIds currently tracked as active (have fired hook events). */
+  getActiveSessionIds(): string[] {
+    return Array.from(this.sessions.keys());
   }
 
   /** On bridge startup (or reconnection), reconcile attached sessions from relay to survive restarts.

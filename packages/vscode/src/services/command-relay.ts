@@ -5,9 +5,9 @@ import * as vscode from 'vscode';
 import { classifyTerminal } from '../commands/start-claude.js';
 import { findCli } from '../cli.js';
 import { log } from '../log.js';
+import { BridgeStatusService } from './bridge-status.js';
 
 const POLL_MS = 2000;
-const BRIDGE_URL = 'http://127.0.0.1:3001';
 
 /**
  * Polls the bridge for pending commands from the phone.
@@ -15,12 +15,19 @@ const BRIDGE_URL = 'http://127.0.0.1:3001';
  * If no trusted terminal exists, commands stay in the queue.
  */
 export class CommandRelayService {
+  private static _instance?: CommandRelayService;
+  static instance(): CommandRelayService | undefined { return this._instance; }
+
   private _timer?: ReturnType<typeof setInterval>;
   /** The trusted Claude Code terminal we write phone commands into */
   private _terminal?: vscode.Terminal;
   /** Resume terminals keyed by claudeSessionId for tab mode */
   private _resumeTerminals = new Map<string, vscode.Terminal>();
   private _disposed = false;
+
+  constructor() {
+    CommandRelayService._instance = this;
+  }
 
   start(): void {
     this._poll();
@@ -46,6 +53,24 @@ export class CommandRelayService {
    */
   setTerminal(term: vscode.Terminal): void {
     this._terminal = term;
+  }
+
+  /** Return claudeSessionIds of all active resume terminals. */
+  getActiveResumeSessionIds(): string[] {
+    const ids: string[] = [];
+    for (const [sid, term] of this._resumeTerminals) {
+      if (vscode.window.terminals.includes(term)) {
+        ids.push(sid);
+      } else {
+        this._resumeTerminals.delete(sid);
+      }
+    }
+    return ids;
+  }
+
+  /** Return whether a managed terminal is currently active. */
+  hasManagedTerminal(): boolean {
+    return !!(this._terminal && vscode.window.terminals.includes(this._terminal));
   }
 
   /** Find a Claude Code binary.
@@ -113,7 +138,7 @@ export class CommandRelayService {
     if (this._disposed) return;
 
     try {
-      const resp = await fetch(`${BRIDGE_URL}/v1/pending-commands`);
+      const resp = await fetch(`${BridgeStatusService.getInstance().getBridgeUrl()}/v1/pending-commands`);
       if (!resp.ok) return;
       const commands = await resp.json() as { id: string; sessionId?: string; claudeSessionId?: string; cwd?: string; text: string }[];
       if (commands.length === 0) return;
@@ -129,7 +154,7 @@ export class CommandRelayService {
       }
 
       const ids = deliverable.map(c => c.id);
-      const claimResp = await fetch(`${BRIDGE_URL}/v1/pending-commands/claim`, {
+      const claimResp = await fetch(`${BridgeStatusService.getInstance().getBridgeUrl()}/v1/pending-commands/claim`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ids }),

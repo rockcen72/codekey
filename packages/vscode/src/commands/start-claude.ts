@@ -8,9 +8,11 @@ import type { StatusBar } from '../status/bar.js';
 
 const bridgeService = BridgeStatusService.getInstance();
 
-const BRIDGE_URL = 'http://127.0.0.1:3001';
-
 const CLAUDE_CODE_VIEW_TYPE = 'claudeVSCodePanel';
+
+function bridgeUrl(): string {
+  return bridgeService.getBridgeUrl();
+}
 
 /** Guard: only install bridge/hook once per window. */
 let _bridgeSetupDone = false;
@@ -21,7 +23,7 @@ let _labelSyncActive = false;
 
 /** Tell the bridge to use this label for the next session registration. */
 function setSessionLabel(label: string, windowId?: string): void {
-  fetch(`${BRIDGE_URL}/v1/session-label`, {
+  fetch(`${bridgeUrl()}/v1/session-label`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ label, windowId: windowId || vscode.env.sessionId }),
@@ -99,7 +101,7 @@ function startTabLabelSync(windowId: string): vscode.Disposable {
 /** Deactivate the session when the CC tab is closed. */
 async function deactivateSessionForWindow(windowId: string): Promise<void> {
   try {
-    await fetch(`${BRIDGE_URL}/v1/deactivate-session`, {
+    await fetch(`${bridgeUrl()}/v1/deactivate-session`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ windowId }),

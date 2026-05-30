@@ -1,9 +1,11 @@
 import * as vscode from 'vscode';
+import * as path from 'node:path';
 import { loadCredentials } from '../auth/credentials.js';
 import { createApi, ApiError, type SessionResponse } from '../api/client.js';
 import { getAgents } from '../agents/registry.js';
 import { BridgeStatusService } from '../services/bridge-status.js';
 import { SessionStore } from '../services/session-store.js';
+
 import { renderSidebar, type SidebarState } from './sidebar-html.js';
 import { loadConversation } from '../../../shared/src/bridge/claude-transcripts.js';
 import { log } from '../log.js';
@@ -17,6 +19,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
   private _pollTimer?: ReturnType<typeof setInterval>;
   private _bridgeService = BridgeStatusService.getInstance();
   private _bridgeDisposable?: vscode.Disposable;
+  private _hadCcRunning = false;
 
   constructor(private _context: vscode.ExtensionContext) {}
 
@@ -33,9 +36,103 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     this._startPolling();
   }
 
+  /** Fetch active claudeSessionIds from bridge (sessions with CC tabs). */
+  private async _fetchActiveSessionIds(): Promise<Set<string>> {
+    try {
+      const resp = await fetch(`${this._bridgeService.getBridgeUrl()}/v1/active-sessions`);
+      if (!resp.ok) return new Set();
+      const body = await resp.json() as { active?: string[] };
+      return new Set(body.active ?? []);
+    } catch {
+      return new Set();
+    }
+  }
+
+  /** Check if Claude Code is currently running (terminal or official extension panel). */
+  private _checkCcRunning(): boolean {
+    // Mode 2/3: CC running in a VS Code terminal
+    const hasTerminal = vscode.window.terminals.some(t => {
+      const n = t.name;
+      return n === 'CodeKey: Claude Code'
+        || n === 'Claude Code'
+        || /^Claude Code \(\d+\)$/.test(n)
+        || /claude/i.test(n);
+    });
+    if (hasTerminal) return true;
+
+    // Mode 1: official Claude Code extension panel (anthropic.claude-code)
+    const ccExt = vscode.extensions.getExtension('anthropic.claude-code');
+    if (ccExt?.isActive) return true;
+
+    return false;
+  }
+
+  /** Auto-detach a session (called when user closes the CC terminal). */
+  private async _autoDetachSession(claudeSessionId: string): Promise<void> {
+    try {
+      const res = await fetch(`${this._bridgeService.getBridgeUrl()}/v1/detach-session`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ claudeSessionId }),
+      });
+      if (res.ok) {
+        const creds = loadCredentials();
+        if (creds?.deviceId) {
+          await SessionStore.remove(this._context, creds.deviceId, claudeSessionId);
+        }
+        log(`_autoDetachSession: detached ${claudeSessionId.slice(0, 8)} (CC terminal closed)`);
+      }
+    } catch {
+      // bridge may already be gone
+    }
+  }
+
+  /** Filter sessions: current workspace sessions.
+   *  When CC is running, show all workspace transcript sessions (bypassing activeIds check).
+   *  When CC is not running, only show stored (attached) sessions. */
+  private _filterLocalSessions(
+    sessions: SidebarState['claudeSessions'],
+    activeIds: Set<string>,
+    storedIds: Set<string>,
+    hasCcRunning: boolean,
+  ): SidebarState['claudeSessions'] {
+    const workspacePaths = (vscode.workspace.workspaceFolders ?? []).map(f => f.uri.fsPath);
+    if (workspacePaths.length === 0) return [];
+    if (!hasCcRunning && activeIds.size === 0 && storedIds.size === 0) return [];
+
+    const norm = (p: string) => path.resolve(p).toLowerCase();
+    const normWorkspaces = workspacePaths.map(norm);
+
+    // When CC is running, admit the 2 most-recent workspace sessions as fallback
+    // (covers bridge restart window before hook events re-register the session).
+    const recentFallbackIds = new Set<string>();
+    if (hasCcRunning) {
+      let admitted = 0;
+      for (const s of sessions) {
+        if (admitted >= 2) break;
+        if (!s.cwd) continue;
+        const cwd = norm(s.cwd);
+        if (normWorkspaces.some(wp => cwd === wp || cwd.startsWith(wp + path.sep.toLowerCase()))) {
+          recentFallbackIds.add(s.sessionId);
+          admitted++;
+        }
+      }
+    }
+
+    const filtered = sessions.filter(s => {
+      if (!s.cwd) return false;
+      if (!activeIds.has(s.sessionId) && !storedIds.has(s.sessionId) && !recentFallbackIds.has(s.sessionId)) return false;
+      const cwd = norm(s.cwd);
+      return normWorkspaces.some(wp =>
+        cwd === wp || cwd.startsWith(wp + path.sep.toLowerCase()),
+      );
+    });
+    return filtered;
+  }
+
   private async fetchRecentClaudeSessions(): Promise<SidebarState['claudeSessions']> {
     try {
-      const res = await fetch('http://127.0.0.1:3001/v1/claude-sessions/recent?limit=50');
+      const res = await fetch(`${this._bridgeService.getBridgeUrl()}/v1/claude-sessions/recent?limit=50`);
       if (!res.ok) return [];
       const body = await res.json() as { ok: boolean; sessions?: any[] };
       return (body.ok ? body.sessions ?? [] : []).map((s: any) => ({
@@ -51,7 +148,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
 
   private async attachClaudeSession(sessionId: string): Promise<void> {
     try {
-      const res = await fetch('http://127.0.0.1:3001/v1/claude-sessions/attach', {
+      const res = await fetch(`${this._bridgeService.getBridgeUrl()}/v1/claude-sessions/attach`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ sessionId }),
@@ -165,7 +262,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     let canDetach = false;
     let attachedSessions: string[] = [];
     try {
-      const healthResp = await fetch('http://127.0.0.1:3001/v1/health');
+      const healthResp = await fetch(`${this._bridgeService.getBridgeUrl()}/v1/health`);
       if (healthResp.ok) {
         const health = await healthResp.json() as { supports?: string[] };
         canDetach = health.supports?.includes('detach-session') ?? false;
@@ -174,7 +271,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
 
     if (canDetach) {
       try {
-        const attResp = await fetch('http://127.0.0.1:3001/v1/attached-sessions');
+        const attResp = await fetch(`${this._bridgeService.getBridgeUrl()}/v1/attached-sessions`);
         if (attResp.ok) {
           const attBody = await attResp.json() as { attached?: string[] };
           attachedSessions = attBody.attached ?? [];
@@ -192,9 +289,43 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       }
     }
 
+    // Load stored (attached) sessions — these persist in the list even when CC exits
+    const storedSessions = creds?.deviceId
+      ? SessionStore.getByDevice(this._context, creds.deviceId)
+      : [];
+    const storedIds = new Set(storedSessions.map(s => s.claudeSessionId));
+
+    // Auto-detach: if user closed all CC terminals (transition from open→closed),
+    // clean up attached sessions so they don't linger in the list.
+    const hasCcRunning = this._checkCcRunning();
+    if (this._hadCcRunning && !hasCcRunning && storedSessions.length > 0) {
+      for (const s of storedSessions) {
+        this._autoDetachSession(s.claudeSessionId);
+      }
+    }
+    this._hadCcRunning = hasCcRunning;
+
     // Fetch local transcript sessions and overlay relay titles where available
     const recentSessions = await this.fetchRecentClaudeSessions();
-    const mergedClaudeSessions = recentSessions.map(s => ({
+    const activeIds = await this._fetchActiveSessionIds();
+    const filteredSessions = this._filterLocalSessions(recentSessions, activeIds, storedIds, hasCcRunning);
+
+    // Restore stored sessions whose transcript files have been cleaned up
+    const recentIds = new Set(recentSessions.map(s => s.sessionId));
+    for (const stored of storedSessions) {
+      if (!recentIds.has(stored.claudeSessionId)) {
+        filteredSessions.push({
+          sessionId: stored.claudeSessionId,
+          cwd: stored.cwd || '',
+          title: stored.title || stored.claudeSessionId,
+          transcriptPath: '',
+          createdAt: stored.updatedAt,
+          updatedAt: stored.updatedAt,
+        });
+      }
+    }
+
+    const mergedClaudeSessions = filteredSessions.map(s => ({
       ...s,
       title: relayTitleByClaudeSessionId.get(s.sessionId) || s.title,
       attached: attachedSessions.includes(s.sessionId),
@@ -236,7 +367,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         vscode.commands.executeCommand('codekey.enableHook');
         break;
       case 'relayReconnect':
-        fetch('http://127.0.0.1:3001/v1/relay-reconnect', { method: 'POST' }).catch(() => {});
+        fetch(`${this._bridgeService.getBridgeUrl()}/v1/relay-reconnect`, { method: 'POST' }).catch(() => {});
         vscode.window.showInformationMessage('Relay reconnecting...');
         break;
       case 'refreshClaudeSessions':
@@ -251,7 +382,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       case 'toggleAttachClaudeSession':
         if (msg.attached) {
           // Already attached — detach
-          fetch('http://127.0.0.1:3001/v1/detach-session', {
+          fetch(`${this._bridgeService.getBridgeUrl()}/v1/detach-session`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ claudeSessionId: msg.sessionId }),
@@ -271,7 +402,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         }
         break;
       case 'detachSession':
-        fetch('http://127.0.0.1:3001/v1/detach-session', {
+        fetch(`${this._bridgeService.getBridgeUrl()}/v1/detach-session`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ claudeSessionId: msg.sessionId }),
@@ -281,8 +412,6 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
             if (creds?.deviceId) {
               await SessionStore.remove(this._context, creds.deviceId, msg.sessionId);
             }
-          } else {
-            vscode.window.showErrorMessage(`Detach failed: ${res.statusText}`);
           }
           this._pushState();
         });
@@ -290,23 +419,21 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     }
   }
 
-  /** Load last 5 conversation entries and send them back to the webview for inline display. */
-  private _handleSessionPreview(sessionId: string): void {
+  private async _handleSessionPreview(sessionId: string): Promise<void> {
     try {
-      const entries = loadConversation(sessionId, 5);
-      const preview = entries.map((e) => ({
-        role: e.role,
-        text: e.text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'),
-        timestamp: e.timestamp,
-      }));
-      this._view?.webview.postMessage({ type: 'sessionPreview', sessionId, entries: preview, count: entries.length });
-    } catch (err) {
-      this._view?.webview.postMessage({ type: 'sessionPreview', sessionId, entries: [], count: 0 });
+      const entries = loadConversation(sessionId, 50);
+      this._view?.webview.postMessage({
+        action: 'sessionPreview',
+        sessionId,
+        entries,
+      });
+    } catch {
+      this._view?.webview.postMessage({
+        action: 'sessionPreview',
+        sessionId,
+        entries: [],
+        error: 'Failed to load conversation',
+      });
     }
-  }
-
-  dispose(): void {
-    this._stopPolling();
-    this._bridgeDisposable?.dispose();
   }
 }

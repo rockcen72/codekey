@@ -5,7 +5,7 @@ import { renderQrCode } from '../qrcode/display.js';
 
 export const loginCommand = new Command('login')
   .description('Display QR code to bind with WeChat mini program')
-  .option('--relay <url>', 'Relay server URL', 'http://localhost:3000')
+  .option('--relay <url>', 'Relay server URL', 'https://81.70.235.58')
   .action(async (options: { relay: string }) => {
     const secretManager = new DeviceSecretManager();
     const { deviceId, deviceSecret, isNew } = secretManager.loadOrCreate();

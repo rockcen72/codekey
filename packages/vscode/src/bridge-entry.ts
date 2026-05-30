@@ -23,7 +23,7 @@ async function main(): Promise<void> {
   };
 
   const deviceId = flag('--device-id');
-  const relayUrl = process.env.CODEKEY_RELAY_URL || 'http://localhost:3000';
+  const relayUrl = process.env.CODEKEY_RELAY_URL || 'https://81.70.235.58';
   const token = process.env.CODEKEY_DEVICE_TOKEN;
 
   if (!deviceId || !token) {
@@ -36,9 +36,10 @@ async function main(): Promise<void> {
   const bridge = new ApprovalBridge(relay);
 
   bridge.listenRelayCommands();
-  const close = await startBridgeServer(bridge, 3001, 'vscode-bundled', () => {
+  const { close, port } = await startBridgeServer(bridge, 3001, 'vscode-bundled', () => {
     clearInterval(parentTimer);
     clearInterval(reconcileTimer);
+    clearInterval(pruneTimer);
     console.error('[bridge-entry] shutting down via /v1/shutdown');
     bridge.deactivateAll().finally(() => {
       close();
@@ -46,7 +47,7 @@ async function main(): Promise<void> {
       process.exit(0);
     });
   }, startedAt);
-  console.error('[bridge-entry] HTTP server listening on port 3001');
+  console.error(`[bridge-entry] HTTP server listening on port ${port}`);
 
   // Periodic reconcile: sync in-memory attached-session state with the relay
   // every 60s. This handles cases where a detach from the mini program updates
@@ -58,9 +59,19 @@ async function main(): Promise<void> {
     });
   }, RECONCILE_MS);
 
+  // Periodic prune: clean up finished transcript-attached sessions on the relay
+  // that are no longer in the sidebar keep list. Runs every 5 minutes.
+  const PRUNE_MS = 300_000;
+  const pruneTimer = setInterval(() => {
+    bridge.pruneSessions();
+  }, PRUNE_MS);
+
   relay.on('connected', () => {
     console.error('[bridge-entry] connected to relay');
-    bridge.reconcileAttachedSessions().catch(() => {
+    bridge.reconcileAttachedSessions().finally(() => {
+      // Prune right after first reconcile so old sessions get cleaned up immediately
+      bridge.pruneSessions();
+    }).catch(() => {
       console.error('[bridge-entry] reconcileAttachedSessions failed');
     });
   });
@@ -75,6 +86,7 @@ async function main(): Promise<void> {
     if (!isParentAlive()) {
       clearInterval(parentTimer);
       clearInterval(reconcileTimer);
+      clearInterval(pruneTimer);
       console.error('[bridge-entry] parent process exited, deactivating sessions');
       bridge.deactivateAll().finally(() => {
         close();
@@ -84,8 +96,8 @@ async function main(): Promise<void> {
     }
   }, PARENT_CHECK_MS);
 
-  process.on('SIGINT', () => { clearInterval(parentTimer); clearInterval(reconcileTimer); close(); relay.close(); process.exit(0); });
-  process.on('SIGTERM', () => { clearInterval(parentTimer); clearInterval(reconcileTimer); close(); relay.close(); process.exit(0); });
+  process.on('SIGINT', () => { clearInterval(parentTimer); clearInterval(reconcileTimer); clearInterval(pruneTimer); close(); relay.close(); process.exit(0); });
+  process.on('SIGTERM', () => { clearInterval(parentTimer); clearInterval(reconcileTimer); clearInterval(pruneTimer); close(); relay.close(); process.exit(0); });
 }
 
 main().catch((err) => {

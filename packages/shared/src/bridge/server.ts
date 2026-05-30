@@ -3,15 +3,30 @@ import { type AddressInfo } from 'node:net';
 import { ApprovalBridge, type HookEventBody } from './handler.js';
 import { listRecentClaudeTranscripts } from './claude-transcripts.js';
 
-export function startBridgeServer(bridge: ApprovalBridge, port = 3001, source = 'cli', onShutdown?: () => void, startedAt?: number): Promise<() => void> {
+export function startBridgeServer(bridge: ApprovalBridge, port = 3001, source = 'cli', onShutdown?: () => void, startedAt?: number): Promise<{ close: () => Promise<void>; port: number }> {
   const server = createServer((req, res) => handleRequest(req, res, bridge, source, onShutdown, startedAt));
 
-  return new Promise((resolve) => {
-    server.listen(port, '127.0.0.1', () => {
+  return new Promise((resolve, reject) => {
+    const onListen = () => {
       const addr = server.address() as AddressInfo;
+      console.error(`BRIDGE_PORT=${addr.port}`);
       console.error(`bridge server listening on http://127.0.0.1:${addr.port}`);
-      resolve(() => server.close());
+      resolve({
+        port: addr.port,
+        close: () => new Promise<void>((res) => server.close(() => res())),
+      });
+    };
+
+    server.on('error', (err: NodeJS.ErrnoException) => {
+      if (err.code === 'EADDRINUSE') {
+        console.error(`bridge port ${port} in use, trying auto-assign...`);
+        server.listen(0, '127.0.0.1');
+      } else {
+        reject(err);
+      }
     });
+
+    server.listen(port, '127.0.0.1', onListen);
   });
 }
 
@@ -250,6 +265,13 @@ function handleRequest(req: IncomingMessage, res: ServerResponse, bridge: Approv
         res.end(JSON.stringify({ ok: false, error: 'invalid payload' }));
       }
     });
+    return;
+  }
+
+  if (req.method === 'GET' && url.pathname === '/v1/active-sessions') {
+    const active = bridge.getActiveSessionIds();
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ ok: true, active }));
     return;
   }
 

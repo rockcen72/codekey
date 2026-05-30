@@ -573,6 +573,54 @@ export function wsHandler(sql: postgres.Sql) {
         return;
       }
 
+      if (msg.type === 'prune_sessions') {
+        const keepClaudeSessionIds: string[] = msg.payload?.keepClaudeSessionIds ?? [];
+        // Safety: never prune with an empty keep list — that would wipe all
+        // transcript-attached sessions, which is probably a transient startup state.
+        if (keepClaudeSessionIds.length === 0) {
+          socket.send(JSON.stringify({ type: 'prune_done', payload: { deleted: 0 } }));
+          return;
+        }
+
+        sql.begin(async (tx) => {
+          // Keep only the latest session per claudeSessionId in the keep list.
+          // All older finished transcript_attach sessions get deleted, even if
+          // their claudeSessionId is still in the keep list — avoids accumulation
+          // of duplicates from repeated push/detach cycles.
+          const keepLatest: { id: string }[] = await tx`
+            SELECT DISTINCT ON (metadata->>'claudeSessionId') id
+            FROM sessions
+            WHERE device_id = ${deviceId}
+              AND metadata->>'source' = 'transcript_attach'
+              AND metadata->>'claudeSessionId' IN ${sql(keepClaudeSessionIds)}
+            ORDER BY metadata->>'claudeSessionId', started_at DESC
+          `;
+          const keepIds = keepLatest.map((r) => r.id);
+
+          const toDelete: { id: string }[] = await tx`
+            SELECT id FROM sessions
+            WHERE device_id = ${deviceId}
+              AND status = 'finished'
+              AND metadata->>'source' = 'transcript_attach'
+              AND id != ALL(${sql(keepIds)})
+          `;
+          if (toDelete.length === 0) return [];
+
+          const ids = toDelete.map((r) => r.id);
+          await tx`DELETE FROM approvals WHERE session_id IN ${sql(ids)}`;
+          await tx`DELETE FROM events WHERE session_id IN ${sql(ids)}`;
+          await tx`DELETE FROM sessions WHERE id IN ${sql(ids)}`;
+          return ids;
+        }).then((deletedIds) => {
+          const count = Array.isArray(deletedIds) ? deletedIds.length : 0;
+          socket.send(JSON.stringify({ type: 'prune_done', payload: { deleted: count } }));
+        }).catch((err) => {
+          console.error('prune_sessions error:', err);
+          socket.send(JSON.stringify({ type: 'error', code: 'DB_ERROR' }));
+        });
+        return;
+      }
+
       if (msg.type === 'query_attached_sessions') {
         sql`
           SELECT id, metadata FROM sessions

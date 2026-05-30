@@ -136,13 +136,13 @@ async function restoreAttachedSessions(context: vscode.ExtensionContext): Promis
   // Wait for bridge to be healthy (poll /v1/health, max 30s)
   for (let i = 0; i < 15; i++) {
     try {
-      const resp = await fetch('http://127.0.0.1:3001/v1/health');
+      const resp = await fetch(`${BridgeStatusService.getInstance().getBridgeUrl()}/v1/health`);
       if (resp.ok) {
         // Bridge is ready — restore each session
         const sessionsToPrune: string[] = [];
         for (const saved of savedSessions) {
           try {
-            const res = await fetch('http://127.0.0.1:3001/v1/claude-sessions/attach', {
+            const res = await fetch(`${BridgeStatusService.getInstance().getBridgeUrl()}/v1/claude-sessions/attach`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ sessionId: saved.claudeSessionId }),
@@ -184,7 +184,7 @@ export async function deactivate() {
   // Use AbortSignal with 2s timeout so VS Code doesn't hang on extension deactivation.
   const windowId = vscode.env.sessionId;
   try {
-    await fetch('http://127.0.0.1:3001/v1/close-window', {
+    await fetch(`${BridgeStatusService.getInstance().getBridgeUrl()}/v1/close-window`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ windowId }),
