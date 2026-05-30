@@ -18,7 +18,7 @@ export async function pairDevice(_context: vscode.ExtensionContext, statusBar: S
       creds = {
         deviceId: crypto.randomUUID(),
         deviceSecret: crypto.randomBytes(32).toString('base64'),
-        relayUrl: 'https://81.70.235.58',
+        relayUrl: 'https://codekey.tinymoney.cn',
       };
       saveCredentials(creds);
     }

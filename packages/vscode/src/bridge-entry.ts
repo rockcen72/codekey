@@ -23,7 +23,7 @@ async function main(): Promise<void> {
   };
 
   const deviceId = flag('--device-id');
-  const relayUrl = process.env.CODEKEY_RELAY_URL || 'https://81.70.235.58';
+  const relayUrl = process.env.CODEKEY_RELAY_URL || 'https://codekey.tinymoney.cn';
   const token = process.env.CODEKEY_DEVICE_TOKEN;
 
   if (!deviceId || !token) {

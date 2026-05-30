@@ -23,7 +23,7 @@ export function loadCredentials(): Credentials | null {
       deviceId: parsed.deviceId ?? '',
       deviceSecret: parsed.deviceSecret ?? '',
       deviceToken: parsed.deviceToken ?? undefined,
-      relayUrl: parsed.relayUrl ?? 'https://81.70.235.58',
+      relayUrl: parsed.relayUrl ?? 'https://codekey.tinymoney.cn',
     };
   } catch {
     return null;
