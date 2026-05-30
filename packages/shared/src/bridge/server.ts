@@ -1,10 +1,22 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { type AddressInfo } from 'node:net';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { ApprovalBridge, type HookEventBody } from './handler.js';
-import { listRecentClaudeTranscripts } from './claude-transcripts.js';
+import { listRecentClaudeTranscripts, loadConversation } from './claude-transcripts.js';
 
-export function startBridgeServer(bridge: ApprovalBridge, port = 3001, source = 'cli', onShutdown?: () => void, startedAt?: number): Promise<{ close: () => Promise<void>; port: number }> {
-  const server = createServer((req, res) => handleRequest(req, res, bridge, source, onShutdown, startedAt));
+export interface BridgeConfig {
+  deviceId: string;
+  deviceToken?: string;
+  /** Device secret for pairing WS auth (loaded from credentials file) */
+  deviceSecret?: string;
+  relayUrl: string;
+  /** Path to admin panel directory (serves index.html at /) */
+  adminDir?: string;
+}
+
+export function startBridgeServer(bridge: ApprovalBridge, port = 3001, source = 'cli', onShutdown?: () => void, startedAt?: number, bridgeConfig?: BridgeConfig): Promise<{ close: () => Promise<void>; port: number }> {
+  const server = createServer((req, res) => handleRequest(req, res, bridge, source, onShutdown, startedAt, bridgeConfig));
 
   return new Promise((resolve, reject) => {
     const onListen = () => {
@@ -30,7 +42,7 @@ export function startBridgeServer(bridge: ApprovalBridge, port = 3001, source = 
   });
 }
 
-function handleRequest(req: IncomingMessage, res: ServerResponse, bridge: ApprovalBridge, source: string, onShutdown?: () => void, startedAt?: number): void {
+function handleRequest(req: IncomingMessage, res: ServerResponse, bridge: ApprovalBridge, source: string, onShutdown?: () => void, startedAt?: number, bridgeConfig?: BridgeConfig): void {
   const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
 
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -76,6 +88,13 @@ function handleRequest(req: IncomingMessage, res: ServerResponse, bridge: Approv
     const commands = bridge.commandQueue.peek();
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(commands));
+    return;
+  }
+
+  if (req.method === 'GET' && url.pathname === '/v1/pending-approvals') {
+    const approvals = bridge.getPendingApprovals();
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ approvals }));
     return;
   }
 
@@ -219,6 +238,23 @@ function handleRequest(req: IncomingMessage, res: ServerResponse, bridge: Approv
     return;
   }
 
+  if (req.method === 'GET') {
+    const conversationMatch = url.pathname.match(/^\/v1\/claude-sessions\/([^/]+)\/conversation$/);
+    if (conversationMatch) {
+      const sessionId = conversationMatch[1];
+      const maxEntries = Number(url.searchParams.get('max') || '50');
+      try {
+        const entries = loadConversation(sessionId, maxEntries);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: true, sessionId, entries }));
+      } catch (err) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: false, error: String(err) }));
+      }
+      return;
+    }
+  }
+
   if (req.method === 'POST' && url.pathname === '/v1/claude-sessions/attach') {
     let body = '';
     req.on('data', (chunk) => { body += chunk; });
@@ -326,8 +362,37 @@ function handleRequest(req: IncomingMessage, res: ServerResponse, bridge: Approv
     return;
   }
 
+  // ── Admin panel: serve config ──
+  if (req.method === 'GET' && url.pathname === '/v1/admin-config' && bridgeConfig) {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({
+      relayUrl: bridgeConfig.relayUrl,
+      deviceId: bridgeConfig.deviceId,
+      deviceToken: bridgeConfig.deviceToken ?? null,
+      deviceSecret: bridgeConfig.deviceSecret ?? null,
+      hasToken: !!bridgeConfig.deviceToken,
+      relayStatus: bridge.relay.status,
+      source,
+    }));
+    return;
+  }
+
+  // ── Admin panel: serve static files ──
+  if (req.method === 'GET' && bridgeConfig?.adminDir && (url.pathname === '/' || url.pathname === '/index.html')) {
+    const indexPath = resolve(bridgeConfig.adminDir, 'index.html');
+    try {
+      const html = readFileSync(indexPath, 'utf-8');
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      res.end(html);
+    } catch {
+      res.writeHead(404, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'admin panel not found' }));
+    }
+    return;
+  }
+
   if (url.pathname === '/v1/health') {
-    const supports = ['register-window', 'window-id', 'session-label', 'approval_forward', 'activate-session', 'deactivate-session', 'claude-sessions/recent', 'claude-sessions/attach', 'detach-session', 'attached-sessions', 'relay-reconnect'];
+    const supports = ['register-window', 'window-id', 'session-label', 'approval_forward', 'activate-session', 'deactivate-session', 'claude-sessions/recent', 'claude-sessions/attach', 'detach-session', 'attached-sessions', 'relay-reconnect', 'admin-config', 'pending-approvals'];
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({
       ok: true,

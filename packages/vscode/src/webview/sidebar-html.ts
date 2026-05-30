@@ -10,6 +10,14 @@ export interface PendingApprovalItem {
   serverSessionId: string;
 }
 
+export interface PairingState {
+  code: string;
+  method: 'code' | 'qr';
+  status: 'idle' | 'waiting' | 'paired' | 'error';
+  statusText: string;
+  expiresAt: number;
+}
+
 export interface SidebarState {
   deviceStatus: 'unpaired' | 'paired' | 'offline';
   phoneName: string;
@@ -23,6 +31,9 @@ export interface SidebarState {
   sessions: SessionResponse[];
   events: Record<string, EventResponse[]>;
   claudeSessions: ClaudeSessionItem[];
+  relayUrl?: string;
+  deviceSecret?: string;
+  pairing?: PairingState;
 }
 
 export interface ClaudeSessionItem {
@@ -36,8 +47,9 @@ export interface ClaudeSessionItem {
 
 // ── Helpers ──────────────────────────────────────────────
 
-function h(s: string): string {
-  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+function h(s: string | undefined | null): string {
+  if (s == null) return '';
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
 function truncate(s: string, maxLen: number): string {
@@ -54,173 +66,320 @@ function formatTime(iso: string): string {
   return new Date(iso).toLocaleDateString();
 }
 
+function dot(cls: string): string {
+  const pulse = cls.includes('pulse') ? ' class="pulse"' : '';
+  return `<span class="dot ${cls}"${pulse}></span>`;
+}
+
 function tag(text: string, cls: string): string {
-  return `<span class="tag ${cls}">${h(text)}</span>`;
+  return `<span class="tag ${cls}">${text}</span>`;
 }
 
 // ── Section renderers ────────────────────────────────────
 
 function renderBrandHeader(): string {
-  return `<div class="brand-header">
-    <svg width="28" height="28" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style="display:block;margin:0 auto 6px">
-      <rect x="6" y="2" width="12" height="20" rx="2.5" stroke="var(--vscode-editor-foreground)" stroke-width="1.5" opacity="0.8"/>
-      <path d="M9.5 9.5L7.5 12L9.5 14.5" stroke="var(--vscode-editor-foreground)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" opacity="0.8"/>
-      <path d="M14.5 9.5L16.5 12L14.5 14.5" stroke="var(--vscode-editor-foreground)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" opacity="0.8"/>
-      <path d="M17 4.5L17.35 5.65L18.5 6L17.35 6.35L17 7.5L16.65 6.35L15.5 6L16.65 5.65Z" fill="var(--vscode-editor-foreground)" opacity="0.8"/>
-    </svg>
-    <div class="brand-title">CodeKey</div>
-    <div class="brand-subtitle">AI Coding Remote</div>
+  return `<div class="brand">
+    <div class="brand-icon">
+      <div class="brand-glow"></div>
+      <svg viewBox="0 0 24 24" fill="none">
+        <rect x="6" y="2" width="12" height="20" rx="2.5" stroke="currentColor" stroke-width="1.5" opacity=".6"/>
+        <path d="M9.5 9.5L7.5 12l2 2.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" opacity=".8"/>
+        <path d="M14.5 9.5l2 2.5-2 2.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" opacity=".8"/>
+        <path d="M17 4.5l.35 1.15L18.5 6l-1.15.35L17 7.5l-.35-1.15L15.5 6l1.15-.35z" fill="currentColor" opacity=".8"/>
+      </svg>
+    </div>
+    <div class="brand-name">Code<span class="brand-em">Key</span></div>
+    <div class="brand-sub">A I &nbsp;C o d i n g &nbsp;R e m o t e</div>
   </div>`;
+}
+
+export function renderDeviceContent(state: SidebarState): string {
+  const serverConnected = state.bridge.relay === 'connected';
+  const serverDot = dot(serverConnected ? 'green' : 'red');
+  const serverLabel = serverConnected ? 'Connected' : 'Disconnected';
+  const hookOk = state.bridge.hookConfig === 'enabled';
+  const hookDot = dot(hookOk ? 'green' : 'orange');
+  const hookLabel = hookOk ? 'Enabled' : 'Installed';
+  return `<div class="row"><span class="row-label">Server</span><span class="row-val">${serverDot}${serverLabel}</span></div>
+    <div class="row"><span class="row-label">Hook</span><span class="row-val">${hookDot}${hookLabel}</span></div>
+    <div class="btn-group">
+      <button class="btn btn-sm" data-action="hook-settings">Hook</button>
+      <button class="btn btn-ghost btn-sm" data-action="relayReconnect">Reconnect</button>
+    </div>`;
 }
 
 function renderDevice(state: SidebarState): string {
-  const { deviceStatus, bridge, phoneName } = state;
-  const statusTag = deviceStatus === 'paired' ? tag('Paired', 'green')
-    : deviceStatus === 'offline' ? tag('Offline', 'red')
-    : tag('Unpaired', 'orange');
-
-  const serverLabel = bridge.bridge === 'running' && bridge.relay === 'connected' ? 'Connected'
-    : bridge.bridge === 'connecting' || bridge.relay === 'connecting' ? 'Connecting...'
-    : bridge.relay === 'disconnected' && bridge.bridge === 'running' ? 'Disconnected'
-    : 'Offline';
-  const serverCls = serverLabel === 'Connected' ? 'green'
-    : serverLabel === 'Connecting...' ? 'yellow'
-    : 'red';
-  const serverTag = tag(serverLabel, serverCls);
-
-  const hookLabel = bridge.hookConfig === 'enabled' ? 'Enabled'
-    : bridge.hookInstalled ? 'Installed'
-    : 'Not Found';
-  const hookCls = bridge.hookConfig === 'enabled' ? 'green'
-    : bridge.hookInstalled ? 'orange'
-    : 'orange';
-  const hookTag = tag(hookLabel, hookCls);
-
-  return `<div class="section">
-    <div class="section-title"><span>DEVICE</span>${statusTag}</div>
-    <div class="row"><span class="muted">Phone</span><span>${h(phoneName)}</span></div>
-    <div class="row"><span class="muted">Server</span>${serverTag}</div>
-    <div class="row"><span class="muted">Hook</span>${hookTag}</div>
-    <div class="button-row">
-      <button class="btn" data-action="pair">${deviceStatus === 'paired' ? 'Re-Pair' : 'Pair Device'}</button>
-      <button class="btn" data-action="hook-settings">Hook</button>
-      <button class="btn" data-action="relayReconnect" style="font-size:10px">Reconnect</button>
+  const { deviceStatus } = state;
+  const paired = deviceStatus === 'paired';
+  const offline = deviceStatus === 'offline';
+  const statusDot = paired ? dot('green') : offline ? dot('red pulse') : dot('orange pulse');
+  const statusLabel = paired ? 'Online' : offline ? 'Offline' : 'Not paired';
+  return `<div class="card">
+    <div class="card-header">
+      <span class="card-label">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="2" width="16" height="20" rx="2"/><line x1="12" y1="18" x2="12.01" y2="18"/></svg>
+        Device
+      </span>
+      <span class="tag ${paired ? 'green' : offline ? 'red' : 'orange'}" id="deviceStatusTag">${statusDot}${statusLabel}</span>
     </div>
+    <div id="deviceContent">${renderDeviceContent(state)}</div>
   </div>`;
 }
 
-function renderAgents(state: SidebarState): string {
-  const active = state.agents.filter(a => a.runtimeStatus === 'active').length;
-  return `<div class="section">
-    <div class="section-title"><span>AGENTS</span>${tag(active + ' active', '')}</div>
-    ${state.agents.map(a => {
-      const statusTag = a.status === 'coming_soon' ? tag('Coming soon', '')
-        : a.runtimeStatus === 'active' ? tag('Active', 'green')
-        : tag('Idle', '');
-      const isActive = a.runtimeStatus === 'active';
-      return `<div class="agent${isActive ? ' active' : ''}">
-        <div class="row"><span class="agent-name">${h(a.name)}</span>${statusTag}</div>
-        <div class="muted">${h(a.description)}</div>
-        ${a.statusLine ? `<div class="status-line">${h(a.statusLine)}</div>` : ''}
-        ${a.lastMessage ? `<div class="last-msg muted">${h(a.lastMessage)}</div>` : ''}
-      </div>`;
-    }).join('')}
-  </div>`;
-}
+/** Per-agent active dot color. Inactive uses neutral gray. */
+const AGENT_DOT_CLASS: Record<string, string> = {
+  'claude-code': 'orange',
+  'codex-cli': 'white',
+  'opencode': 'purple',
+};
 
-function renderPendingList(pending: PendingApprovalItem[]): string {
-  if (pending.length === 0) return '';
-  return pending.map(a => {
-    const rCls = a.risk === 'high' || a.risk === 'critical' ? 'red' : 'orange';
-    const cmd = a.command.length > 55 ? a.command.slice(0, 52) + '…' : a.command;
-    return `<div class="item danger" style="margin-left:12px;padding:4px 0;display:flex;align-items:center;gap:4px;font-size:11px;overflow:hidden">
-      <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:monospace">${h(cmd)}</span>
-      <span class="muted" style="flex-shrink:0">${h(a.agent)}</span>
-      ${tag(a.risk, rCls)}
+export function renderAgentsContent(state: SidebarState): string {
+  if (state.agents.length === 0) return '<div class="empty-state">No agents configured</div>';
+  return state.agents.map(a => {
+    const isActive = a.runtimeStatus === 'active';
+    const activeColor = AGENT_DOT_CLASS[a.id] || 'green';
+    const dotClass = isActive ? `${activeColor} pulse` : 'gray';
+    return `<div class="agent-item">
+      <div class="agent-title-row">
+        <span class="agent-name">${h(a.name)}</span>
+        ${dot(dotClass)}
+      </div>
+      <div class="agent-desc">${h(a.description)}</div>
+      ${a.statusLine ? `<div class="agent-status">${a.statusLine}</div>` : ''}
+      ${a.lastMessage ? `<div class="agent-last">${h(a.lastMessage)}</div>` : ''}
     </div>`;
   }).join('');
 }
 
-function renderSessions(state: SidebarState): string {
-  // Build per-session pending lookup
-  const pendingBySession: Record<string, PendingApprovalItem[]> = {};
-  for (const a of state.pendingApprovals) {
-    if (!pendingBySession[a.serverSessionId]) pendingBySession[a.serverSessionId] = [];
-    pendingBySession[a.serverSessionId]!.push(a);
-  }
-
-  // Only show sessions that have pending approvals
-  const active = Object.entries(pendingBySession);
-  if (active.length === 0) return '';
-
-  return `<div class="section">
-    <div class="section-title"><span>APPROVALS</span>${tag(String(active.length), 'orange')}</div>
-    ${active.map(([sessionId, pending]) => {
-      const s = state.sessions.find(s => s.id === sessionId);
-      const sid = s?.id ? (s.id.length > 12 ? s.id.slice(0, 8) + '…' + s.id.slice(-3) : s.id) : sessionId.slice(0, 8);
-      const label = s?.metadata?.claudeSessionId?.slice(0, 8) || sid;
-      const ts = s?.last_active_at || s?.created_at || '';
-      return `<div class="session-group">
-        <div class="item" style="padding:4px 0">
-          <div class="row" style="margin:0">
-            <span style="font-size:11px"><b>${h(s?.agent_type || '?')}</b> ${h(label)}</span>
-            <span style="display:flex;align-items:center;gap:4px">
-              <span class="muted" style="font-size:10px">${h(formatTime(ts))}</span>
-              ${tag(`${pending.length} pending`, 'orange')}
-            </span>
-          </div>
-        </div>
-        ${renderPendingList(pending)}
-      </div>`;
-    }).join('')}
+function renderAgents(state: SidebarState): string {
+  const active = state.agents.filter(a => a.runtimeStatus === 'active').length;
+  return `<div class="card">
+    <div class="card-header">
+      <span class="card-label">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a4 4 0 1 0 0 8 4 4 0 0 0 0-8z"/><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/></svg>
+        Agents
+      </span>
+      <span class="badge${active > 0 ? ' green' : ''}" id="agentsBadge">${active} active</span>
+    </div>
+    <div id="agentsContent">${renderAgentsContent(state)}</div>
   </div>`;
 }
 
-function renderClaudeSessions(state: SidebarState): string {
-  const items = state.claudeSessions.slice().sort((a, b) => {
+export function renderApprovalsContent(state: SidebarState): string {
+  const pending = state.pendingApprovals;
+  if (pending.length === 0) return '<div class="empty-state">No pending approvals</div>';
+
+  const groups: Record<string, { agent: string; items: typeof pending; ts: string }> = {};
+  for (const a of pending) {
+    if (!groups[a.serverSessionId]) {
+      const s = state.sessions.find(s => s.id === a.serverSessionId);
+      groups[a.serverSessionId] = { agent: a.agent, items: [], ts: s?.last_active_at || s?.created_at || '' };
+    }
+    groups[a.serverSessionId].items.push(a);
+  }
+
+  return Object.entries(groups).map(([sid, g]) => `
+    <div class="approval-session">
+      <div class="approval-header">
+        <span class="approval-agent">${h(g.agent)}</span>
+        <span class="tag orange">${g.items.length} pending</span>
+      </div>
+      ${g.items.map(item => {
+        const rCls = item.risk === 'high' || item.risk === 'critical' ? 'risk-high' : item.risk === 'medium' ? 'risk-medium' : 'risk-low';
+        return `<div class="approval-item">
+          <span class="approval-cmd">${h(item.command)}</span>
+          <span class="risk ${rCls}">${h(item.risk)}</span>
+        </div>`;
+      }).join('')}
+    </div>
+  `).join('');
+}
+
+function renderApprovals(state: SidebarState): string {
+  const pending = state.pendingApprovals;
+  return `<div class="card">
+    <div class="card-header">
+      <span class="card-label">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+        Approvals
+      </span>
+      <span class="badge${pending.length > 0 ? ' orange' : ''}" id="approvalsBadge">${pending.length} pending</span>
+    </div>
+    <div id="approvalsContent">${renderApprovalsContent(state)}</div>
+  </div>`;
+}
+
+export function renderSessionsContent(state: SidebarState): string {
+  const items = state.claudeSessions.filter(s => s && s.sessionId).slice().sort((a, b) => {
     const ta = a.updatedAt ? new Date(a.updatedAt).getTime() : 0;
     const tb = b.updatedAt ? new Date(b.updatedAt).getTime() : 0;
     return tb - ta;
   });
-  return `<div class="section">
-    <div class="section-header" style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
-      <span class="section-title" style="font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:0.04em">Local Sessions</span>
-      <span style="display:flex;gap:4px">
-        <button class="ico-btn" data-action="refreshClaudeSessions" title="Refresh">↻</button>
-      </span>
-    </div>
-    ${items.length === 0 ? '<div class="muted" style="font-size:11px">No local Claude sessions found</div>' : ''}
-    <div class="session-scroll">
-    ${items.map(s => `
-      <div class="item session-item" style="padding:6px 0">
-        <div class="session-title-row" data-action="togglePreview" data-session-id="${h(s.sessionId)}" style="cursor:pointer">
-          <span class="chevron">▶</span>
-          <span class="session-title" title="${h(s.title || s.sessionId.slice(0, 8))}">${h(truncate(s.title || s.sessionId.slice(0, 8), 60))}</span>
-        </div>
-        <div class="row" style="margin:2px 0">
-          <span class="muted" style="font-size:10px">${h(truncate(s.cwd || '', 50))}</span>
-          <span class="muted" style="font-size:10px">${h(formatTime(s.updatedAt))}</span>
-        </div>
-        <div class="row" style="margin:2px 0">
-          <span class="muted" style="font-size:10px;font-family:monospace">${h(s.sessionId.slice(0, 8))}</span>
-          <span style="display:flex;gap:4px">
-            <button class="${s.attached ? 'btn btn-attached' : 'btn'}"
-                data-action="toggleAttachClaudeSession"
-                data-session-id="${h(s.sessionId)}"
-                data-attached="${s.attached ? 'true' : 'false'}"
-                style="font-size:10px;width:60px">${s.attached ? '已推送' : '推送远程'}</button>
+  const agents = state.agents || [];
+  const tabsHtml = '<div class="agent-tabs" id="agentTabs">'
+    + '<span class="agent-tab active" data-tab="all">All</span>'
+    + agents.map(a => `<span class="agent-tab" data-tab="${h(a.id)}">${h(a.name)}</span>`).join('')
+    + '</div>';
+  if (items.length === 0) return tabsHtml + '<div class="empty-state">No local sessions</div>';
+  return tabsHtml
+    + '<div class="session-scroll">'
+    + items.map(s => {
+      const isAttached = s.attached;
+      const sid = s.sessionId;
+      const btnCls = isAttached ? 'btn-attached' : '';
+      const btnText = isAttached ? 'Detach' : 'Attach';
+      return `<div class="session-item" data-sid="${h(sid)}" data-agent="claude-code">
+        <div class="session-title-row">
+          <span class="session-title-click" data-action="togglePreview" data-session-id="${h(sid)}">
+            <span class="chevron">&#9654;</span>
+            <span class="session-title" title="${h(s.title || sid.slice(0, 8))}">${h(truncate(s.title || sid.slice(0, 8), 60))}</span>
           </span>
+          <button class="btn btn-sm ${btnCls}" data-action="toggleAttachClaudeSession" data-session-id="${h(sid)}" data-attached="${isAttached ? 'true' : 'false'}">${btnText}</button>
         </div>
-        <div class="preview" id="preview-${h(s.sessionId)}" style="display:none"></div>
-      </div>
-    `).join('')}
+        <div class="session-meta">
+          <span class="session-cwd">${h(truncate(s.cwd || '', 50))}</span>
+          <span class="session-ts">${h(formatTime(s.updatedAt))}</span>
+        </div>
+        <div class="preview" id="preview-${h(sid)}"></div>
+      </div>`;
+    }).join('')
+    + '</div>';
+}
+
+function renderClaudeSessions(state: SidebarState): string {
+  return `<div class="card">
+    <div class="card-header">
+      <span class="card-label">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+        Local Sessions
+      </span>
+      <button class="btn-ghost btn-sm" data-action="refreshClaudeSessions" title="Refresh" style="font-size:11px;padding:2px 6px">↻</button>
     </div>
+    <div id="sessionsContent">${renderSessionsContent(state)}</div>
   </div>`;
 }
 
 function renderSubscribe(): string {
-  return `<div class="section">
-    <div class="subscription">Free plan</div>
+  return `<div class="footer">CodeKey &middot; AI Coding Remote</div>`;
+}
+
+// ── Pairing card ─────────────────────────────────────────
+
+function renderPairingCodeSvg(code: string): string {
+  if (!code) return '';
+  const seed = Array.from(String(code)).reduce((a, c) => a + c.charCodeAt(0), 0);
+  const cells: string[] = [];
+  const step = 7, padding = 4, grid = 15, clr = 'var(--vscode-textLink-foreground,#00ffe0)';
+  for (let i = 0; i < grid; i++) {
+    for (let j = 0; j < grid; j++) {
+      const idx = i * grid + j + seed;
+      if ((i < 5 && j < 5) || (i < 5 && j > grid - 6) || (i > grid - 6 && j < 5)) continue;
+      if (Math.abs(Math.sin(idx * 0.7)) > 0.45) {
+        const x = padding + j * step, y = padding + i * step;
+        const alpha = (0.3 + Math.abs(Math.cos(idx * 0.3)) * 0.6).toFixed(2);
+        cells.push(`<rect x="${x}" y="${y}" width="5" height="5" fill="${clr}" opacity="${alpha}" rx="1"/>`);
+      }
+    }
+  }
+  const corners = [
+    { x: padding, y: padding },
+    { x: padding + (grid - 1) * step - 2, y: padding },
+    { x: padding, y: padding + (grid - 1) * step - 2 },
+  ];
+  corners.forEach(c => {
+    cells.push(`<rect x="${c.x}" y="${c.y}" width="24" height="24" fill="none" stroke="${clr}" stroke-width="2.5" rx="3" opacity=".8"/>`);
+    cells.push(`<rect x="${c.x + 4}" y="${c.y + 4}" width="16" height="16" fill="${clr}" opacity=".2" rx="1.5"/>`);
+  });
+  return cells.join('');
+}
+
+export function renderPairingContent(state: SidebarState): string {
+  const p = state.pairing;
+  const isPaired = state.deviceStatus === 'paired';
+  const isWaiting = p?.status === 'waiting';
+  const method = p?.method || 'code';
+  const codeDigits = p?.code || '--- ---';
+  const codeExpires = p?.expiresAt || 0;
+
+  // When paired, collapse to a compact connected card (no code/QR clutter)
+  if (isPaired) {
+    return `<div class="paired-compact">
+      <div class="paired-row">
+        <div class="paired-icon">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+        </div>
+        <div class="paired-text">
+          <div class="paired-title">Connected via WeChat</div>
+          <div class="paired-sub">${h(state.phoneName || 'WeChat Mini Program')}</div>
+        </div>
+      </div>
+    </div>`;
+  }
+
+  return `<div class="pairing-methods">
+    <div class="method-option ${method === 'code' ? 'active' : ''}" data-method="code">
+      <div class="method-header" data-toggle="code">
+        <div class="method-radio"></div>
+        <div>
+          <div class="method-label">Code Pairing</div>
+          <div class="method-hint">Enter this code in your WeChat Mini Program</div>
+        </div>
+      </div>
+      <div class="method-body" style="${method === 'code' ? 'max-height:300px;padding:0 10px 12px' : ''}">
+        <div class="code-display-wrap">
+          <div class="code-digits" id="codeDigits" data-expires="${codeExpires}">${h(codeDigits)}</div>
+          <div class="code-timer" id="codeTimer">Code expires in <span id="countdown">5:00</span></div>
+          <div class="code-actions">
+            <button class="btn btn-sm btn-ghost" data-action="regeneratePairingCode">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+              Regenerate
+            </button>
+          </div>
+          <div class="pairing-status ${isPaired ? 'success' : isWaiting ? 'waiting' : ''}" id="pairingStatus">
+            ${isPaired ? 'Connected via WeChat' : isWaiting ? (p?.statusText || 'Waiting for scan...') : 'Generate a code to pair with your WeChat Mini Program'}
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="method-option ${method === 'qr' ? 'active' : ''}" data-method="qr">
+      <div class="method-header" data-toggle="qr">
+        <div class="method-radio"></div>
+        <div>
+          <div class="method-label">QR Scan</div>
+          <div class="method-hint">Scan with WeChat to pair instantly</div>
+        </div>
+      </div>
+      <div class="method-body" style="${method === 'qr' ? 'max-height:300px;padding:0 10px 12px' : ''}">
+        <div class="qr-layout">
+          <div class="qr-visual">
+            <svg viewBox="0 0 110 110" id="qrSvg">${renderPairingCodeSvg(p?.code || '')}</svg>
+          </div>
+          <div class="qr-side">
+            <div class="hint">Scan with your <strong>WeChat Mini Program</strong></div>
+            <div class="qr-bottom">
+              <div class="qr-status ${isPaired ? 'success' : ''}" id="qrStatus">
+                ${isPaired ? 'Paired successfully!' : 'Generate a code first'}
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>`;
+}
+
+function renderPairing(state: SidebarState): string {
+  const { deviceStatus } = state;
+  const isPaired = deviceStatus === 'paired';
+  return `<div class="card pairing-card">
+    <div class="card-header">
+      <span class="card-label">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="M12 5l7 7-7 7"/></svg>
+        Pairing
+      </span>
+      <span class="tag ${isPaired ? 'green' : 'orange'}" id="pairingHeaderTag">${isPaired ? '<span class="dot green"></span>WeChat' : '<span class="dot orange pulse"></span>Not paired'}</span>
+    </div>
+    <div id="pairingContent">${renderPairingContent(state)}</div>
   </div>`;
 }
 
@@ -234,68 +393,264 @@ export function renderSidebar(state: SidebarState): string {
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src https: data:; script-src 'nonce-${NONCE}';">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src https: data:; script-src 'nonce-${NONCE}'; connect-src http://* ws://*;">
 <style>${STYLES}</style>
 </head>
 <body>
 ${renderBrandHeader()}
 ${renderDevice(state)}
+${renderPairing(state)}
 ${renderAgents(state)}
 ${renderClaudeSessions(state)}
-${renderSessions(state)}
+${renderApprovals(state)}
 ${renderSubscribe()}
 <script nonce="${NONCE}">
 (function() {
-  const api = acquireVsCodeApi();
+  var api = acquireVsCodeApi();
 
-  // Listen for session preview data from extension host
+  // Pairing data injected from extension host state
+  var PD = ${JSON.stringify({
+    relayUrl: state.relayUrl || '',
+    deviceId: state.deviceId || '',
+    deviceSecret: state.deviceSecret || '',
+    pairingStatus: state.pairing?.status || 'idle',
+  })};
+
+  // ── Pairing WebSocket ──────────────────────────
+  var _pairingWs = null;
+
+  function openPairingWs() {
+    if (_pairingWs) return;
+    if (!PD.relayUrl || !PD.deviceId || !PD.deviceSecret) return;
+    var base = PD.relayUrl.replace(/http/, 'ws');
+    var wsUrl = base + '/ws?device_id=' + encodeURIComponent(PD.deviceId) + '&device_secret=' + encodeURIComponent(PD.deviceSecret);
+    var ws = new WebSocket(wsUrl);
+    _pairingWs = ws;
+    ws.addEventListener('message', function(e) {
+      try {
+        var msg = JSON.parse(typeof e.data === 'string' ? e.data : new TextDecoder().decode(e.data));
+        if (msg.type === 'pairing_ready') {
+          var ps = document.getElementById('pairingStatus');
+          if (ps) { ps.textContent = 'Code scanned! Waiting for confirmation...'; ps.className = 'pairing-status waiting'; }
+        }
+        if (msg.type === 'device_token') {
+          api.postMessage({ action: 'pairedDevice', token: msg.token });
+          ws.close(); _pairingWs = null;
+          var ps = document.getElementById('pairingStatus');
+          if (ps) { ps.textContent = 'Paired successfully!'; ps.className = 'pairing-status success'; }
+        }
+      } catch(e) {}
+    });
+    ws.addEventListener('close', function() { if (_pairingWs === ws) _pairingWs = null; });
+    ws.addEventListener('error', function() { ws.close(); });
+  }
+
+  function closePairingWs() {
+    if (_pairingWs) { _pairingWs.onclose = null; _pairingWs.close(); _pairingWs = null; }
+  }
+
+  // Auto-open pairing WS if pairing in progress (handles re-render reconnect)
+  if (PD.pairingStatus === 'waiting') openPairingWs();
+
+  // ── Incremental state update (no full re-render) ──
+  function updateHeaderTag(id, text, cls) {
+    var el = document.getElementById(id);
+    if (el) { el.textContent = text; el.className = 'tag ' + cls; }
+  }
+  // Cache last HTML per section — skip swap when unchanged to preserve
+  // user-opened previews / scroll position / active tab state.
+  var _lastHtml = { deviceContent: '', pairingContent: '', agentsContent: '', approvalsContent: '', sessionsContent: '' };
+  function swap(id, html) {
+    if (html === undefined) return false;
+    if (_lastHtml[id] === html) return false;
+    var el = document.getElementById(id);
+    if (!el) return false;
+    el.innerHTML = html;
+    _lastHtml[id] = html;
+    return true;
+  }
+
+  // ── Messages from extension host ───────────────
   window.addEventListener('message', function(e) {
+    if (e.data && e.data.type === 'stateUpdate') {
+      var d = e.data;
+      // Update content sections (skip if unchanged)
+      swap('deviceContent', d.deviceHtml);
+      swap('pairingContent', d.pairingHtml);
+      swap('agentsContent', d.agentsHtml);
+      swap('approvalsContent', d.approvalsHtml);
+      if (swap('sessionsContent', d.sessionsHtml)) applyAgentFilter();
+      // Update badges
+      if (d.agentCount !== undefined) {
+        var ab = document.getElementById('agentsBadge');
+        if (ab) { ab.textContent = d.agentCount + ' active'; ab.className = 'badge' + (d.agentCount > 0 ? ' green' : ''); }
+      }
+      if (d.approvalCount !== undefined) {
+        var apb = document.getElementById('approvalsBadge');
+        if (apb) { apb.textContent = d.approvalCount + ' pending'; apb.className = 'badge' + (d.approvalCount > 0 ? ' orange' : ''); }
+      }
+      // Update device status tag
+      if (d.deviceStatus !== undefined) {
+        var ds = document.getElementById('deviceStatusTag');
+        if (ds) {
+          if (d.deviceStatus === 'paired') { ds.textContent = '● Online'; ds.className = 'tag green'; }
+          else if (d.deviceStatus === 'offline') { ds.textContent = '● Offline'; ds.className = 'tag red'; }
+          else { ds.textContent = '● Not paired'; ds.className = 'tag orange'; }
+        }
+      }
+      // Update pairing header
+      if (d.paired !== undefined) {
+        var pt = document.getElementById('pairingHeaderTag');
+        if (pt) {
+          if (d.paired) { pt.innerHTML = '<span class="dot green"></span>WeChat'; pt.className = 'tag green'; }
+          else { pt.innerHTML = '<span class="dot orange pulse"></span>Not paired'; pt.className = 'tag orange'; }
+        }
+      }
+      // Update PD so openPairingWs uses fresh data
+      if (d.relayUrl) PD.relayUrl = d.relayUrl;
+      if (d.deviceId) PD.deviceId = d.deviceId;
+      if (d.deviceSecret) PD.deviceSecret = d.deviceSecret;
+      if (d.pairingStatus) {
+        PD.pairingStatus = d.pairingStatus;
+        if (d.pairingStatus === 'waiting') openPairingWs();
+        else closePairingWs();
+      }
+      return;
+    }
+
     if (e.data && e.data.type === 'sessionPreview') {
       var sid = e.data.sessionId;
-      var container = document.getElementById('preview-' + sid);
-      if (!container) return;
-      if (e.data.count === 0) {
-        container.innerHTML = '<div class="preview-empty">No conversation found</div>';
-      } else {
+      var el = document.getElementById('preview-' + sid);
+      if (!el) return;
+      if (e.data.entries && e.data.entries.length > 0) {
         var html = '';
         for (var i = 0; i < e.data.entries.length; i++) {
           var entry = e.data.entries[i];
-          var side = entry.role === 'user' ? 'right' : 'left';
+          var side = entry.role === 'user' ? 'left' : 'right';
           var label = entry.role === 'user' ? 'You' : 'Claude';
-          var ts = entry.timestamp ? new Date(entry.timestamp).toLocaleTimeString() : '';
-          html += '<div class="pv-msg pv-msg-' + side + '">'
-            + '<div class="pv-label">' + label + ' <span class="pv-time">' + ts + '</span></div>'
+          html += '<div class="pv-msg">'
+            + '<div class="pv-label">' + label + '</div>'
             + '<div class="pv-bubble pv-bubble-' + side + '">' + entry.text + '</div>'
             + '</div>';
         }
-        container.innerHTML = html;
+        el.innerHTML = html;
+      } else {
+        el.innerHTML = '<div class="preview-empty">No conversation history</div>';
       }
-      container.style.display = 'block';
+      el.style.display = 'block';
     }
   });
 
+  // Pairing method toggle (local UI only)
   document.addEventListener('click', function(e) {
-    var target = e.target instanceof HTMLElement
-      ? e.target.closest('[data-action]')
-      : null;
+    var toggle = e.target.closest('.method-header');
+    if (toggle) {
+      var opt = toggle.closest('.method-option');
+      if (!opt) return;
+      document.querySelectorAll('.method-option').forEach(function(o) { o.classList.remove('active'); });
+      opt.classList.add('active');
+      try { sessionStorage.setItem('pairingMethod', opt.dataset.method); } catch(e) {}
+      return;
+    }
+    // Agent tab filter (Local Sessions card)
+    var tab = e.target.closest('.agent-tab');
+    if (tab) {
+      var tabs = tab.parentElement;
+      if (tabs) tabs.querySelectorAll('.agent-tab').forEach(function(t) { t.classList.remove('active'); });
+      tab.classList.add('active');
+      try { sessionStorage.setItem('agentFilter', tab.dataset.tab); } catch(e) {}
+      applyAgentFilter();
+      return;
+    }
+  });
+
+  // Apply current agent filter to session-items (data-agent attribute)
+  function applyAgentFilter() {
+    var active = document.querySelector('.agent-tab.active');
+    var key = active ? active.dataset.tab : 'all';
+    var items = document.querySelectorAll('.session-item');
+    var shown = 0;
+    items.forEach(function(it) {
+      var ag = it.dataset.agent || 'claude-code';
+      var match = (key === 'all') || (ag === key);
+      it.style.display = match ? '' : 'none';
+      if (match) shown++;
+    });
+    var emptyMsg = document.getElementById('sessionsEmpty');
+    var scroll = document.querySelector('#sessionsContent .session-scroll');
+    if (shown === 0 && scroll && !emptyMsg) {
+      var div = document.createElement('div');
+      div.id = 'sessionsEmpty';
+      div.className = 'empty-state';
+      div.textContent = 'No sessions for this agent';
+      scroll.appendChild(div);
+    } else if (shown > 0 && emptyMsg) {
+      emptyMsg.remove();
+    }
+  }
+
+  // Restore agent filter on load + after each re-render
+  try {
+    var savedAg = sessionStorage.getItem('agentFilter');
+    if (savedAg) {
+      var savedTab = document.querySelector('.agent-tab[data-tab="' + savedAg + '"]');
+      if (savedTab) {
+        document.querySelectorAll('.agent-tab').forEach(function(t) { t.classList.remove('active'); });
+        savedTab.classList.add('active');
+        applyAgentFilter();
+      }
+    }
+  } catch(e) {}
+
+  // Restore saved pairing method
+  try {
+    var saved = sessionStorage.getItem('pairingMethod');
+    if (saved) {
+      var savedOpt = document.querySelector('.method-option[data-method="' + saved + '"]');
+      if (savedOpt) {
+        document.querySelectorAll('.method-option').forEach(function(o) { o.classList.remove('active'); });
+        savedOpt.classList.add('active');
+      }
+    }
+  } catch(e) {}
+
+  // Countdown timer (local, based on data-expires timestamp)
+  var countdownTimer = setInterval(function() {
+    var el = document.getElementById('codeDigits');
+    if (!el) return;
+    var expiresAt = parseInt(el.dataset.expires || '0');
+    if (!expiresAt) {
+      var cd = document.getElementById('countdown');
+      if (cd) cd.textContent = '5:00';
+      return;
+    }
+    var remaining = Math.max(0, Math.floor((expiresAt - Date.now()) / 1000));
+    var m = Math.floor(remaining / 60);
+    var s = remaining % 60;
+    var cd = document.getElementById('countdown');
+    if (cd) {
+      cd.textContent = m + ':' + String(s).padStart(2, '0');
+      cd.parentElement.className = 'code-timer' + (remaining <= 60 ? ' urgent' : '');
+    }
+  }, 1000);
+
+  document.addEventListener('click', function(e) {
+    var target = e.target instanceof HTMLElement ? e.target.closest('[data-action]') : null;
     if (!target) return;
     var action = target.dataset.action;
 
     if (action === 'togglePreview') {
       var sid = target.dataset.sessionId;
-      var container = document.getElementById('preview-' + sid);
-      if (!container) return;
+      var el = document.getElementById('preview-' + sid);
+      if (!el) return;
       var item = target.closest('.session-item');
-      var chevron = target.querySelector('.chevron');
-      if (!chevron) chevron = item?.querySelector('.chevron');
-      if (container.style.display === 'block') {
-        // Collapse
-        container.style.display = 'none';
+      var chevron = item ? item.querySelector('.chevron') : null;
+      if (el.style.display === 'block') {
+        el.style.display = 'none';
         if (chevron) chevron.textContent = '▶';
       } else {
-        // Expand: show loading, request data
-        container.innerHTML = '<div class="preview-empty">Loading...</div>';
-        container.style.display = 'block';
+        el.innerHTML = '<div class="preview-empty">Loading...</div>';
+        el.style.display = 'block';
         if (chevron) chevron.textContent = '▼';
         api.postMessage({ action: 'getSessionPreview', sessionId: sid });
       }
@@ -304,15 +659,14 @@ ${renderSubscribe()}
 
     if (action === 'toggleAttachClaudeSession') {
       api.postMessage({
-        action,
+        action: action,
         sessionId: target.dataset.sessionId,
         attached: target.dataset.attached === 'true',
       });
-    } else if (action === 'attachClaudeSession' || action === 'detachSession') {
-      api.postMessage({ action, sessionId: target.dataset.sessionId });
-    } else {
-      api.postMessage({ action });
+      return;
     }
+
+    api.postMessage({ action: action });
   });
 })();
 </script>
@@ -321,87 +675,380 @@ ${renderSubscribe()}
 }
 
 const STYLES = `
-body {
-  margin: 0; padding: 0;
-  font-family: var(--vscode-font-family);
-  font-size: var(--vscode-font-size);
-  color: var(--vscode-editor-foreground);
-  background: var(--vscode-sideBar-background);
+/* ═══════════════════════════════════════════════
+   RESET & VARIABLES
+   ═══════════════════════════════════════════════ */
+*,*::before,*::after{margin:0;padding:0;box-sizing:border-box}
+body{
+  background:var(--vscode-sideBar-background,#0f0f18);
+  color:var(--vscode-editor-foreground,#e8e8f0);
+  font-family:var(--vscode-font-family,system-ui,-apple-system,sans-serif);
+  font-size:13px;
+  line-height:1.5;
+  padding:0;
+  overflow-x:hidden;
 }
-.section {
-  padding: 10px 12px;
-  border-bottom: 1px solid var(--vscode-panel-border);
+
+/* ═══════════════════════════════════════════════
+   BRAND
+   ═══════════════════════════════════════════════ */
+.brand{
+  text-align:center;padding:20px 16px 16px;
+  position:relative;
 }
-.section-title {
-  display: flex; align-items: center; justify-content: space-between;
-  font-weight: 600; font-size: 11px; text-transform: uppercase;
-  letter-spacing: 0.04em; margin-bottom: 8px;
+.brand::after{
+  content:'';position:absolute;bottom:0;left:50%;transform:translateX(-50%);
+  width:40px;height:1px;
+  background:linear-gradient(90deg,transparent,var(--vscode-textLink-foreground,#00ffe0),transparent);
 }
-.row {
-  display: flex; align-items: center; justify-content: space-between;
-  gap: 8px; margin: 4px 0;
+.brand-icon{
+  display:inline-flex;align-items:center;justify-content:center;
+  width:36px;height:36px;margin-bottom:8px;
+  background:var(--vscode-sideBar-background,#181824);
+  border:1px solid var(--vscode-panel-border,#1e1e2e);
+  border-radius:10px;position:relative;
 }
-.muted { color: var(--vscode-descriptionForeground); }
-.tag {
-  padding: 1px 8px; border-radius: 999px;
-  background: var(--vscode-badge-background);
-  color: var(--vscode-badge-foreground);
-  font-size: 10px; font-weight: 500; white-space: nowrap;
+.brand-icon svg{width:20px;height:20px;color:var(--vscode-textLink-foreground,#00ffe0)}
+.brand-glow{
+  position:absolute;inset:-2px;border-radius:12px;
+  background:linear-gradient(135deg,var(--vscode-textLink-foreground,#00ffe0),var(--vscode-textLink-foreground,#7c5cfc));
+  opacity:.06;z-index:-1;
 }
-.tag.green { background: #173b27; color: #8fe0a5; }
-.tag.yellow { background: #4b4a1b; color: #ffea8a; }
-.tag.orange { background: #4b341b; color: #ffd18a; }
-.tag.red { background: #552424; color: #ffaaa8; }
-.btn {
-  border: 1px solid var(--vscode-button-secondaryBorder, #444);
-  background: var(--vscode-button-secondaryBackground, #333);
-  color: var(--vscode-button-secondaryForeground, #ddd);
-  padding: 4px 8px; border-radius: 4px;
-  text-align: center; font-size: 11px; cursor: pointer;
+.brand-name{
+  font-family:Georgia,'Times New Roman',serif;
+  font-weight:800;font-size:20px;
+  letter-spacing:-.01em;
+  color:var(--vscode-editor-foreground);
 }
-.btn:hover { background: var(--vscode-button-secondaryHoverBackground, #444); }
-.btn-primary {
-  background: var(--vscode-button-background);
-  color: var(--vscode-button-foreground);
-  border-color: var(--vscode-button-background);
+.brand-em{
+  font-style:italic;font-weight:500;
+  color:var(--vscode-textLink-foreground,#00ffe0);
 }
-.button-row { display: flex; gap: 6px; margin-top: 8px; }
-.agent { padding: 8px 0; border-bottom: 1px solid var(--vscode-panel-border); }
-.agent:last-child { border-bottom: none; }
-.agent-name { font-weight: 500; }
-.status-line { font-size: 11px; color: var(--vscode-textLink-foreground); margin-top: 2px; }
-.last-msg { font-size: 11px; margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.item { padding: 6px 0; border-bottom: 1px solid var(--vscode-panel-border); }
-.item:last-child { border-bottom: none; }
-.item.danger { border-left: 3px solid #e5534b; padding-left: 8px; }
-.cmd { font-family: monospace; font-size: 11px; word-break: break-all; margin-bottom: 4px; }
-.subscription { font-size: 11px; color: var(--vscode-descriptionForeground); text-align: center; padding: 4px 0; }
-.ico-btn { background:none; border:none; color:var(--vscode-textLink-foreground); cursor:pointer; font-size:14px; padding:2px 4px; line-height:1; }
-.ico-btn:hover { opacity:0.8; }
-.session-group { margin-bottom:4px; }
-.btn-attached {
-  background: var(--vscode-button-background);
-  color: var(--vscode-button-foreground);
-  border-color: var(--vscode-button-background);
+.brand-sub{
+  font-size:10px;color:var(--vscode-descriptionForeground,#50506e);
+  letter-spacing:.15em;text-transform:uppercase;
+  margin-top:1px;
 }
-.brand-header { padding: 16px 12px 8px; text-align: center; border-bottom: 1px solid var(--vscode-panel-border); }
-.brand-title { font-size: 18px; font-weight: 700; letter-spacing: 0.02em; }
-.brand-subtitle { font-size: 11px; color: var(--vscode-descriptionForeground); margin-top: 2px; }
-.session-title-row { display: flex; align-items: center; gap: 4px; }
-.session-title { font-weight:500; font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex:1; }
-.session-title-row:hover .session-title { color: var(--vscode-textLink-foreground); }
-.chevron { font-size: 9px; color: var(--vscode-descriptionForeground); flex-shrink:0; width: 12px; text-align: center; }
-.session-title-row:hover .chevron { color: var(--vscode-textLink-foreground); }
-.session-scroll { max-height: 380px; overflow-y: auto; overflow-x: hidden; }
-.session-scroll::-webkit-scrollbar { width: 5px; }
-.session-scroll::-webkit-scrollbar-thumb { background: var(--vscode-scrollbarSlider-background); border-radius: 3px; }
-.session-scroll::-webkit-scrollbar-thumb:hover { background: var(--vscode-scrollbarSlider-hoverBackground); }
-.preview { padding: 6px 0 2px 16px; border-top: none; }
-.preview-empty { font-size: 11px; color: var(--vscode-descriptionForeground); padding: 8px 0; text-align: center; }
-.pv-msg { margin-bottom: 8px; }
-.pv-label { font-size: 10px; font-weight: 600; margin-bottom: 2px; color: var(--vscode-descriptionForeground); }
-.pv-time { font-size: 9px; font-weight: 400; color: var(--vscode-descriptionForeground); }
-.pv-bubble { padding: 6px 10px; border-radius: 6px; font-size: 11px; line-height: 1.4; white-space: pre-wrap; word-wrap: break-word; }
-.pv-bubble-left { background: var(--vscode-textCodeBlock-background); }
-.pv-bubble-right { background: var(--vscode-button-background); color: var(--vscode-button-foreground); }
+
+/* ═══════════════════════════════════════════════
+   CARD
+   ═══════════════════════════════════════════════ */
+.card{
+  background:var(--vscode-sideBar-background,#12121e);
+  border:1px solid var(--vscode-panel-border,#1e1e2e);
+  border-radius:12px;
+  margin:0 10px 2px;
+  padding:12px 12px 10px;
+  transition:border-color .2s;
+}
+.card + .card{margin-top:2px}
+.card-header{
+  display:flex;align-items:center;justify-content:space-between;
+  margin-bottom:10px;padding-bottom:6px;
+  border-bottom:1px solid var(--vscode-panel-border,#1e1e2e);
+  position:relative;
+}
+.card-header::after{
+  content:'';position:absolute;bottom:-1px;left:0;
+  width:20px;height:1px;
+  background:var(--vscode-textLink-foreground,#00ffe0);opacity:.5;
+}
+.card-label{
+  font-size:9px;font-weight:600;text-transform:uppercase;
+  letter-spacing:.1em;color:var(--vscode-descriptionForeground,#50506e);
+  display:flex;align-items:center;gap:5px;
+}
+.card-label svg{width:11px;height:11px}
+
+/* ═══════════════════════════════════════════════
+   STATUS DOT
+   ═══════════════════════════════════════════════ */
+.dot{
+  display:inline-block;width:6px;height:6px;border-radius:50%;
+  margin-right:3px;vertical-align:middle;
+  position:relative;flex-shrink:0;
+}
+.dot.green{background:#2ecc71;box-shadow:0 0 6px rgba(46,204,113,.4)}
+.dot.orange{background:#f5a623;box-shadow:0 0 6px rgba(245,166,35,.4)}
+.dot.red{background:#f74d4d;box-shadow:0 0 6px rgba(247,77,77,.4)}
+.dot.gray{background:#50506e;box-shadow:none}
+.dot.white{background:#f0f0f5;box-shadow:0 0 6px rgba(240,240,245,.35)}
+.dot.purple{background:#9d6cff;box-shadow:0 0 6px rgba(157,108,255,.4)}
+.dot.pulse::after{
+  content:'';position:absolute;inset:0;border-radius:50%;
+  animation:pulse-dot 2s ease-in-out infinite;
+}
+@keyframes pulse-dot{
+  0%,100%{transform:scale(1);opacity:.6}
+  50%{transform:scale(2);opacity:0}
+}
+
+/* ═══════════════════════════════════════════════
+   TAG / BADGE
+   ═══════════════════════════════════════════════ */
+.tag{
+  display:inline-flex;align-items:center;gap:3px;
+  padding:1px 7px;border-radius:99px;font-size:9px;font-weight:500;
+  background:var(--vscode-badge-background,#181824);
+  color:var(--vscode-badge-foreground,#8888a8);
+  white-space:nowrap;
+}
+.tag.green{background:rgba(46,204,113,.12);color:#2ecc71}
+.tag.orange{background:rgba(245,166,35,.12);color:#f5a623}
+.tag.red{background:rgba(247,77,77,.12);color:#f74d4d}
+.tag.cyan{background:rgba(0,255,224,.1);color:#00ffe0}
+.badge{
+  display:inline-flex;align-items:center;
+  font-size:9px;font-weight:500;
+  padding:0 6px;border-radius:99px;height:16px;
+  background:var(--vscode-badge-background,#181824);
+  color:var(--vscode-badge-foreground,#8888a8);
+}
+.badge.green{background:rgba(46,204,113,.12);color:#2ecc71}
+.badge.orange{background:rgba(245,166,35,.12);color:#f5a623}
+
+/* ═══════════════════════════════════════════════
+   ROW
+   ═══════════════════════════════════════════════ */
+.row{
+  display:flex;align-items:center;justify-content:space-between;
+  padding:4px 0;gap:8px;
+}
+.row + .row{border-top:1px solid rgba(255,255,255,.03)}
+.row-label{font-size:11px;color:var(--vscode-descriptionForeground,#50506e);flex-shrink:0}
+.row-val{font-size:11px;color:var(--vscode-editor-foreground,#8888a8);display:flex;align-items:center}
+
+/* ═══════════════════════════════════════════════
+   BUTTONS
+   ═══════════════════════════════════════════════ */
+.btn{
+  display:inline-flex;align-items:center;justify-content:center;gap:4px;
+  padding:5px 12px;border-radius:5px;
+  font-family:var(--vscode-font-family,system-ui);font-size:11px;font-weight:500;
+  border:1px solid var(--vscode-panel-border,#1e1e2e);
+  background:var(--vscode-button-secondaryBackground,#181824);
+  color:var(--vscode-button-secondaryForeground,#8888a8);
+  cursor:pointer;transition:all .2s;
+  white-space:nowrap;
+}
+.btn:hover{
+  background:var(--vscode-panel-border,#1e1e2e);
+  color:var(--vscode-editor-foreground,#e8e8f0);
+  border-color:var(--vscode-descriptionForeground,#50506e);
+}
+.btn:active{transform:scale(.97)}
+.btn-primary{
+  background:rgba(0,255,224,.08);border-color:rgba(0,255,224,.2);
+  color:var(--vscode-textLink-foreground,#00ffe0);
+}
+.btn-primary:hover{background:rgba(0,255,224,.15);border-color:#00ffe0}
+.btn-danger{
+  background:rgba(247,77,77,.08);border-color:rgba(247,77,77,.2);
+  color:#f74d4d;
+}
+.btn-danger:hover{background:rgba(247,77,77,.15);border-color:#f74d4d}
+.btn-ghost{background:transparent;border-color:transparent;color:var(--vscode-descriptionForeground,#50506e)}
+.btn-ghost:hover{background:var(--vscode-button-secondaryBackground,#181824);color:var(--vscode-descriptionForeground,#50506e);border-color:transparent}
+.btn-sm{font-size:10px;padding:4px 8px}
+.btn-group{display:flex;gap:6px;margin-top:8px;flex-wrap:wrap}
+
+/* ═══════════════════════════════════════════════
+   AGENTS
+   ═══════════════════════════════════════════════ */
+.agent-item{
+  padding:6px 0;border-bottom:1px solid rgba(255,255,255,.03);
+}
+.agent-item:last-child{border-bottom:none;padding-bottom:0}
+.agent-item:first-child{padding-top:0}
+.agent-title-row{display:flex;align-items:center;gap:6px}
+.agent-name{font-size:12px;font-weight:500;color:var(--vscode-editor-foreground);flex:1}
+.agent-desc{font-size:10px;color:var(--vscode-descriptionForeground,#50506e);margin-top:1px}
+.agent-status{font-size:10px;color:var(--vscode-textLink-foreground,#8888a8);margin-top:2px}
+.agent-last{
+  font-size:10px;color:var(--vscode-descriptionForeground,#50506e);margin-top:2px;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+}
+
+/* ═══════════════════════════════════════════════
+   APPROVALS
+   ═══════════════════════════════════════════════ */
+.approval-session{margin-bottom:6px}
+.approval-session:last-child{margin-bottom:0}
+.approval-header{display:flex;align-items:center;gap:6px;padding:3px 0;font-size:11px}
+.approval-agent{color:var(--vscode-editor-foreground);font-weight:500}
+.approval-item{
+  display:flex;align-items:center;gap:6px;
+  padding:4px 8px;margin-left:4px;
+  border-left:2px solid #f5a623;
+  font-size:11px;font-family:var(--vscode-editor-font-family,monospace);
+  color:var(--vscode-descriptionForeground,#8888a8);
+  overflow:hidden;
+}
+.approval-cmd{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}
+.risk{
+  font-size:8px;padding:0 5px;border-radius:99px;
+  font-family:var(--vscode-font-family,system-ui);font-weight:500;flex-shrink:0;
+}
+.risk-high{background:rgba(247,77,77,.1);color:#f74d4d}
+.risk-medium{background:rgba(245,166,35,.1);color:#f5a623}
+.risk-low{background:rgba(46,204,113,.08);color:#2ecc71}
+
+/* ═══════════════════════════════════════════════
+   SESSIONS
+   ═══════════════════════════════════════════════ */
+.session-scroll{max-height:340px;overflow-y:auto;overflow-x:hidden}
+.session-scroll::-webkit-scrollbar{width:4px}
+.session-scroll::-webkit-scrollbar-thumb{background:var(--vscode-panel-border,#1e1e2e);border-radius:4px}
+.session-item{padding:6px 0;border-bottom:1px solid rgba(255,255,255,.03)}
+.session-item:last-child{border-bottom:none}
+.session-item:hover .session-title{color:var(--vscode-textLink-foreground,#00ffe0)}
+.session-title-row{display:flex;align-items:center;gap:6px}
+.session-title-click{display:flex;align-items:center;gap:6px;cursor:pointer;flex:1;min-width:0;overflow:hidden}
+.chevron{font-size:8px;color:var(--vscode-descriptionForeground,#50506e);flex-shrink:0;width:12px;text-align:center;transition:transform .2s}
+.chevron.open{transform:rotate(90deg)}
+.session-title{
+  font-size:11px;font-weight:500;color:var(--vscode-editor-foreground);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;
+  transition:color .2s;
+}
+.session-title-row .btn{flex-shrink:0}
+.btn-attached{
+  background:rgba(46,204,113,.12);border-color:rgba(46,204,113,.3);color:#2ecc71;
+}
+.btn-attached:hover{background:rgba(46,204,113,.2);border-color:#2ecc71}
+.session-meta{
+  display:flex;align-items:center;justify-content:space-between;
+  margin-top:2px;padding-left:18px;
+}
+.session-cwd{font-size:9px;color:var(--vscode-descriptionForeground,#50506e);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}
+.session-ts{font-size:9px;color:var(--vscode-descriptionForeground,#50506e);flex-shrink:0}
+
+/* ═══════════════════════════════════════════════
+   PREVIEW
+   ═══════════════════════════════════════════════ */
+.preview{padding:6px 0 2px 18px;display:none}
+.preview-empty{font-size:10px;color:var(--vscode-descriptionForeground,#50506e);text-align:center;padding:8px 0}
+.pv-msg{margin-bottom:6px}
+.pv-label{font-size:9px;font-weight:600;color:var(--vscode-descriptionForeground,#50506e);margin-bottom:1px}
+.pv-bubble{padding:5px 8px;border-radius:5px;font-size:10px;line-height:1.4;white-space:pre-wrap;word-break:break-word}
+.pv-bubble-left{background:var(--vscode-textBlockQuote-background,#181824);color:var(--vscode-descriptionForeground,#8888a8)}
+.pv-bubble-right{background:rgba(0,255,224,.08);color:var(--vscode-textLink-foreground,#00ffe0)}
+
+/* ═══════════════════════════════════════════════
+   MISC
+   ═══════════════════════════════════════════════ */
+.empty-state{font-size:11px;color:var(--vscode-descriptionForeground,#50506e);text-align:center;padding:8px 0}
+.footer{text-align:center;padding:12px 0 8px;font-size:9px;color:var(--vscode-descriptionForeground,#50506e);letter-spacing:.04em}
+
+/* ═══════════════════════════════════════════════
+   PAIRING CARD
+   ═══════════════════════════════════════════════ */
+.pairing-card{
+  border-color:rgba(0,255,224,.12);
+  background:linear-gradient(135deg,rgba(0,255,224,.02),transparent 60%);
+}
+.pairing-methods{display:flex;flex-direction:column;gap:8px}
+.method-option{
+  background:var(--vscode-sideBar-background,#0f0f18);
+  border:1px solid var(--vscode-panel-border,#1e1e2e);
+  border-radius:8px;overflow:hidden;
+  transition:border-color .2s;
+}
+.method-option.active{border-color:rgba(0,255,224,.2)}
+.method-header{
+  display:flex;align-items:center;gap:8px;padding:8px 10px;
+  cursor:pointer;user-select:none;
+}
+.method-radio{
+  width:14px;height:14px;border-radius:50%;
+  border:2px solid var(--vscode-descriptionForeground,#50506e);
+  display:flex;align-items:center;justify-content:center;
+  flex-shrink:0;transition:all .2s;
+}
+.method-option.active .method-radio{
+  border-color:var(--vscode-textLink-foreground,#00ffe0);
+}
+.method-option.active .method-radio::after{
+  content:'';width:7px;height:7px;border-radius:50%;
+  background:var(--vscode-textLink-foreground,#00ffe0);
+}
+.method-label{font-size:12px;font-weight:500;color:var(--vscode-editor-foreground);flex:1}
+.method-hint{font-size:10px;color:var(--vscode-descriptionForeground,#50506e)}
+.method-body{max-height:0;overflow:hidden;padding:0 10px;transition:max-height .3s ease,padding .3s ease}
+.method-option.active .method-body{max-height:300px;padding:0 10px 12px}
+.code-display-wrap{text-align:center;padding:8px 0 4px}
+.code-digits{
+  font-family:Georgia,'Times New Roman',serif;font-weight:800;
+  font-size:32px;letter-spacing:.15em;
+  color:var(--vscode-textLink-foreground,#00ffe0);
+  text-shadow:0 0 30px rgba(0,255,224,.12);
+  line-height:1.1;
+}
+@keyframes codePop{0%{transform:scale(.8);opacity:0}50%{transform:scale(1.05)}100%{transform:scale(1);opacity:1}}
+.code-digits.pop{animation:codePop .3s cubic-bezier(.4,0,.2,1)}
+.code-timer{font-size:11px;color:var(--vscode-descriptionForeground,#50506e);margin-top:4px;font-variant-numeric:tabular-nums}
+.code-timer .urgent{color:var(--accent-red,#f74d4d)}
+.code-actions{display:flex;align-items:center;justify-content:center;gap:8px;margin-top:8px}
+.code-actions .btn svg{width:11px;height:11px}
+.pairing-status{font-size:10px;margin-top:4px;min-height:16px;color:var(--vscode-descriptionForeground,#50506e);text-align:center}
+.pairing-status.success{color:#2ecc71}
+.pairing-status.error{color:#f74d4d}
+.pairing-status.waiting{color:var(--vscode-textLink-foreground,#8888a8)}
+.qr-layout{display:flex;gap:12px;align-items:flex-start;margin-top:2px}
+.qr-visual{flex-shrink:0;background:var(--vscode-sideBar-background,#07070c);border-radius:6px;border:1px solid var(--vscode-panel-border,#1e1e2e);padding:6px}
+.qr-visual svg{width:90px;height:90px;display:block}
+.qr-side{flex:1;display:flex;flex-direction:column;gap:6px}
+.qr-side .hint{font-size:10px;color:var(--vscode-descriptionForeground,#50506e);line-height:1.4}
+.qr-side .hint strong{color:var(--vscode-editor-foreground)}
+.qr-bottom{display:flex;align-items:center}
+.qr-status{font-size:10px;color:var(--vscode-descriptionForeground,#50506e);min-height:16px}
+.qr-status.success{color:#2ecc71}
+
+/* paired-compact: shown when device is already paired */
+.paired-compact{padding:2px 0}
+.paired-row{display:flex;align-items:center;gap:10px}
+.paired-icon{
+  width:24px;height:24px;border-radius:50%;
+  display:flex;align-items:center;justify-content:center;
+  background:rgba(46,204,113,.12);color:#2ecc71;flex-shrink:0;
+}
+.paired-text{flex:1;min-width:0}
+.paired-title{font-size:12px;font-weight:500;color:var(--vscode-editor-foreground)}
+.paired-sub{font-size:10px;color:var(--vscode-descriptionForeground,#50506e);margin-top:1px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+/* ═══════════════════════════════════════════════
+   AGENT TABS
+   ═══════════════════════════════════════════════ */
+.agent-tabs{
+  display:flex;gap:4px;margin-bottom:6px;
+  padding-bottom:6px;border-bottom:1px solid var(--vscode-panel-border,#1e1e2e);
+  overflow-x:auto;
+}
+.agent-tabs::-webkit-scrollbar{height:2px}
+.agent-tabs::-webkit-scrollbar-thumb{background:var(--vscode-panel-border,#1e1e2e);border-radius:2px}
+.agent-tab{
+  padding:3px 10px;border-radius:99px;
+  font-size:10px;font-weight:500;
+  background:var(--vscode-button-secondaryBackground,#181824);
+  color:var(--vscode-descriptionForeground,#50506e);
+  cursor:pointer;white-space:nowrap;
+  border:1px solid transparent;
+  transition:all .2s;user-select:none;
+}
+.agent-tab:hover{color:var(--vscode-editor-foreground);border-color:var(--vscode-panel-border,#1e1e2e)}
+.agent-tab.active{
+  background:rgba(0,255,224,.08);color:var(--vscode-textLink-foreground,#00ffe0);
+  border-color:rgba(0,255,224,.15);
+}
+
+/* ═══════════════════════════════════════════════
+   ANIMATIONS
+   ═══════════════════════════════════════════════ */
+@keyframes fadeIn{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:translateY(0)}}
+.card{animation:fadeIn .4s cubic-bezier(.4,0,.2,1) both}
+.card:nth-child(2){animation-delay:.05s}
+.card:nth-child(3){animation-delay:.1s}
+.card:nth-child(4){animation-delay:.15s}
+.card:nth-child(5){animation-delay:.2s}
+.card:nth-child(6){animation-delay:.25s}
 `;

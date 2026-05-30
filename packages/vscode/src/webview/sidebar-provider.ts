@@ -1,39 +1,102 @@
 import * as vscode from 'vscode';
 import * as path from 'node:path';
+import * as crypto from 'node:crypto';
+import * as os from 'node:os';
 import { loadCredentials } from '../auth/credentials.js';
 import { createApi, ApiError, type SessionResponse } from '../api/client.js';
 import { getAgents } from '../agents/registry.js';
 import { BridgeStatusService } from '../services/bridge-status.js';
 import { SessionStore } from '../services/session-store.js';
 
-import { renderSidebar, type SidebarState } from './sidebar-html.js';
+import {
+  renderSidebar,
+  renderDeviceContent,
+  renderPairingContent,
+  renderAgentsContent,
+  renderApprovalsContent,
+  renderSessionsContent,
+  type SidebarState,
+  type PairingState,
+} from './sidebar-html.js';
 import { loadConversation } from '../../../shared/src/bridge/claude-transcripts.js';
 import { log } from '../log.js';
 
 const POLL_MS = 5000;
+const APPROVAL_POLL_MS = 1000;
+
+interface BridgePendingApproval {
+  id: string;
+  serverSessionId: string;
+  claudeSessionId: string;
+  command: string;
+  summary: string;
+  toolName: string;
+  risk: 'low' | 'medium' | 'high' | 'critical';
+  createdAt: number;
+}
 
 export class SidebarProvider implements vscode.WebviewViewProvider {
   static readonly viewType = 'codekey.sidebar';
 
   private _view?: vscode.WebviewView;
   private _pollTimer?: ReturnType<typeof setInterval>;
+  private _approvalPollTimer?: ReturnType<typeof setInterval>;
   private _bridgeService = BridgeStatusService.getInstance();
   private _bridgeDisposable?: vscode.Disposable;
   private _hadCcRunning = false;
+  private _pairingState: PairingState | undefined = undefined;
+  private _firstPush = true;
+  private _bridgeApprovals: BridgePendingApproval[] = [];
+  private _bridgeSupportsPendingApprovals = false;
+  private _lastApprovalSig = '';
 
   constructor(private _context: vscode.ExtensionContext) {}
 
   resolveWebviewView(webviewView: vscode.WebviewView): void {
+    log('SidebarProvider.resolveWebviewView called');
     this._view = webviewView;
+    this._firstPush = true;
 
     webviewView.webview.options = { enableScripts: true };
+    // Immediate placeholder so the user never sees a blank panel
+    webviewView.webview.html = '<!DOCTYPE html><html><body style="background:#0f0f18;color:#e8e8f0;padding:20px;font-family:sans-serif;font-size:13px">Loading CodeKey...</body></html>';
     webviewView.webview.onDidReceiveMessage((msg) => this._onMessage(msg));
 
     this._bridgeDisposable = this._bridgeService.onDidChange(() => this._pushState());
 
     this._bridgeService.ensureStarted();
-    this._pushState();
+    this._pushState().catch(err => log(`_pushState (initial) failed: ${err?.stack || err}`));
     this._startPolling();
+    this._startApprovalPolling();
+  }
+
+  /** Fast (1s) poll of bridge's in-memory pending approvals.
+   *  Avoids the 5s relay round-trip — approvals appear in sidebar within ~1s
+   *  of the CC permission dialog instead of 0–5s. */
+  private async _pollBridgeApprovals(): Promise<void> {
+    if (!this._view) return;
+    try {
+      const resp = await fetch(`${this._bridgeService.getBridgeUrl()}/v1/pending-approvals`);
+      if (!resp.ok) {
+        // Endpoint missing → old bridge. Stop polling, fall back to relay path.
+        if (resp.status === 404) {
+          this._bridgeSupportsPendingApprovals = false;
+          this._stopApprovalPolling();
+        }
+        return;
+      }
+      this._bridgeSupportsPendingApprovals = true;
+      const body = await resp.json() as { approvals?: BridgePendingApproval[] };
+      const next = body.approvals ?? [];
+      // Cheap dedup: only push state when the set of ids actually changes
+      const sig = next.map(a => a.id).sort().join('|');
+      if (sig === this._lastApprovalSig) return;
+      this._lastApprovalSig = sig;
+      this._bridgeApprovals = next;
+      this._pushState().catch(err => log(`_pushState (approval-driven) failed: ${err?.stack || err}`));
+    } catch {
+      // bridge unreachable, leave previous state
+    }
   }
 
   /** Fetch active claudeSessionIds from bridge (sessions with CC tabs). */
@@ -170,6 +233,19 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
 
   private async _pushState(): Promise<void> {
     if (!this._view) return;
+    try {
+      await this._pushStateInner();
+    } catch (err: any) {
+      log(`_pushState failed: ${err?.stack || err}`);
+      if (this._view && this._firstPush) {
+        this._view.webview.html = `<!DOCTYPE html><html><body style="background:#0f0f18;color:#e8e8f0;padding:20px;font-family:sans-serif;font-size:12px"><h3 style="color:#f74d4d">CodeKey error</h3><pre style="white-space:pre-wrap;word-break:break-word;font-size:11px">${String(err?.stack || err).replace(/&/g,'&amp;').replace(/</g,'&lt;')}</pre></body></html>`;
+        this._firstPush = false;
+      }
+    }
+  }
+
+  private async _pushStateInner(): Promise<void> {
+    if (!this._view) return;
 
     const creds = loadCredentials();
     const bridge = this._bridgeService.state;
@@ -196,31 +272,54 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       }
     }
 
-    // Extract pending approvals (per-session for grouped display)
-    const STALE_APPROVAL_MS = 5 * 60_000; // skip approvals older than 5min
-    for (const [sid, evts] of Object.entries(events)) {
-      const session = sessions.find(s => s.id === sid);
-      for (const e of evts) {
-        if (e.pending && e.type === 'approval_required') {
-          // Skip stale pending events that should have been expired by the relay cleanup
-          const age = Date.now() - new Date(e.created_at).getTime();
-          if (age > STALE_APPROVAL_MS) continue;
-          pendingApprovals.push({
-            id: e.id,
-            command: e.data?.command ?? e.data?.summary ?? '(unknown)',
-            agent: session?.agent_type ?? 'unknown',
-            risk: e.risk_level ?? 'medium',
-            serverSessionId: sid,
-          });
+    // Pending approvals: prefer bridge's in-memory list (real-time, ~1s lag),
+    // fall back to relay events scrape for older bridges that lack the endpoint.
+    if (this._bridgeSupportsPendingApprovals) {
+      for (const a of this._bridgeApprovals) {
+        const session = sessions.find(s => s.id === a.serverSessionId);
+        pendingApprovals.push({
+          id: a.id,
+          command: a.command || a.summary || a.toolName || '(unknown)',
+          agent: session?.agent_type ?? 'claude-code-hook',
+          risk: a.risk,
+          serverSessionId: a.serverSessionId,
+        });
+      }
+    } else {
+      const STALE_APPROVAL_MS = 5 * 60_000;
+      for (const [sid, evts] of Object.entries(events)) {
+        const session = sessions.find(s => s.id === sid);
+        for (const e of evts) {
+          if (e.pending && e.type === 'approval_required') {
+            const age = Date.now() - new Date(e.created_at).getTime();
+            if (age > STALE_APPROVAL_MS) continue;
+            pendingApprovals.push({
+              id: e.id,
+              command: e.data?.command ?? e.data?.summary ?? '(unknown)',
+              agent: session?.agent_type ?? 'unknown',
+              risk: e.risk_level ?? 'medium',
+              serverSessionId: sid,
+            });
+          }
         }
       }
     }
+
+    // Local-running probes (currently only Claude Code has a local-presence signal)
+    const ccLocallyRunning = this._checkCcRunning();
 
     // Determine runtime agent status
     const agents = getAgents().map(a => {
       if (a.status !== 'available') return { ...a, runtimeStatus: 'unavailable' as const };
       const agentSessions = sessions.filter(s => a.sessionAgentTypes.includes(s.agent_type));
-      if (agentSessions.length === 0) return { ...a, runtimeStatus: 'idle' as const };
+      if (agentSessions.length === 0) {
+        // No relay session — but for Claude Code, count it active if a local
+        // terminal / official extension panel is open.
+        if (a.id === 'claude-code' && ccLocallyRunning) {
+          return { ...a, runtimeStatus: 'active' as const, statusLine: 'Running locally' };
+        }
+        return { ...a, runtimeStatus: 'idle' as const };
+      }
 
       // Collect all events, sort newest first, skip resolved and stale approvals
       const allEvts = agentSessions.flatMap(s => (events[s.id] || []))
@@ -297,7 +396,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
 
     // Auto-detach: if user closed all CC terminals (transition from open→closed),
     // clean up attached sessions so they don't linger in the list.
-    const hasCcRunning = this._checkCcRunning();
+    const hasCcRunning = ccLocallyRunning;
     if (this._hadCcRunning && !hasCcRunning && storedSessions.length > 0) {
       for (const s of storedSessions) {
         this._autoDetachSession(s.claudeSessionId);
@@ -341,9 +440,32 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       sessions,
       events,
       claudeSessions: mergedClaudeSessions,
+      relayUrl: creds?.relayUrl,
+      deviceSecret: creds?.deviceSecret,
+      pairing: this._pairingState,
     };
 
-    this._view.webview.html = renderSidebar(state);
+    if (this._firstPush) {
+      this._view.webview.html = renderSidebar(state);
+      this._firstPush = false;
+    } else {
+    this._view.webview.postMessage({
+      type: 'stateUpdate',
+      deviceHtml: renderDeviceContent(state),
+      pairingHtml: renderPairingContent(state),
+      agentsHtml: renderAgentsContent(state),
+      approvalsHtml: renderApprovalsContent(state),
+      sessionsHtml: renderSessionsContent(state),
+      deviceStatus,
+      paired: deviceStatus === 'paired',
+      agentCount: state.agents.filter(a => a.runtimeStatus === 'active').length,
+      approvalCount: state.pendingApprovals.length,
+      relayUrl: state.relayUrl,
+      deviceId: state.deviceId,
+      deviceSecret: state.deviceSecret,
+      pairingStatus: state.pairing?.status || 'idle',
+    });
+  }
   }
 
   private _startPolling(): void {
@@ -355,6 +477,18 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     if (this._pollTimer) {
       clearInterval(this._pollTimer);
       this._pollTimer = undefined;
+    }
+  }
+
+  private _startApprovalPolling(): void {
+    this._stopApprovalPolling();
+    this._approvalPollTimer = setInterval(() => this._pollBridgeApprovals(), APPROVAL_POLL_MS);
+  }
+
+  private _stopApprovalPolling(): void {
+    if (this._approvalPollTimer) {
+      clearInterval(this._approvalPollTimer);
+      this._approvalPollTimer = undefined;
     }
   }
 
@@ -416,20 +550,86 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
           this._pushState();
         });
         break;
+      case 'regeneratePairingCode':
+        this._handlePairingGenerate();
+        break;
+      case 'pairedDevice':
+        this._handlePairingComplete(msg.token);
+        break;
     }
+  }
+
+  private async _handlePairingGenerate(): Promise<void> {
+    const creds = loadCredentials();
+    if (!creds?.deviceSecret || !creds?.deviceId) {
+      this._pairingState = { code: '', method: 'code', status: 'error', statusText: 'No device credentials', expiresAt: 0 };
+      this._pushState();
+      return;
+    }
+
+    const deviceSecretHash = crypto.createHash('sha256').update(creds.deviceSecret).digest('hex');
+    try {
+      const resp = await fetch(`${creds.relayUrl}/api/v1/devices/pair`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          deviceSecretHash,
+          deviceId: creds.deviceId,
+          deviceName: `VS Code (${os.hostname()})`,
+        }),
+        signal: AbortSignal.timeout(10000),
+      });
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({ error: resp.statusText }));
+        this._pairingState = { code: '', method: 'code', status: 'error', statusText: `Pairing failed: ${(err as Record<string, unknown>).error || ''}`, expiresAt: 0 };
+        this._pushState();
+        return;
+      }
+      const result = await resp.json() as { code: string; expiresIn?: number };
+      this._pairingState = {
+        code: String(result.code),
+        method: 'code',
+        status: 'waiting',
+        statusText: 'Waiting for scan...',
+        expiresAt: Date.now() + (result.expiresIn ?? 300) * 1000,
+      };
+      this._pushState();
+    } catch (err) {
+      this._pairingState = { code: '', method: 'code', status: 'error', statusText: `Connection failed: ${(err as Error).message}`, expiresAt: 0 };
+      this._pushState();
+    }
+  }
+
+  private async _handlePairingComplete(token: string): Promise<void> {
+    const creds = loadCredentials();
+    if (creds) {
+      creds.deviceToken = token;
+      const { saveCredentials } = await import('../auth/credentials.js');
+      saveCredentials(creds);
+      vscode.window.showInformationMessage('Device paired successfully!');
+    }
+    this._pairingState = {
+      code: this._pairingState?.code || '',
+      method: 'code',
+      status: 'paired',
+      statusText: 'Connected via WeChat',
+      expiresAt: 0,
+    };
+    this._pushState();
   }
 
   private async _handleSessionPreview(sessionId: string): Promise<void> {
     try {
-      const entries = loadConversation(sessionId, 50);
+      const entries = loadConversation(sessionId, 5);
       this._view?.webview.postMessage({
-        action: 'sessionPreview',
+        type: 'sessionPreview',
         sessionId,
         entries,
       });
-    } catch {
+    } catch (err) {
+      log(`_handleSessionPreview failed for ${sessionId}: ${err}`);
       this._view?.webview.postMessage({
-        action: 'sessionPreview',
+        type: 'sessionPreview',
         sessionId,
         entries: [],
         error: 'Failed to load conversation',

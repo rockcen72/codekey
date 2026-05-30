@@ -33,6 +33,24 @@ interface PendingApproval {
   resolve: (value: { approved: boolean }) => void;
   timer: NodeJS.Timeout;
   serverSessionId: string;
+  claudeSessionId: string;
+  command: string;
+  summary: string;
+  toolName: string;
+  risk: 'low' | 'medium' | 'high' | 'critical';
+  createdAt: number;
+}
+
+/** Public, serializable shape returned by getPendingApprovals(). */
+export interface PendingApprovalSnapshot {
+  id: string;                // clientEventId (or migrated serverEventId)
+  serverSessionId: string;
+  claudeSessionId: string;
+  command: string;
+  summary: string;
+  toolName: string;
+  risk: 'low' | 'medium' | 'high' | 'critical';
+  createdAt: number;
 }
 
 interface ApprovalHookBody {
@@ -702,7 +720,17 @@ export class ApprovalBridge {
     }
 
     return new Promise<{ approved: boolean }>((resolve) => {
-      const entry: PendingApproval = { resolve, timer: null as any, serverSessionId };
+      const entry: PendingApproval = {
+        resolve,
+        timer: null as any,
+        serverSessionId,
+        claudeSessionId,
+        command: approvalText.command,
+        summary: approvalText.summary,
+        toolName: approvalText.toolName,
+        risk: 'medium',
+        createdAt: Date.now(),
+      };
       entry.timer = setTimeout(() => {
         // Clean up ALL keys (clientEventId + serverEventId fallback)
         for (const [key, val] of this.pendingByServerEventId) {
@@ -720,6 +748,30 @@ export class ApprovalBridge {
       };
       this.pendingByServerEventId.set(clientEventId, entry);
     });
+  }
+
+  /** Snapshot of currently-awaited approvals. Used by /v1/pending-approvals
+   *  so the VS Code sidebar can poll the bridge locally (fast, ~ms) instead
+   *  of waiting for the next relay poll cycle. Dedups entries that appear
+   *  under both clientEventId and serverEventId keys. */
+  getPendingApprovals(): PendingApprovalSnapshot[] {
+    const seen = new Set<PendingApproval>();
+    const out: PendingApprovalSnapshot[] = [];
+    for (const [id, entry] of this.pendingByServerEventId) {
+      if (seen.has(entry)) continue;
+      seen.add(entry);
+      out.push({
+        id,
+        serverSessionId: entry.serverSessionId,
+        claudeSessionId: entry.claudeSessionId,
+        command: entry.command,
+        summary: entry.summary,
+        toolName: entry.toolName,
+        risk: entry.risk,
+        createdAt: entry.createdAt,
+      });
+    }
+    return out;
   }
 
   /** Notify relay that an approval event has been resolved (approved/denied/timeout).
