@@ -44,12 +44,9 @@
             <text wx:if="{{item.kindBadge}}" class="kind-badge kind-{{item.accent}}">{{item.kindBadge}}</text>
           </view>
 
-          <!-- Command: single-line with toggle to expand -->
-          <view wx:if="{{item.command}}" class="cmd-wrap">
-            <text class="cmd-text mono {{item.expanded ? 'expanded' : ''}}">{{item.command}}</text>
-            <view class="cmd-toggle accent-bg-{{item.accent}}" data-id="{{item.eventId}}" catchtap="toggleCmdExpand">
-              <text class="cmd-toggle-arrow {{item.expanded ? 'rotated' : ''}}">›</text>
-            </view>
+          <!-- Command single-line preview -->
+          <view wx:if="{{item.command}}" class="cmd-line">
+            <text class="cmd-line-text mono">{{item.command}}</text>
           </view>
           <!-- Summary if different from command -->
           <text wx:if="{{item.summary && item.summary !== item.command}}" class="event-summary">{{item.summary}}</text>

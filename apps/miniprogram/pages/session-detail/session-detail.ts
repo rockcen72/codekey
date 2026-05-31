@@ -31,7 +31,6 @@ interface ChatMessage {
   accent: 'pending' | 'approved' | 'denied' | 'complete' | 'neutral';
   kindBadge: string;
   toolName?: string;
-  expanded: boolean;
 }
 
 Page({
@@ -216,7 +215,6 @@ Page({
           eventId: e.id,
           accent: 'neutral',
           kindBadge: '',
-          expanded: false,
         });
         continue;
       }
@@ -241,7 +239,7 @@ Page({
           eventId: e.id,
           accent: 'complete',
           kindBadge: 'DONE',
-          expanded: false,
+
         });
         continue;
       }
@@ -277,7 +275,7 @@ Page({
           accent,
           kindBadge: e.pending ? 'REQUEST' : (this.getDecisionText(e.decision) || 'DONE'),
           toolName: e.data?.toolName || '',
-          expanded: false,
+
         });
 
         if (!e.pending && e.decision) {
@@ -301,7 +299,7 @@ Page({
             eventId: e.id,
             accent: 'neutral',
             kindBadge: '',
-            expanded: false,
+  
           });
         }
         continue;
@@ -332,7 +330,7 @@ Page({
           eventId: e.id,
           accent: 'neutral',
           kindBadge: '',
-          expanded: false,
+
         });
         continue;
       }
@@ -449,7 +447,7 @@ Page({
       eventId,
       accent: 'neutral',
       kindBadge: '',
-      expanded: false,
+
     });
 
     this.setData({ chatMessages: messages, sheetReplyText: '' });
@@ -511,7 +509,7 @@ Page({
         eventId,
         accent: 'neutral',
         kindBadge: '',
-        expanded: false,
+  
       });
     }
     this.setData({ chatMessages: messages }, () => {
@@ -570,7 +568,7 @@ Page({
       eventId,
       accent: 'neutral',
       kindBadge: '',
-      expanded: false,
+
     });
 
     const replyTexts = { ...this.data.replyTexts };
@@ -578,18 +576,6 @@ Page({
 
     this.setData({ chatMessages: messages, replyTexts, scrollToId: 'msg-' + replyId });
     setTimeout(() => this.fetchDetail(), 1500);
-  },
-
-  // ── Command expand/collapse toggle ──
-
-  toggleCmdExpand(e: any) {
-    const eventId = e.currentTarget.dataset.id;
-    const messages = [...this.data.chatMessages];
-    const idx = messages.findIndex((m: ChatMessage) => m.eventId === eventId && m.type === 'ai');
-    if (idx !== -1) {
-      const key = `chatMessages[${idx}].expanded`;
-      this.setData({ [key]: !messages[idx].expanded });
-    }
   },
 
   // ── Command input ──

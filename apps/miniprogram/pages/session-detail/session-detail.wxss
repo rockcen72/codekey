@@ -286,73 +286,23 @@
   flex-shrink: 0;
 }
 
-/* Command wrap: content + toggle side by side */
-.cmd-wrap {
-  display: flex;
-  align-items: stretch;
+/* Command single-line preview */
+.cmd-line {
   margin-top: 10rpx;
+  padding: 10rpx 14rpx;
+  background: var(--ck-code-bg);
   border-radius: 6rpx;
   overflow: hidden;
-  background: var(--ck-code-bg);
 }
 
-/* Command text: collapsed by default (single line) */
-.cmd-text {
-  flex: 1;
-  min-width: 0;
-  padding: 10rpx 14rpx;
+.cmd-line-text {
+  display: block;
   color: var(--ck-code-text);
   font-size: 22rpx;
   line-height: 1.4;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-/* Command text: expanded (multi-line) */
-.cmd-text.expanded {
-  white-space: pre-wrap;
-  word-break: break-all;
-  line-height: 1.6;
-}
-
-/* Toggle button: right side, accent-colored */
-.cmd-toggle {
-  flex-shrink: 0;
-  width: 52rpx;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.cmd-toggle-arrow {
-  font-size: 28rpx;
-  font-weight: 700;
-  color: rgba(255, 255, 255, 0.9);
-  transition: transform 200ms ease;
-  transform: rotate(0deg);
-}
-
-.cmd-toggle-arrow.rotated {
-  transform: rotate(90deg);
-}
-
-/* Accent background classes (match left border colors) */
-.accent-bg-pending {
-  background: var(--ck-warning);
-}
-
-.accent-bg-approved,
-.accent-bg-complete {
-  background: var(--ck-success);
-}
-
-.accent-bg-denied {
-  background: var(--ck-danger);
-}
-
-.accent-bg-neutral {
-  background: var(--ck-border);
 }
 
 /* Full code block (used in bottom sheet detail only) */
