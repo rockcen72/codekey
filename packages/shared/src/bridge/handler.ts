@@ -483,11 +483,11 @@ export class ApprovalBridge {
         clearTimeout(timer);
         resolve(sid);
       });
-      // Only include title when we have a synced tab label.  Without a label
-      // (e.g. hook fires before VS Code sends the first syncLabel), omit title
-      // entirely so the relay's metadata-merge preserves whatever title it
+      // Title priority: synced tab label > transcript-derived title > omit.
+      // Omitting title lets the relay's metadata-merge preserve whatever it
       // already has (from a previous register_session or update_session_label).
       const label = windowId ? this.windowLabels.get(windowId) : undefined;
+      const title = label || transcript?.title || undefined;
       const metadata: Record<string, unknown> = {
         claudeSessionId,
         runtime: 'claude-code',
@@ -495,7 +495,7 @@ export class ApprovalBridge {
         cwd: transcript?.cwd || '',
         lastHookAt: new Date().toISOString(),
       };
-      if (label) metadata.title = label;
+      if (title) metadata.title = title;
 
       const payload: Record<string, unknown> = {
         agentType: 'claude-code-hook',
