@@ -9,15 +9,7 @@ Page({
     serverUrl: getServerUrl(),
   },
 
-  onLoad(query: any) {
-    // Deep link: /pages/login/login?code=ABCD1234
-    // Triggered by WeChat native QR scan → "普通链接二维码" rule
-    const deepCode = (query.code || decodeURIComponent(query.scene || '')).trim().toUpperCase();
-    if (deepCode.length === 8 && /^[A-Z2-9]+$/.test(deepCode)) {
-      wx.navigateTo({ url: `/pages/bind/bind?code=${deepCode}` });
-      return;
-    }
-
+  onLoad() {
     if (hasAuth()) {
       wx.redirectTo({ url: '/pages/sessions/sessions' });
     }

@@ -273,32 +273,211 @@ function renderSubscribe(): string {
 
 // ── Pairing card ─────────────────────────────────────────
 
-function renderPairingCodeSvg(code: string): string {
-  if (!code) return '';
-  const seed = Array.from(String(code)).reduce((a, c) => a + c.charCodeAt(0), 0);
-  const cells: string[] = [];
-  const step = 7, padding = 4, grid = 15, clr = 'var(--vscode-textLink-foreground,#00ffe0)';
-  for (let i = 0; i < grid; i++) {
-    for (let j = 0; j < grid; j++) {
-      const idx = i * grid + j + seed;
-      if ((i < 5 && j < 5) || (i < 5 && j > grid - 6) || (i > grid - 6 && j < 5)) continue;
-      if (Math.abs(Math.sin(idx * 0.7)) > 0.45) {
-        const x = padding + j * step, y = padding + i * step;
-        const alpha = (0.3 + Math.abs(Math.cos(idx * 0.3)) * 0.6).toFixed(2);
-        cells.push(`<rect x="${x}" y="${y}" width="5" height="5" fill="${clr}" opacity="${alpha}" rx="1"/>`);
+/**
+ * Minimal QR code generator → SVG.  Generates a real, scannable QR code
+ * for the pairing code so the WeChat mini program can read it via wx.scanCode.
+ * Supports alphanumeric mode, version 2 (25×25), ECC level M.
+ */
+function generateQrSvg(text: string, size: number = 200): string {
+  if (!text) return '';
+
+  // ── QR code constants (Version 2, ECC M, Alphanumeric) ──
+  const N = 25;          // module count for version 2
+  const EC_CODEWORDS = 10;
+  const EC_BLOCKS = 1;
+  const DATA_CODEWORDS = 44;
+  const TOTAL_BITS = DATA_CODEWORDS * 8;
+
+  // Alphanumeric character set
+  const ALPHANUM = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ $%*+-./:';
+  const charVal = (c: string): number => {
+    const idx = ALPHANUM.indexOf(c);
+    return idx >= 0 ? idx : 0;
+  };
+
+  // ── Encode data ──
+  const bits: number[] = [];
+  // Mode indicator: 0010 (alphanumeric)
+  bits.push(0, 0, 1, 0);
+  // Character count (9 bits for v2 alphanumeric)
+  for (let i = 8; i >= 0; i--) bits.push((text.length >> i) & 1);
+  // Data
+  for (let i = 0; i < text.length - 1; i += 2) {
+    const val = charVal(text[i]) * 45 + charVal(text[i + 1]);
+    for (let b = 10; b >= 0; b--) bits.push((val >> b) & 1);
+  }
+  if (text.length % 2 === 1) {
+    const val = charVal(text[text.length - 1]);
+    for (let b = 5; b >= 0; b--) bits.push((val >> b) & 1);
+  }
+  // Terminator
+  for (let i = 0; i < 4 && bits.length < TOTAL_BITS; i++) bits.push(0);
+  // Pad to byte boundary
+  while (bits.length % 8 !== 0) bits.push(0);
+  // Pad bytes
+  const padBytes = [0xEC, 0x11];
+  let pi = 0;
+  while (bits.length < TOTAL_BITS) {
+    for (let b = 7; b >= 0; b--) bits.push((padBytes[pi % 2] >> b) & 1);
+    pi++;
+  }
+
+  // ── Convert to codewords ──
+  const dataWords: number[] = [];
+  for (let i = 0; i < bits.length; i += 8) {
+    let byte = 0;
+    for (let b = 0; b < 8; b++) byte = (byte << 1) | (bits[i + b] || 0);
+    dataWords.push(byte);
+  }
+
+  // ── Reed-Solomon (GF(2^8) with polynomial 0x11D) ──
+  const gfExp: number[] = new Array(512);
+  const gfLog: number[] = new Array(256);
+  let x = 1;
+  for (let i = 0; i < 255; i++) {
+    gfExp[i] = x;
+    gfLog[x] = i;
+    x = (x << 1) ^ (x >= 128 ? 0x11D : 0);
+  }
+  for (let i = 255; i < 512; i++) gfExp[i] = gfExp[i - 255];
+
+  const gfMul = (a: number, b: number): number =>
+    a === 0 || b === 0 ? 0 : gfExp[gfLog[a] + gfLog[b]];
+
+  // Generate generator polynomial
+  const genPoly: number[] = [1];
+  for (let i = 0; i < EC_CODEWORDS; i++) {
+    const newPoly = new Array(genPoly.length + 1).fill(0);
+    for (let j = 0; j < genPoly.length; j++) {
+      newPoly[j] ^= genPoly[j];
+      newPoly[j + 1] ^= gfMul(genPoly[j], gfExp[i]);
+    }
+    genPoly.splice(0, genPoly.length, ...newPoly);
+  }
+
+  // Divide data polynomial by generator
+  const ecWords: number[] = new Array(EC_CODEWORDS).fill(0);
+  for (let i = 0; i < dataWords.length; i++) {
+    const coeff = dataWords[i] ^ ecWords[0];
+    ecWords.shift();
+    ecWords.push(0);
+    for (let j = 0; j < EC_CODEWORDS; j++) {
+      ecWords[j] ^= gfMul(genPoly[j + 1], coeff);
+    }
+  }
+
+  const allWords = [...dataWords, ...ecWords];
+
+  // ── Build matrix ──
+  const matrix: (number | null)[][] = Array.from({ length: N }, () => Array(N).fill(null));
+  const reserved: boolean[][] = Array.from({ length: N }, () => Array(N).fill(false));
+
+  // Finder patterns + separators
+  const placeFinderPattern = (row: number, col: number) => {
+    for (let r = -1; r <= 7; r++) {
+      for (let c = -1; c <= 7; c++) {
+        const rr = row + r, cc = col + c;
+        if (rr < 0 || rr >= N || cc < 0 || cc >= N) continue;
+        reserved[rr][cc] = true;
+        if (r === -1 || r === 7 || c === -1 || c === 7) {
+          matrix[rr][cc] = 0; // separator
+        } else if (r === 0 || r === 6 || c === 0 || c === 6) {
+          matrix[rr][cc] = 1;
+        } else if (r >= 2 && r <= 4 && c >= 2 && c <= 4) {
+          matrix[rr][cc] = 1;
+        } else {
+          matrix[rr][cc] = 0;
+        }
+      }
+    }
+  };
+  placeFinderPattern(0, 0);
+  placeFinderPattern(0, N - 7);
+  placeFinderPattern(N - 7, 0);
+
+  // Timing patterns
+  for (let i = 8; i < N - 8; i++) {
+    reserved[6][i] = true; reserved[i][6] = true;
+    matrix[6][i] = i % 2 === 0 ? 1 : 0;
+    matrix[i][6] = i % 2 === 0 ? 1 : 0;
+  }
+
+  // Dark module
+  matrix[N - 8][8] = 1;
+  reserved[N - 8][8] = true;
+
+  // Reserve format info
+  for (let i = 0; i < 8; i++) {
+    reserved[8][i] = true; reserved[8][N - 1 - i] = true;
+    reserved[i][8] = true; reserved[N - 1 - i][8] = true;
+  }
+  reserved[8][8] = true;
+
+  // ── Place data ──
+  let bitIdx = 0;
+  const getBit = (): number => {
+    if (bitIdx >= allWords.length * 8) return 0;
+    const w = Math.floor(bitIdx / 8);
+    const b = 7 - (bitIdx % 8);
+    bitIdx++;
+    return (allWords[w] >> b) & 1;
+  };
+
+  let col = N - 1;
+  let dir = -1; // upward
+  while (col >= 0) {
+    if (col === 6) col--; // skip timing column
+    const startRow = dir === -1 ? N - 1 : 0;
+    const endRow = dir === -1 ? -1 : N;
+    for (let row = startRow; row !== endRow; row += dir) {
+      for (let c = 0; c < 2; c++) {
+        const cc = col - c;
+        if (cc < 0 || cc >= N) continue;
+        if (reserved[row][cc]) continue;
+        matrix[row][cc] = getBit();
+      }
+    }
+    col -= 2;
+    dir = -dir;
+  }
+
+  // ── Apply mask pattern 0 (checkerboard) ──
+  for (let r = 0; r < N; r++) {
+    for (let c = 0; c < N; c++) {
+      if (!reserved[r][c]) {
+        if ((r + c) % 2 === 0) matrix[r][c] = (matrix[r][c] as number) ^ 1;
       }
     }
   }
-  const corners = [
-    { x: padding, y: padding },
-    { x: padding + (grid - 1) * step - 2, y: padding },
-    { x: padding, y: padding + (grid - 1) * step - 2 },
-  ];
-  corners.forEach(c => {
-    cells.push(`<rect x="${c.x}" y="${c.y}" width="24" height="24" fill="none" stroke="${clr}" stroke-width="2.5" rx="3" opacity=".8"/>`);
-    cells.push(`<rect x="${c.x + 4}" y="${c.y + 4}" width="16" height="16" fill="${clr}" opacity=".2" rx="1.5"/>`);
-  });
-  return cells.join('');
+
+  // ── Write format info (ECC M, mask 0) ──
+  const formatBits = 0x5412; // precomputed for M/0
+  for (let i = 0; i < 6; i++) matrix[8][i] = (formatBits >> (14 - i)) & 1;
+  matrix[8][7] = (formatBits >> 8) & 1;
+  matrix[8][8] = (formatBits >> 7) & 1;
+  matrix[7][8] = (formatBits >> 6) & 1;
+  for (let i = 0; i < 6; i++) matrix[5 - i][8] = (formatBits >> i) & 1;
+  for (let i = 0; i < 8; i++) matrix[N - 1 - i][8] = (formatBits >> (14 - i)) & 1;
+  for (let i = 0; i < 7; i++) matrix[8][N - 7 + i] = (formatBits >> i) & 1;
+
+  // ── Render to SVG ──
+  const margin = 4;
+  const totalModules = N + margin * 2;
+  const scale = size / totalModules;
+  const rects: string[] = [];
+  for (let r = 0; r < N; r++) {
+    for (let c = 0; c < N; c++) {
+      if (matrix[r][c] === 1) {
+        const x = (c + margin) * scale;
+        const y = (r + margin) * scale;
+        rects.push(`<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${scale.toFixed(1)}" height="${scale.toFixed(1)}"/>`);
+      }
+    }
+  }
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${size} ${size}" width="${size}" height="${size}" shape-rendering="crispEdges">
+<rect width="${size}" height="${size}" fill="#fff"/>
+${rects.join('\n')}
+</svg>`;
 }
 
 export function renderPairingContent(state: SidebarState): string {
@@ -359,8 +538,8 @@ export function renderPairingContent(state: SidebarState): string {
       </div>
       <div class="method-body" style="${method === 'qr' ? 'max-height:300px;padding:0 10px 12px' : ''}">
         <div class="qr-layout">
-          <div class="qr-visual">
-            <svg viewBox="0 0 110 110" id="qrSvg">${renderPairingCodeSvg(p?.code || '')}</svg>
+          <div class="qr-visual" id="qrVisual">
+            ${p?.code ? generateQrSvg(p.code, 160) : '<div style="width:160px;height:160px;display:flex;align-items:center;justify-content:center;color:#50506e;font-size:12px">Generate a code first</div>'}
           </div>
           <div class="qr-side">
             <div class="hint">Scan with your <strong>WeChat Mini Program</strong></div>
