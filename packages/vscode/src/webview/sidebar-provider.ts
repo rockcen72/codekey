@@ -21,6 +21,13 @@ import {
 import { loadConversation } from '../../../shared/src/bridge/claude-transcripts.js';
 import { log } from '../log.js';
 
+const AGENT_DISPLAY_NAMES: Record<string, string> = {
+  'claude-code': 'Claude Code',
+  'claude-code-hook': 'Claude Code',
+  'codex': 'Codex',
+  'opencode': 'OpenCode',
+};
+
 const POLL_MS = 5000;
 const APPROVAL_POLL_MS = 1000;
 
@@ -279,8 +286,10 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         const session = sessions.find(s => s.id === a.serverSessionId);
         pendingApprovals.push({
           id: a.id,
-          command: a.command || a.summary || a.toolName || '(unknown)',
-          agent: session?.agent_type ?? 'claude-code-hook',
+          command: a.command || '(unknown)',
+          summary: a.summary || a.command || '(unknown)',
+          toolName: a.toolName || '',
+          agent: (session?.agent_type && AGENT_DISPLAY_NAMES[session.agent_type]) || session?.agent_type || 'Claude Code',
           risk: a.risk,
           serverSessionId: a.serverSessionId,
         });
@@ -295,8 +304,10 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
             if (age > STALE_APPROVAL_MS) continue;
             pendingApprovals.push({
               id: e.id,
-              command: e.data?.command ?? e.data?.summary ?? '(unknown)',
-              agent: session?.agent_type ?? 'unknown',
+              command: e.data?.command ?? '(unknown)',
+              summary: e.data?.summary ?? e.data?.command ?? '(unknown)',
+              toolName: e.data?.toolName ?? '',
+              agent: (session?.agent_type && AGENT_DISPLAY_NAMES[session.agent_type]) || session?.agent_type || 'Claude Code',
               risk: e.risk_level ?? 'medium',
               serverSessionId: sid,
             });
@@ -378,7 +389,10 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       } catch {}
     }
 
-    // Build lookup: claudeSessionId → relay session title (synced tab label)
+    // Build lookup: claudeSessionId → relay session title (synced tab label).
+    // Only use sessions from THIS window — using allSessions (no windowId)
+    // would cause a label change on one session to bleed into every other
+    // local session that shares the same window.
     const relayTitleByClaudeSessionId = new Map<string, string>();
     for (const s of sessions) {
       const csid = s.metadata?.claudeSessionId;
@@ -515,18 +529,17 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         break;
       case 'toggleAttachClaudeSession':
         if (msg.attached) {
-          // Already attached — detach
+          // Already attached — detach from relay (stop pushing to phone).
+          // Do NOT remove from SessionStore: the session stays visible in the
+          // local list with the button flipped to "Attach". Only the bridge's
+          // attachedSessions list changes, which is the single source of truth
+          // for the `attached` flag on each session.
           fetch(`${this._bridgeService.getBridgeUrl()}/v1/detach-session`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ claudeSessionId: msg.sessionId }),
           }).then(async (res) => {
-            if (res.ok) {
-              const creds = loadCredentials();
-              if (creds?.deviceId) {
-                await SessionStore.remove(this._context, creds.deviceId, msg.sessionId);
-              }
-            } else {
+            if (!res.ok) {
               vscode.window.showErrorMessage(`Detach failed: ${res.statusText}`);
             }
             this._pushState();
@@ -540,15 +553,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ claudeSessionId: msg.sessionId }),
-        }).then(async (res) => {
-          if (res.ok) {
-            const creds = loadCredentials();
-            if (creds?.deviceId) {
-              await SessionStore.remove(this._context, creds.deviceId, msg.sessionId);
-            }
-          }
-          this._pushState();
-        });
+        }).then(() => this._pushState());
         break;
       case 'regeneratePairingCode':
         this._handlePairingGenerate();
