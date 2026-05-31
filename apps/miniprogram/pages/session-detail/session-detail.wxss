@@ -286,25 +286,21 @@
   flex-shrink: 0;
 }
 
-/* Command wrap: content + toggle button side by side */
+/* Command wrap: content + toggle side by side */
 .cmd-wrap {
   display: flex;
   align-items: stretch;
   margin-top: 10rpx;
   border-radius: 6rpx;
   overflow: hidden;
-}
-
-/* Collapsed: single line */
-.cmd-line {
-  flex: 1;
-  min-width: 0;
-  padding: 10rpx 14rpx;
   background: var(--ck-code-bg);
 }
 
-.cmd-line-text {
-  display: block;
+/* Command text: collapsed by default (single line) */
+.cmd-text {
+  flex: 1;
+  min-width: 0;
+  padding: 10rpx 14rpx;
   color: var(--ck-code-text);
   font-size: 22rpx;
   line-height: 1.4;
@@ -313,21 +309,11 @@
   white-space: nowrap;
 }
 
-/* Expanded: multi-line */
-.cmd-expanded {
-  flex: 1;
-  min-width: 0;
-  padding: 10rpx 14rpx;
-  background: var(--ck-code-bg);
-}
-
-.cmd-full-text {
-  display: block;
-  color: var(--ck-code-text);
-  font-size: 22rpx;
-  line-height: 1.6;
+/* Command text: expanded (multi-line) */
+.cmd-text.expanded {
   white-space: pre-wrap;
   word-break: break-all;
+  line-height: 1.6;
 }
 
 /* Toggle button: right side, accent-colored */
