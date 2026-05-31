@@ -5,6 +5,8 @@ import type { BridgeState } from '../services/bridge-status.js';
 export interface PendingApprovalItem {
   id: string;
   command: string;
+  summary: string;
+  toolName: string;
   agent: string;
   risk: string;
   serverSessionId: string;
@@ -16,6 +18,7 @@ export interface PairingState {
   status: 'idle' | 'waiting' | 'paired' | 'error';
   statusText: string;
   expiresAt: number;
+  pairUrl?: string;
 }
 
 export interface SidebarState {
@@ -186,8 +189,13 @@ export function renderApprovalsContent(state: SidebarState): string {
       </div>
       ${g.items.map(item => {
         const rCls = item.risk === 'high' || item.risk === 'critical' ? 'risk-high' : item.risk === 'medium' ? 'risk-medium' : 'risk-low';
+        const showCmd = item.toolName === 'Bash' && item.command !== item.summary;
         return `<div class="approval-item">
-          <span class="approval-cmd">${h(item.command)}</span>
+          <div class="approval-body">
+            <span class="approval-summary">${h(item.summary)}</span>
+            ${item.toolName ? `<span class="approval-tool">${h(item.toolName)}</span>` : ''}
+            ${showCmd ? `<span class="approval-cmd">${h(item.command)}</span>` : ''}
+          </div>
           <span class="risk ${rCls}">${h(item.risk)}</span>
         </div>`;
       }).join('')}
@@ -524,7 +532,8 @@ ${renderSubscribe()}
       if (!el) return;
       if (e.data.entries && e.data.entries.length > 0) {
         var html = '';
-        for (var i = 0; i < e.data.entries.length; i++) {
+        // Show newest first (entries are chronological, iterate backwards)
+        for (var i = e.data.entries.length - 1; i >= 0; i--) {
           var entry = e.data.entries[i];
           var side = entry.role === 'user' ? 'left' : 'right';
           var label = entry.role === 'user' ? 'You' : 'Claude';
@@ -877,14 +886,15 @@ body{
 .approval-header{display:flex;align-items:center;gap:6px;padding:3px 0;font-size:11px}
 .approval-agent{color:var(--vscode-editor-foreground);font-weight:500}
 .approval-item{
-  display:flex;align-items:center;gap:6px;
+  display:flex;align-items:center;justify-content:space-between;gap:6px;
   padding:4px 8px;margin-left:4px;
   border-left:2px solid #f5a623;
-  font-size:11px;font-family:var(--vscode-editor-font-family,monospace);
-  color:var(--vscode-descriptionForeground,#8888a8);
   overflow:hidden;
 }
-.approval-cmd{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}
+.approval-body{display:flex;align-items:center;gap:6px;flex:1;min-width:0}
+.approval-summary{font-size:11px;color:var(--vscode-foreground,#e8e8f0);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.approval-tool{font-size:9px;font-family:var(--vscode-editor-font-family,monospace);color:var(--vscode-descriptionForeground,#50506e);background:var(--vscode-textBlockQuote-background,#181824);padding:1px 4px;border-radius:2px;flex-shrink:0}
+.approval-cmd{font-size:10px;font-family:var(--vscode-editor-font-family,monospace);color:var(--vscode-descriptionForeground,#8888a8);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0}
 .risk{
   font-size:8px;padding:0 5px;border-radius:99px;
   font-family:var(--vscode-font-family,system-ui);font-weight:500;flex-shrink:0;

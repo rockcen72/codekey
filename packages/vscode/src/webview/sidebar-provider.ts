@@ -445,6 +445,30 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       canDetach,
     }));
 
+    // Inject the bridge-known active session if it's not already in the list.
+    // This covers: session just started (transcript not written yet), transcript
+    // cleaned up, or session in a different project directory.
+    try {
+      const windowId = vscode.env.sessionId;
+      const resp = await fetch(`${this._bridgeService.getBridgeUrl()}/v1/window-active-session?windowId=${encodeURIComponent(windowId)}`);
+      if (resp.ok) {
+        const body = await resp.json() as { claudeSessionId?: string | null };
+        const activeCsid = body.claudeSessionId;
+        if (activeCsid && !mergedClaudeSessions.some(s => s.sessionId === activeCsid)) {
+          const title = relayTitleByClaudeSessionId.get(activeCsid) || activeCsid.slice(0, 8);
+          const cwd = vscode.workspace.workspaceFolders?.[0]?.uri?.fsPath || '';
+          mergedClaudeSessions.unshift({
+            sessionId: activeCsid,
+            title,
+            cwd,
+            updatedAt: new Date().toISOString(),
+            attached: attachedSessions.includes(activeCsid),
+            canDetach,
+          });
+        }
+      }
+    } catch { /* bridge unreachable — skip injection */ }
+
     const state: SidebarState = {
       deviceStatus,
       phoneName: 'WeChat Mini Program',
@@ -590,13 +614,14 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         this._pushState();
         return;
       }
-      const result = await resp.json() as { code: string; expiresIn?: number };
+      const result = await resp.json() as { code: string; expiresIn?: number; pairUrl?: string };
       this._pairingState = {
         code: String(result.code),
         method: 'code',
         status: 'waiting',
         statusText: 'Waiting for scan...',
         expiresAt: Date.now() + (result.expiresIn ?? 300) * 1000,
+        pairUrl: result.pairUrl || '',
       };
       this._pushState();
     } catch (err) {

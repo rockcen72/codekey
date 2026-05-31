@@ -58,7 +58,8 @@ export function deviceRoutes(sql: postgres.Sql) {
         VALUES (${codeHash}, ${device.id}, ${ip}, now() + interval '5 minutes')
       `;
 
-      return { code, deviceId: device.id, expiresIn: 300 };
+      const pairUrl = `https://codekey.tinymoney.cn/pair?code=${code}`;
+      return { code, deviceId: device.id, expiresIn: 300, pairUrl };
     });
 
     // Mini program confirms pairing
