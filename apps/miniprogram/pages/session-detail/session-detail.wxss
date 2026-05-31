@@ -299,13 +299,14 @@
 }
 
 .cmd-line-text {
-  display: block;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 1;
   color: var(--ck-code-text);
   font-size: 22rpx;
   line-height: 1.4;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  word-break: break-all;
 }
 
 /* Full code block (used in bottom sheet detail only) */
