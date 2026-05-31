@@ -251,7 +251,10 @@
 }
 
 .event-summary {
-  display: block;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
   margin-top: 10rpx;
   font-size: 26rpx;
   color: var(--ck-text);
