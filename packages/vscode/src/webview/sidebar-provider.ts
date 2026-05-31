@@ -480,6 +480,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       claudeSessions: mergedClaudeSessions,
       relayUrl: creds?.relayUrl,
       deviceSecret: creds?.deviceSecret,
+      feishuAppId: vscode.workspace.getConfiguration('codekey').get<string>('feishuAppId', ''),
       pairing: this._pairingState,
     };
 
@@ -582,6 +583,12 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       case 'regeneratePairingCode':
         this._handlePairingGenerate();
         break;
+      case 'switchPlatform':
+        if (this._pairingState) {
+          this._pairingState.platform = msg.platform === 'feishu' ? 'feishu' : 'wechat';
+        }
+        this._pushState();
+        break;
       case 'pairedDevice':
         this._handlePairingComplete(msg.token);
         break;
@@ -591,7 +598,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
   private async _handlePairingGenerate(): Promise<void> {
     const creds = loadCredentials();
     if (!creds?.deviceSecret || !creds?.deviceId) {
-      this._pairingState = { code: '', method: 'code', status: 'error', statusText: 'No device credentials', expiresAt: 0 };
+      this._pairingState = { code: '', method: 'code', platform: this._pairingState?.platform || 'wechat', status: 'error', statusText: 'No device credentials', expiresAt: 0 };
       this._pushState();
       return;
     }
@@ -610,7 +617,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       });
       if (!resp.ok) {
         const err = await resp.json().catch(() => ({ error: resp.statusText }));
-        this._pairingState = { code: '', method: 'code', status: 'error', statusText: `Pairing failed: ${(err as Record<string, unknown>).error || ''}`, expiresAt: 0 };
+        this._pairingState = { code: '', method: 'code', platform: this._pairingState?.platform || 'wechat', status: 'error', statusText: `Pairing failed: ${(err as Record<string, unknown>).error || ''}`, expiresAt: 0 };
         this._pushState();
         return;
       }
@@ -618,6 +625,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       this._pairingState = {
         code: String(result.code),
         method: 'code',
+        platform: this._pairingState?.platform || 'wechat',
         status: 'waiting',
         statusText: 'Waiting for scan...',
         expiresAt: Date.now() + (result.expiresIn ?? 300) * 1000,
@@ -625,7 +633,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       };
       this._pushState();
     } catch (err) {
-      this._pairingState = { code: '', method: 'code', status: 'error', statusText: `Connection failed: ${(err as Error).message}`, expiresAt: 0 };
+      this._pairingState = { code: '', method: 'code', platform: this._pairingState?.platform || 'wechat', status: 'error', statusText: `Connection failed: ${(err as Error).message}`, expiresAt: 0 };
       this._pushState();
     }
   }
@@ -641,8 +649,9 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     this._pairingState = {
       code: this._pairingState?.code || '',
       method: 'code',
+      platform: this._pairingState?.platform || 'wechat',
       status: 'paired',
-      statusText: 'Connected via WeChat',
+      statusText: this._pairingState?.platform === 'feishu' ? 'Connected via Feishu' : 'Connected via WeChat',
       expiresAt: 0,
     };
     this._pushState();

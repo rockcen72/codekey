@@ -56,7 +56,17 @@
         "command": "codekey.focusSidebar",
         "title": "CodeKey: Focus Sidebar"
       }
-    ]
+    ],
+    "configuration": {
+      "title": "CodeKey",
+      "properties": {
+        "codekey.feishuAppId": {
+          "type": "string",
+          "default": "",
+          "description": "飞书小程序 App ID。配置后配对区域可切换到飞书平台，二维码将使用飞书 AppLink 格式。"
+        }
+      }
+    }
   },
   "scripts": {
     "build": "node build.mjs",

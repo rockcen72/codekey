@@ -15,6 +15,7 @@ export interface PendingApprovalItem {
 export interface PairingState {
   code: string;
   method: 'code' | 'qr';
+  platform: 'wechat' | 'feishu';
   status: 'idle' | 'waiting' | 'paired' | 'error';
   statusText: string;
   expiresAt: number;
@@ -36,6 +37,7 @@ export interface SidebarState {
   claudeSessions: ClaudeSessionItem[];
   relayUrl?: string;
   deviceSecret?: string;
+  feishuAppId?: string;
   pairing?: PairingState;
 }
 
@@ -487,6 +489,11 @@ export function renderPairingContent(state: SidebarState): string {
   const method = p?.method || 'code';
   const codeDigits = p?.code || '--- ---';
   const codeExpires = p?.expiresAt || 0;
+  const platform = p?.platform || 'wechat';
+  const isFeishu = platform === 'feishu';
+  const feishuAppId = state.feishuAppId || '';
+  const hasFeishu = !!feishuAppId;
+  const platName = isFeishu ? 'Feishu' : 'WeChat';
 
   // When paired, collapse to a compact connected card (no code/QR clutter)
   if (isPaired) {
@@ -496,20 +503,39 @@ export function renderPairingContent(state: SidebarState): string {
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
         </div>
         <div class="paired-text">
-          <div class="paired-title">Connected via WeChat</div>
-          <div class="paired-sub">${h(state.phoneName || 'WeChat Mini Program')}</div>
+          <div class="paired-title">Connected via ${platName}</div>
+          <div class="paired-sub">${platName} Mini Program</div>
         </div>
       </div>
     </div>`;
   }
 
+  // Generate both QR SVGs so JS can switch client-side without round-trip
+  const wechatQrSvg = p?.code ? generateQrSvg(p.code, 160) : '';
+  const feishuQrSvg = p?.code && feishuAppId
+    ? generateQrSvg(`feishu://app/${feishuAppId}/pages/login/login?code=${p.code}`, 160)
+    : '';
+  const hasQr = !!(wechatQrSvg || feishuQrSvg);
+
+  const feishuToggleHtml = hasFeishu ? `<div class="platform-toggle">
+    <div class="plat-opt${platform === 'wechat' ? ' active' : ''}" data-platform="wechat">
+      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 22H5a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v16a2 2 0 0 1-2 2h-4m-4 0v-4m0 4h4m0-4H9m0 0v-6a4 4 0 0 1 6-3.3"/></svg>
+      WeChat
+    </div>
+    <div class="plat-opt${platform === 'feishu' ? ' active' : ''}" data-platform="feishu">
+      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+      Feishu
+    </div>
+  </div>` : '';
+
   return `<div class="pairing-methods">
+    ${feishuToggleHtml}
     <div class="method-option ${method === 'code' ? 'active' : ''}" data-method="code">
       <div class="method-header" data-toggle="code">
         <div class="method-radio"></div>
         <div>
           <div class="method-label">Code Pairing</div>
-          <div class="method-hint">Enter this code in your WeChat Mini Program</div>
+          <div class="method-hint">Enter this code in your <span class="plat-label">${platName}</span> Mini Program</div>
         </div>
       </div>
       <div class="method-body" style="${method === 'code' ? 'max-height:300px;padding:0 10px 12px' : ''}">
@@ -523,7 +549,7 @@ export function renderPairingContent(state: SidebarState): string {
             </button>
           </div>
           <div class="pairing-status ${isPaired ? 'success' : isWaiting ? 'waiting' : ''}" id="pairingStatus">
-            ${isPaired ? 'Connected via WeChat' : isWaiting ? (p?.statusText || 'Waiting for scan...') : 'Generate a code to pair with your WeChat Mini Program'}
+            ${isPaired ? `Connected via ${platName}` : isWaiting ? (p?.statusText || 'Waiting for scan...') : 'Generate a code to pair'}
           </div>
         </div>
       </div>
@@ -533,16 +559,20 @@ export function renderPairingContent(state: SidebarState): string {
         <div class="method-radio"></div>
         <div>
           <div class="method-label">QR Scan</div>
-          <div class="method-hint">Scan with WeChat to pair instantly</div>
+          <div class="method-hint">Scan with <span class="plat-label">${platName}</span> to pair instantly</div>
         </div>
       </div>
       <div class="method-body" style="${method === 'qr' ? 'max-height:300px;padding:0 10px 12px' : ''}">
         <div class="qr-layout">
           <div class="qr-visual" id="qrVisual">
-            ${p?.code ? generateQrSvg(p.code, 160) : '<div style="width:160px;height:160px;display:flex;align-items:center;justify-content:center;color:#50506e;font-size:12px">Generate a code first</div>'}
+            ${!hasQr
+              ? '<div style="width:160px;height:160px;display:flex;align-items:center;justify-content:center;color:#50506e;font-size:12px">Generate a code first</div>'
+              : `<div id="qrWechat" style="display:${isFeishu ? 'none' : 'block'}">${wechatQrSvg}</div>`
+                + (feishuQrSvg ? `<div id="qrFeishu" style="display:${isFeishu ? 'block' : 'none'}">${feishuQrSvg}</div>` : '')
+            }
           </div>
           <div class="qr-side">
-            <div class="hint">Scan with your <strong>WeChat Mini Program</strong></div>
+            <div class="hint">Scan with your <strong>${platName} Mini Program</strong></div>
             <div class="qr-bottom">
               <div class="qr-status ${isPaired ? 'success' : ''}" id="qrStatus">
                 ${isPaired ? 'Paired successfully!' : 'Generate a code first'}
@@ -556,15 +586,16 @@ export function renderPairingContent(state: SidebarState): string {
 }
 
 function renderPairing(state: SidebarState): string {
-  const { deviceStatus } = state;
+  const { deviceStatus, pairing } = state;
   const isPaired = deviceStatus === 'paired';
+  const pn = pairing?.platform === 'feishu' ? 'Feishu' : 'WeChat';
   return `<div class="card pairing-card">
     <div class="card-header">
       <span class="card-label">
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="M12 5l7 7-7 7"/></svg>
         Pairing
       </span>
-      <span class="tag ${isPaired ? 'green' : 'orange'}" id="pairingHeaderTag">${isPaired ? '<span class="dot green"></span>WeChat' : '<span class="dot orange pulse"></span>Not paired'}</span>
+      <span class="tag ${isPaired ? 'green' : 'orange'}" id="pairingHeaderTag">${isPaired ? '<span class="dot green"></span>' + pn : '<span class="dot orange pulse"></span>' + pn}</span>
     </div>
     <div id="pairingContent">${renderPairingContent(state)}</div>
   </div>`;
@@ -664,6 +695,7 @@ ${renderSubscribe()}
       // Update content sections (skip if unchanged)
       swap('deviceContent', d.deviceHtml);
       swap('pairingContent', d.pairingHtml);
+      applySavedPlatform();
       swap('agentsContent', d.agentsHtml);
       swap('approvalsContent', d.approvalsHtml);
       if (swap('sessionsContent', d.sessionsHtml)) applyAgentFilter();
@@ -689,8 +721,10 @@ ${renderSubscribe()}
       if (d.paired !== undefined) {
         var pt = document.getElementById('pairingHeaderTag');
         if (pt) {
-          if (d.paired) { pt.innerHTML = '<span class="dot green"></span>WeChat'; pt.className = 'tag green'; }
-          else { pt.innerHTML = '<span class="dot orange pulse"></span>Not paired'; pt.className = 'tag orange'; }
+          var _pn = 'WeChat';
+          try { var _sp = sessionStorage.getItem('pairingPlatform'); if (_sp) _pn = _sp === 'feishu' ? 'Feishu' : 'WeChat'; } catch(e) {}
+          if (d.paired) { pt.innerHTML = '<span class="dot green"></span>' + _pn; pt.className = 'tag green'; }
+          else { pt.innerHTML = '<span class="dot orange pulse"></span>' + _pn; pt.className = 'tag orange'; }
         }
       }
       // Update PD so openPairingWs uses fresh data
@@ -750,6 +784,26 @@ ${renderSubscribe()}
       applyAgentFilter();
       return;
     }
+    // Platform toggle (WeChat / Feishu)
+    var plat = e.target.closest('.plat-opt');
+    if (plat) {
+      var platform = plat.dataset.platform;
+      document.querySelectorAll('.plat-opt').forEach(function(p) { p.classList.toggle('active', p.dataset.platform === platform); });
+      var isFeishu = platform === 'feishu';
+      var qrW = document.getElementById('qrWechat');
+      var qrF = document.getElementById('qrFeishu');
+      if (qrW) qrW.style.display = isFeishu ? 'none' : 'block';
+      if (qrF) qrF.style.display = isFeishu ? 'block' : 'none';
+      var name = isFeishu ? 'Feishu' : 'WeChat';
+      document.querySelectorAll('.plat-label').forEach(function(el) { el.textContent = name; });
+      // Update header badge (only when not paired)
+      var pt = document.getElementById('pairingHeaderTag');
+      if (pt && !/green/.test(pt.className)) {
+        pt.innerHTML = '<span class="dot orange pulse"></span>' + name;
+      }
+      try { sessionStorage.setItem('pairingPlatform', platform); } catch(e) {}
+      return;
+    }
   });
 
   // Apply current agent filter to session-items (data-agent attribute)
@@ -777,6 +831,28 @@ ${renderSubscribe()}
     }
   }
 
+  // Apply saved platform preference on the current DOM
+  function applySavedPlatform() {
+    var saved;
+    try { saved = sessionStorage.getItem('pairingPlatform'); } catch(e) {}
+    var platform = saved || 'wechat';
+    var toggles = document.querySelectorAll('.plat-opt');
+    if (toggles.length === 0) return; // no platform toggle (feishuAppId not configured)
+    var isFeishu = platform === 'feishu';
+    toggles.forEach(function(t) { t.classList.toggle('active', t.dataset.platform === platform); });
+    var qrW = document.getElementById('qrWechat');
+    var qrF = document.getElementById('qrFeishu');
+    if (qrW) qrW.style.display = isFeishu ? 'none' : 'block';
+    if (qrF) qrF.style.display = isFeishu ? 'block' : 'none';
+    var name = isFeishu ? 'Feishu' : 'WeChat';
+    document.querySelectorAll('.plat-label').forEach(function(el) { el.textContent = name; });
+    // Update header tag if not paired (when paired, extension host sends correct text)
+    var pt = document.getElementById('pairingHeaderTag');
+    if (pt && !/green/.test(pt.className)) {
+      pt.innerHTML = '<span class="dot orange pulse"></span>' + name;
+    }
+  }
+
   // Restore agent filter on load + after each re-render
   try {
     var savedAg = sessionStorage.getItem('agentFilter');
@@ -801,6 +877,9 @@ ${renderSubscribe()}
       }
     }
   } catch(e) {}
+
+  // Restore saved platform preference
+  applySavedPlatform();
 
   // Countdown timer (local, based on data-expires timestamp)
   var countdownTimer = setInterval(function() {
@@ -1137,6 +1216,23 @@ body{
   background:linear-gradient(135deg,rgba(0,255,224,.02),transparent 60%);
 }
 .pairing-methods{display:flex;flex-direction:column;gap:8px}
+.platform-toggle{display:flex;gap:4px;padding:0 2px 2px}
+.plat-opt{
+  display:inline-flex;align-items:center;gap:4px;
+  padding:4px 10px;border-radius:6px;font-size:10px;font-weight:500;
+  background:var(--vscode-sideBar-background,#0f0f18);
+  border:1px solid var(--vscode-panel-border,#1e1e2e);
+  color:var(--vscode-descriptionForeground,#50506e);
+  cursor:pointer;transition:all .2s;user-select:none;
+}
+.plat-opt svg{width:10px;height:10px;opacity:.6}
+.plat-opt:hover{color:var(--vscode-editor-foreground);border-color:var(--vscode-descriptionForeground,#50506e)}
+.plat-opt.active{
+  background:rgba(0,255,224,.08);color:var(--vscode-textLink-foreground,#00ffe0);
+  border-color:rgba(0,255,224,.2);
+}
+.plat-opt.active svg{opacity:1}
+.plat-label{font-weight:600}
 .method-option{
   background:var(--vscode-sideBar-background,#0f0f18);
   border:1px solid var(--vscode-panel-border,#1e1e2e);
