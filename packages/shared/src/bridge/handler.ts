@@ -380,6 +380,19 @@ export class ApprovalBridge {
     this.pendingDeactivations.clear();
   }
 
+  /** Push a label update to the relay for a specific claudeSessionId.
+   *  Used on startup to sync CC tab labels with restored sessions — bypasses
+   *  the windowSessions mapping which isn't populated for restored sessions. */
+  syncSessionLabel(claudeSessionId: string, label: string): void {
+    if (!claudeSessionId || !label) return;
+    const serverSessionId = this.sessions.get(claudeSessionId);
+    if (!serverSessionId) return;
+    this.relay.sendRaw(JSON.stringify({
+      type: 'update_session_label',
+      payload: { sessionId: serverSessionId, label },
+    }));
+  }
+
   /** Set a label that will be applied to sessions from the given window.
    *  If the label changes and a session already exists, push the update to the relay
    *  so existing sessions get the new name immediately. */
@@ -431,6 +444,22 @@ export class ApprovalBridge {
       if (windowId) this.windowSessions.set(windowId, serverSessionId);
       if (!this.primarySessionId) this.primarySessionId = serverSessionId;
       this.inFlightSessions.delete(claudeSessionId);
+
+      // After registration, push the current label to relay so the mini
+      // program shows the same title as the sidebar.  _registerOnRelay may
+      // have included the label in metadata already, but if syncLabel fired
+      // AFTER the hook event (race), the label was missing from the first
+      // register_session.  sendRaw is idempotent — the relay merges metadata.
+      if (windowId) {
+        const label = this.windowLabels.get(windowId);
+        if (label) {
+          this.relay.sendRaw(JSON.stringify({
+            type: 'update_session_label',
+            payload: { sessionId: serverSessionId, label },
+          }));
+        }
+      }
+
       return serverSessionId;
     }).catch((err) => {
       this.inFlightSessions.delete(claudeSessionId);
@@ -454,31 +483,29 @@ export class ApprovalBridge {
         clearTimeout(timer);
         resolve(sid);
       });
+      // Only include title when we have a synced tab label.  Without a label
+      // (e.g. hook fires before VS Code sends the first syncLabel), omit title
+      // entirely so the relay's metadata-merge preserves whatever title it
+      // already has (from a previous register_session or update_session_label).
+      const label = windowId ? this.windowLabels.get(windowId) : undefined;
+      const metadata: Record<string, unknown> = {
+        claudeSessionId,
+        runtime: 'claude-code',
+        source: source || 'hook',
+        cwd: transcript?.cwd || '',
+        lastHookAt: new Date().toISOString(),
+      };
+      if (label) metadata.title = label;
+
       const payload: Record<string, unknown> = {
         agentType: 'claude-code-hook',
         claudeSessionId,
         clientRequestId,
-        metadata: {
-          claudeSessionId,
-          runtime: 'claude-code',
-          source: source || 'hook',
-          title: transcript?.title || '',
-          cwd: transcript?.cwd || '',
-          lastHookAt: new Date().toISOString(),
-        },
+        metadata,
       };
       if (windowId) {
         payload.windowId = windowId;
-        const label = this.windowLabels.get(windowId);
-        if (label) {
-          payload.sessionLabel = label;
-          // Override transcript-derived title with synced tab label.
-          // Required: server merges payload.metadata AFTER sessionLabel,
-          // so without this override, the transcript title would win.
-          if (payload.metadata) {
-            (payload.metadata as Record<string, unknown>).title = label;
-          }
-        }
+        if (label) payload.sessionLabel = label;
       }
       console.error('[bridge] _registerOnRelay: sending register_session for %s (windowId=%s, source=%s)', claudeSessionId, windowId || '(none)', source || 'hook');
       this.relay.sendRaw(JSON.stringify({
@@ -579,11 +606,34 @@ export class ApprovalBridge {
       ? rawCommand.trim()
       : this.describeToolInput(toolName, input, this.promptText(payload.rawEvent));
 
+    // Claude Code attaches a human-readable `description` to tool calls; surface
+    // it as the summary so the phone shows "what" not just the raw shell command.
+    const description = typeof input.description === 'string' ? input.description.trim() : '';
+
     return {
       toolName,
       command,
-      summary: command.slice(0, 200),
+      summary: description || command.slice(0, 200),
     };
+  }
+
+  /**
+   * Mask common secret patterns locally before an approval leaves this machine,
+   * so raw keys/passwords never reach the relay DB or the phone. Deterministic,
+   * no third-party call.
+   */
+  private desensitize(text: string): string {
+    if (!text) return text;
+    return text
+      .replace(/-----BEGIN[\s\S]*?PRIVATE KEY-----[\s\S]*?-----END[\s\S]*?PRIVATE KEY-----/g, '[REDACTED PRIVATE KEY]')
+      .replace(/\bsk-[A-Za-z0-9_-]{12,}/g, 'sk-****')
+      .replace(/\bgh[pousr]_[A-Za-z0-9]{16,}/g, 'gh_****')
+      .replace(/\bAKIA[0-9A-Z]{16}\b/g, 'AKIA****')
+      .replace(/\b(Bearer\s+)[A-Za-z0-9._-]{12,}/gi, '$1****')
+      // user:password@host in connection strings / URLs
+      .replace(/([a-z][a-z0-9+.-]*:\/\/[^\s:/@]+:)[^\s@]+@/gi, '$1****@')
+      // password=... / token: ... / api_key=... style assignments
+      .replace(/\b(password|passwd|pwd|token|secret|api[_-]?key|access[_-]?key|auth[_-]?token)(\s*["']?\s*[=:]\s*["']?)([^\s"'&;,]+)/gi, '$1$2****');
   }
 
   private toolName(payload: ApprovalHookBody): string {
@@ -689,9 +739,10 @@ export class ApprovalBridge {
         data: {
           type: 'approval_required',
           action: this.approvalAction(approvalText.toolName),
-          command: approvalText.command,
+          toolName: approvalText.toolName,
+          command: this.desensitize(approvalText.command),
           risk: 'medium',
-          summary: approvalText.summary,
+          summary: this.desensitize(approvalText.summary),
         },
         ts: new Date().toISOString(),
       },
@@ -731,6 +782,11 @@ export class ApprovalBridge {
         risk: 'medium',
         createdAt: Date.now(),
       };
+      // Safety net only — NOT the primary resolution path. An approval stays
+      // pending until the phone answers (approval_forward) or CC itself moves
+      // past it (task_complete, see handleHookEvent). This long timer only
+      // guards against a zombie approval leaking if the CC process dies while
+      // blocked. Kept in sync with the server-side PENDING_TTL (app.ts).
       entry.timer = setTimeout(() => {
         // Clean up ALL keys (clientEventId + serverEventId fallback)
         for (const [key, val] of this.pendingByServerEventId) {
@@ -739,7 +795,7 @@ export class ApprovalBridge {
         // Notify relay to mark the event as resolved (timeout)
         this._resolveEventOnRelay(clientEventId);
         resolve({ approved: false });
-      }, 120_000);
+      }, 30 * 60_000);
       // Wrap resolve to also notify relay on normal approval_forward resolution
       const originalResolve = resolve;
       entry.resolve = (value) => {
@@ -857,16 +913,22 @@ export class ApprovalBridge {
 
     this.relay.sendEvent(serverSessionId, relayMsg);
 
-    // Resolve any pending approvals for this session. When the user approves
-    // or denies directly in CC (typing 'y'/'n'), the bridge never receives an
-    // approval_forward from the relay, so the event stays pending until the
-    // 120s timeout. Clean up immediately so the mini program doesn't show
-    // stale pending approvals.
-    for (const [key, entry] of this.pendingByServerEventId) {
-      clearTimeout(entry.timer);
-      this._resolveEventOnRelay(key);
-      this.pendingByServerEventId.delete(key);
-      entry.resolve({ approved: false });
+    // Clear pending approvals only when CC actually finishes a turn
+    // (task_complete) for THIS session. A task_complete means CC ran (or the
+    // user answered inline) and moved on, so any approval it was waiting on is
+    // resolved — but the bridge never got an approval_forward, so we clean up
+    // here. A session_idle must NOT clear: CC goes idle precisely while it is
+    // still waiting for the phone to answer, and clearing there would drop a
+    // genuinely-pending approval. Scope to serverSessionId so one session's
+    // activity never wipes another session's pending approvals.
+    if (body.eventType === 'task_complete') {
+      for (const [key, entry] of this.pendingByServerEventId) {
+        if (entry.serverSessionId !== serverSessionId) continue;
+        clearTimeout(entry.timer);
+        this._resolveEventOnRelay(key);
+        this.pendingByServerEventId.delete(key);
+        entry.resolve({ approved: false });
+      }
     }
 
     // Synthesize task_complete from session_idle to surface the assistant's response
@@ -1058,7 +1120,9 @@ export class ApprovalBridge {
             claudeSessionId,
             runtime: 'claude-code',
             source: 'transcript_attach',
-            title: transcript.title || '',
+            // Do NOT send title here — the relay already has the correct
+            // tab-synced title. Sending transcript.title ("你好" etc.) would
+            // overwrite it via the metadata merge.
             cwd: transcript.cwd || '',
             attachedAt: new Date().toISOString(),
           },
