@@ -28,38 +28,49 @@
       <view wx:elif="{{item.side === 'right'}}" class="msg-row right">
         <view class="msg-bubble user" id="msg-{{item.id}}">
           <text class="msg-text">{{item.content}}</text>
-          <text class="msg-time">{{item.displayTime}}</text>
+          <text wx:if="{{item.displayTime}}" class="msg-time">{{item.displayTime}}</text>
         </view>
       </view>
 
-      <!-- Agent event card (left-aligned) -->
+      <!-- Agent event card (left-aligned, accent border) -->
       <view wx:else class="event-card-wrap" id="msg-{{item.id}}">
-        <view class="event-card {{item.pending ? 'pending' : ''}} {{item.isTaskComplete ? 'complete' : ''}}">
+        <view class="event-card accent-{{item.accent}}">
           <view class="event-head">
-            <text class="event-type">{{item.typeLabel}}</text>
-            <text class="event-time">{{item.displayTime}}</text>
+            <view class="event-head-left">
+              <view class="event-glyph glyph-{{item.accent}}"></view>
+              <text class="event-type">{{item.typeLabel}}</text>
+              <text wx:if="{{item.toolName}}" class="tool-tag">{{item.toolName}}</text>
+            </view>
+            <text wx:if="{{item.kindBadge}}" class="kind-badge kind-{{item.accent}}">{{item.kindBadge}}</text>
           </view>
 
-          <!-- Command block -->
-          <view wx:if="{{item.command}}" class="code-block">
-            <text class="code-text">{{item.command}}</text>
-          </view>
-
-          <!-- Summary -->
-          <text wx:if="{{item.summary}}" class="event-summary">{{item.summary}}</text>
-
-          <!-- Pending state: risk tag + wait indicator -->
-          <view class="tag-row" wx:if="{{item.riskText && item.pending}}">
-            <text class="risk-tag {{item.risk_level}}">{{item.riskText}}</text>
-            <view class="pending-pulse">
-              <view class="pulse-dot"></view>
-              <text>等待处理</text>
+          <!-- Command: collapsed single-line or expanded full view -->
+          <view wx:if="{{item.command}}" class="cmd-wrap">
+            <view class="{{item.expanded ? 'cmd-expanded' : 'cmd-line'}}">
+              <text class="{{item.expanded ? 'cmd-full-text mono' : 'cmd-line-text mono'}}">{{item.command}}</text>
+            </view>
+            <view class="cmd-toggle accent-bg-{{item.accent}}" data-id="{{item.eventId}}" catchtap="toggleCmdExpand">
+              <text class="cmd-toggle-arrow {{item.expanded ? 'rotated' : ''}}">›</text>
             </view>
           </view>
+          <!-- Summary if different from command -->
+          <text wx:if="{{item.summary && item.summary !== item.command}}" class="event-summary">{{item.summary}}</text>
 
-          <!-- Resolved state: decision tag -->
-          <view class="tag-row" wx:elif="{{item.decisionText}}">
-            <text class="decision-tag {{item.decision}}">{{item.decisionText}}</text>
+          <!-- Footer: status tags + time -->
+          <view class="event-foot">
+            <view class="foot-tags">
+              <!-- Pending: risk + wait pulse -->
+              <block wx:if="{{item.pending && item.riskText}}">
+                <text class="risk-tag {{item.risk_level}}">{{item.riskText}}</text>
+                <view class="pending-pulse">
+                  <view class="pulse-dot"></view>
+                  <text>等待处理</text>
+                </view>
+              </block>
+              <!-- Resolved: decision -->
+              <text wx:elif="{{item.decisionText}}" class="decision-tag {{item.decision}}">{{item.decisionText}}</text>
+            </view>
+            <text wx:if="{{item.displayTime}}" class="event-time">{{item.displayTime}}</text>
           </view>
 
           <!-- Action buttons for pending -->
@@ -105,15 +116,18 @@
     <view class="approval-sheet" catchtap="">
       <view class="sheet-handle"></view>
       <view class="sheet-head">
-        <text class="sheet-title">审批请求</text>
+        <view class="event-head-left">
+          <text class="sheet-title">审批请求</text>
+          <text wx:if="{{approvalEvent.toolName}}" class="tool-tag">{{approvalEvent.toolName}}</text>
+        </view>
         <text class="risk-tag {{approvalEvent.risk_level}}">{{approvalEvent.riskText}}</text>
       </view>
 
-      <view class="code-block large" wx:if="{{approvalEvent.command}}">
+      <text class="sheet-summary" wx:if="{{approvalEvent.summary}}">{{approvalEvent.summary}}</text>
+
+      <view class="code-block large" wx:if="{{approvalEvent.command && approvalEvent.toolName === 'Bash' && approvalEvent.command !== approvalEvent.summary}}">
         <text class="code-text">{{approvalEvent.command}}</text>
       </view>
-
-      <text class="sheet-summary" wx:if="{{approvalEvent.summary}}">{{approvalEvent.summary}}</text>
 
       <view class="risk-notice" wx:if="{{approvalEvent.pending && !approvalEvent.canApprove}}">
         <text>该请求风险较高，请在电脑端确认后处理。</text>

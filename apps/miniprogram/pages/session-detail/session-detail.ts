@@ -28,6 +28,10 @@ interface ChatMessage {
   decisionText: string;
   canApprove: boolean;
   eventId: string;
+  accent: 'pending' | 'approved' | 'denied' | 'complete' | 'neutral';
+  kindBadge: string;
+  toolName?: string;
+  expanded: boolean;
 }
 
 Page({
@@ -96,12 +100,20 @@ Page({
       this.setData({ deviceOnline: true });
     };
 
+    this._onSessionLabelUpdatedBound = (payload: any) => {
+      if (payload.sessionId === this.data.sessionId) {
+        // Re-fetch session to pick up the new metadata.title
+        this.fetchDetail();
+      }
+    };
+
     app.onWsEvent('event_push', this._onEventPushBound);
     app.onWsEvent('session_deactivated', this._onSessionDeactivatedBound);
     app.onWsEvent('ws_connected', this._onWsConnectedBound);
     app.onWsEvent('ws_disconnected', this._onWsDisconnectedBound);
     app.onWsEvent('device_offline', this._onDeviceOfflineBound);
     app.onWsEvent('device_online', this._onDeviceOnlineBound);
+    app.onWsEvent('session_label_updated', this._onSessionLabelUpdatedBound);
 
     // Sync current connection state
     if (app.globalData.wsConnected !== this.data.wsConnected) {
@@ -116,14 +128,14 @@ Page({
     if (this._onWsDisconnectedBound) app.offWsEvent('ws_disconnected', this._onWsDisconnectedBound);
     if (this._onDeviceOfflineBound) app.offWsEvent('device_offline', this._onDeviceOfflineBound);
     if (this._onDeviceOnlineBound) app.offWsEvent('device_online', this._onDeviceOnlineBound);
+    if (this._onSessionLabelUpdatedBound) app.offWsEvent('session_label_updated', this._onSessionLabelUpdatedBound);
     this._onEventPushBound = undefined;
     this._onSessionDeactivatedBound = undefined;
     this._onWsConnectedBound = undefined;
     this._onWsDisconnectedBound = undefined;
     this._onDeviceOfflineBound = undefined;
     this._onDeviceOnlineBound = undefined;
-    this._onDeviceOfflineBound = undefined;
-    this._onDeviceOnlineBound = undefined;
+    this._onSessionLabelUpdatedBound = undefined;
   },
 
   _startPolling() {
@@ -150,7 +162,7 @@ Page({
       this.setData({
         session: {
           ...session,
-          agentType: session.metadata?.sessionLabel || session.agent_type || 'AI Agent',
+          agentType: session.metadata?.sessionLabel || agentDisplayName(session.agent_type),
           metadataTitle: session.metadata?.title || '',
           metadataCwd: session.metadata?.cwd || '',
           metadataClaudeSessionId: session.metadata?.claudeSessionId || '',
@@ -202,6 +214,9 @@ Page({
           decisionText: '',
           canApprove: false,
           eventId: e.id,
+          accent: 'neutral',
+          kindBadge: '',
+          expanded: false,
         });
         continue;
       }
@@ -224,6 +239,9 @@ Page({
           decisionText: '',
           canApprove: false,
           eventId: e.id,
+          accent: 'complete',
+          kindBadge: 'DONE',
+          expanded: false,
         });
         continue;
       }
@@ -231,6 +249,13 @@ Page({
       if (e.type === 'approval_required') {
         const canApprove = ['low', 'medium'].includes(e.risk_level || '');
         const riskText = RISK_LABELS[e.risk_level as string] || '未知';
+        const accent: ChatMessage['accent'] = e.pending
+          ? 'pending'
+          : e.decision === 'approve'
+            ? 'approved'
+            : e.decision === 'deny'
+              ? 'denied'
+              : 'neutral';
 
         messages.push({
           id: e.id,
@@ -238,7 +263,7 @@ Page({
           side: 'left',
           content: command || summary,
           displayTime: time,
-          typeLabel: '命令执行请求',
+          typeLabel: '审批请求',
           isTaskComplete: false,
           command,
           summary,
@@ -249,6 +274,10 @@ Page({
           decisionText: !e.pending ? this.getDecisionText(e.decision) : '',
           canApprove,
           eventId: e.id,
+          accent,
+          kindBadge: e.pending ? 'REQUEST' : (this.getDecisionText(e.decision) || 'DONE'),
+          toolName: e.data?.toolName || '',
+          expanded: false,
         });
 
         if (!e.pending && e.decision) {
@@ -270,6 +299,9 @@ Page({
             decisionText: decisionContent,
             canApprove: false,
             eventId: e.id,
+            accent: 'neutral',
+            kindBadge: '',
+            expanded: false,
           });
         }
         continue;
@@ -298,6 +330,9 @@ Page({
           decisionText: '',
           canApprove: false,
           eventId: e.id,
+          accent: 'neutral',
+          kindBadge: '',
+          expanded: false,
         });
         continue;
       }
@@ -391,6 +426,8 @@ Page({
       messages[aiIdx].pending = false;
       messages[aiIdx].decision = 'reply';
       messages[aiIdx].decisionText = '已回复';
+      messages[aiIdx].accent = 'neutral';
+      messages[aiIdx].kindBadge = '已回复';
     }
     const replyId = eventId + '-reply-' + Date.now();
     messages.push({
@@ -410,6 +447,9 @@ Page({
       decisionText: '已回复',
       canApprove: false,
       eventId,
+      accent: 'neutral',
+      kindBadge: '',
+      expanded: false,
     });
 
     this.setData({ chatMessages: messages, sheetReplyText: '' });
@@ -446,6 +486,8 @@ Page({
       messages[aiIdx].pending = false;
       messages[aiIdx].decision = decision;
       messages[aiIdx].decisionText = this.getDecisionText(decision);
+      messages[aiIdx].accent = decision === 'approve' ? 'approved' : decision === 'deny' ? 'denied' : 'neutral';
+      messages[aiIdx].kindBadge = this.getDecisionText(decision);
     }
     const decisionContent = this.getDecisionText(decision);
     const dupIdx = messages.findIndex((m: ChatMessage) => m.eventId === eventId + '-decision');
@@ -467,6 +509,9 @@ Page({
         decisionText: decisionContent,
         canApprove: false,
         eventId,
+        accent: 'neutral',
+        kindBadge: '',
+        expanded: false,
       });
     }
     this.setData({ chatMessages: messages }, () => {
@@ -502,6 +547,8 @@ Page({
       messages[aiIdx].pending = false;
       messages[aiIdx].decision = 'reply';
       messages[aiIdx].decisionText = this.getDecisionText('reply');
+      messages[aiIdx].accent = 'neutral';
+      messages[aiIdx].kindBadge = this.getDecisionText('reply');
     }
     const replyId = eventId + '-reply-' + Date.now();
     messages.push({
@@ -521,6 +568,9 @@ Page({
       decisionText: this.getDecisionText('reply'),
       canApprove: false,
       eventId,
+      accent: 'neutral',
+      kindBadge: '',
+      expanded: false,
     });
 
     const replyTexts = { ...this.data.replyTexts };
@@ -528,6 +578,18 @@ Page({
 
     this.setData({ chatMessages: messages, replyTexts, scrollToId: 'msg-' + replyId });
     setTimeout(() => this.fetchDetail(), 1500);
+  },
+
+  // ── Command expand/collapse toggle ──
+
+  toggleCmdExpand(e: any) {
+    const eventId = e.currentTarget.dataset.id;
+    const messages = [...this.data.chatMessages];
+    const idx = messages.findIndex((m: ChatMessage) => m.eventId === eventId && m.type === 'ai');
+    if (idx !== -1) {
+      const key = `chatMessages[${idx}].expanded`;
+      this.setData({ [key]: !messages[idx].expanded });
+    }
   },
 
   // ── Command input ──
@@ -582,3 +644,15 @@ Page({
     return h + ':' + m;
   },
 });
+
+const AGENT_DISPLAY_NAMES: Record<string, string> = {
+  'claude-code': 'Claude Code',
+  'claude-code-hook': 'Claude Code',
+  'codex': 'Codex',
+  'opencode': 'OpenCode',
+};
+
+function agentDisplayName(agentType?: string): string {
+  if (!agentType) return 'AI Agent';
+  return AGENT_DISPLAY_NAMES[agentType] || agentType;
+}
