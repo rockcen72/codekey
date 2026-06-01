@@ -32,6 +32,7 @@ export type AgentEventType =
 export interface ApprovalEventData {
   action: 'run_command' | 'write_file' | 'modify_file' | 'unknown';
   command?: string;
+  toolName?: string;
   cwd?: string;
   risk: RiskLevel;
   summary: string;

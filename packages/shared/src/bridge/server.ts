@@ -156,6 +156,26 @@ function handleRequest(req: IncomingMessage, res: ServerResponse, bridge: Approv
     return;
   }
 
+  // Sync a tab label to the relay for a specific claudeSessionId (startup use).
+  if (req.method === 'POST' && url.pathname === '/v1/sync-session-label') {
+    let body = '';
+    req.on('data', (chunk) => { body += chunk; });
+    req.on('end', () => {
+      try {
+        const { claudeSessionId, label } = JSON.parse(body);
+        if (claudeSessionId && label && typeof label === 'string') {
+          bridge.syncSessionLabel(claudeSessionId, label);
+        }
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: true }));
+      } catch {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: false }));
+      }
+    });
+    return;
+  }
+
   if (req.method === 'POST' && url.pathname === '/v1/activate-session') {
     let body = '';
     req.on('data', (chunk) => { body += chunk; });
