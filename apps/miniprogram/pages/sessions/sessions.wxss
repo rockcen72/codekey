@@ -246,6 +246,28 @@
   color: var(--ck-subtle);
 }
 
+/* ── Pending approval badge (WeChat / QQ style) ── */
+
+.pending-badge {
+  margin-left: auto;
+  min-width: 36rpx;
+  height: 36rpx;
+  padding: 0 8rpx;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 36rpx;
+  background: #e53e3e;
+  box-shadow: 0 2rpx 6rpx rgba(229, 62, 62, 0.35);
+}
+
+.pending-badge-num {
+  font-size: 20rpx;
+  font-weight: 700;
+  color: #fff;
+  line-height: 1;
+}
+
 /* ── Delete button (revealed on swipe) ── */
 
 .delete-area {

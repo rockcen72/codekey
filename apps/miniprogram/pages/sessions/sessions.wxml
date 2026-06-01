@@ -16,14 +16,10 @@
   </view>
 
   <!-- Metrics: compact row -->
-  <view class="metrics-row" wx:if="{{sessions.length > 0 || pendingTotal > 0}}">
-    <view class="metric-chip" wx:if="{{activeTotal > 0}}">
+  <view class="metrics-row" wx:if="{{activeTotal > 0}}">
+    <view class="metric-chip">
       <view class="metric-dot active"></view>
       <text>{{activeTotal}} 活跃</text>
-    </view>
-    <view class="metric-chip danger" wx:if="{{pendingTotal > 0}}">
-      <view class="metric-dot pending"></view>
-      <text>{{pendingTotal}} 待审批</text>
     </view>
   </view>
 
@@ -61,6 +57,10 @@
 
             <view class="card-footer">
               <text class="session-id mono" wx:if="{{item.displayClaudeId}}">{{item.displayClaudeId}}</text>
+              <!-- Pending approval badge (WeChat-style) -->
+              <view wx:if="{{item.hasPending}}" class="pending-badge">
+                <text class="pending-badge-num">{{item.pendingCount}}</text>
+              </view>
             </view>
           </view>
         </view>

@@ -27,7 +27,7 @@ export function hasAuth(): boolean {
 }
 
 export function getServerUrl(): string {
-  return wx.getStorageSync(KEYS.SERVER_URL) || 'https://codekey.tinymoney.cn';
+  return wx.getStorageSync(KEYS.SERVER_URL) || 'https://81.70.235.58';
 }
 
 export function setServerUrl(url: string): void {

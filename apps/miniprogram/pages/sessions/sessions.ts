@@ -36,6 +36,10 @@ Page({
       this.fetchSessions();
     };
     this._onFetchSessionsBound = () => this.fetchSessions();
+    this._onWsConnectedBound = () => {
+      this.setData({ wsConnected: true });
+      this.fetchSessions();
+    };
     this._onWsDisconnectedBound = () => this.setData({ wsConnected: false });
     this._onDeviceOfflineBound = () => {
       this.setData({ deviceOnline: false });
@@ -50,7 +54,7 @@ Page({
     app.onWsEvent('session_registered', this._onFetchSessionsBound);
     app.onWsEvent('session_deactivated', this._onFetchSessionsBound);
     app.onWsEvent('session_label_updated', this._onFetchSessionsBound);
-    app.onWsEvent('ws_connected', this._onFetchSessionsBound);
+    app.onWsEvent('ws_connected', this._onWsConnectedBound);
     app.onWsEvent('ws_disconnected', this._onWsDisconnectedBound);
     app.onWsEvent('device_offline', this._onDeviceOfflineBound);
     app.onWsEvent('device_online', this._onDeviceOnlineBound);
@@ -63,6 +67,7 @@ Page({
 
   unsubscribeWs() {
     if (this._onEventPushBound) app.offWsEvent('event_push', this._onEventPushBound);
+    if (this._onWsConnectedBound) app.offWsEvent('ws_connected', this._onWsConnectedBound);
     if (this._onWsDisconnectedBound) app.offWsEvent('ws_disconnected', this._onWsDisconnectedBound);
     if (this._onDeviceOfflineBound) app.offWsEvent('device_offline', this._onDeviceOfflineBound);
     if (this._onDeviceOnlineBound) app.offWsEvent('device_online', this._onDeviceOnlineBound);
@@ -70,10 +75,10 @@ Page({
       app.offWsEvent('session_registered', this._onFetchSessionsBound);
       app.offWsEvent('session_deactivated', this._onFetchSessionsBound);
       app.offWsEvent('session_label_updated', this._onFetchSessionsBound);
-      app.offWsEvent('ws_connected', this._onFetchSessionsBound);
     }
     this._onEventPushBound = undefined;
     this._onFetchSessionsBound = undefined;
+    this._onWsConnectedBound = undefined;
     this._onWsDisconnectedBound = undefined;
     this._onDeviceOfflineBound = undefined;
     this._onDeviceOnlineBound = undefined;
