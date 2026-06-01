@@ -9,7 +9,12 @@ dist/
 # Build artifacts
 *.tsbuildinfo
 *.vsix
+*.js.map
 packages/server/relay.cjs
+
+# Bundled bridge output (esbuild)
+packages/shared/src/bridge/claude-transcripts.js
+packages/shared/src/bridge/claude-transcripts.js.map
 
 # Private project config
 project.private.config.json
@@ -26,6 +31,18 @@ docs/superpowers/
 
 # Logs
 *.log
+
+# Runtime state store
+data/
+
+# Temp / PoC
+tmp/
+
+# Admin panel (WIP)
+packages/admin/
+
+# Subscription / commercialization plans (not for VCS)
+docs/plans/subscription-plan.md
 
 # OS
 .DS_Store
