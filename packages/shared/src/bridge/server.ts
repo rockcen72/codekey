@@ -118,9 +118,14 @@ function handleRequest(req: IncomingMessage, res: ServerResponse, bridge: Approv
   }
 
   if (req.method === 'POST' && url.pathname === '/v1/codex/session/ensure') {
-    if (codexRelay) codexRelay.ensureSession();
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ ok: true }));
+    const p = codexRelay ? codexRelay.ensureSession() : Promise.resolve();
+    p.then(() => {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: true }));
+    }).catch(() => {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'session_register_failed' }));
+    });
     return;
   }
 

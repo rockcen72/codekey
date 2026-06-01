@@ -1,20 +1,15 @@
 import type { RelayClient } from './relay-client.js';
 
-/**
- * Codex approval relay. Lives in the bridge process.
- *
- * Approvals: registerApproval → session + approval_required → relay → mini program.
- * Decisions come back via approval_forward → cached → extension polls → respondApproval.
- *
- * Remote input: Mini program sends command → relay → CodexRelay queues → extension
- * polls → client.startTurn(). Replies go back via pushEvent → relay → mini program.
- */
 export class CodexRelay {
   private pendingQueue: { correlationId: string; command: string; risk: string }[] = [];
   private decisions: { correlationId: string; decision: string }[] = [];
   private prompts: string[] = [];
+  /** Buffered events pushed before session_registered. */
+  private pendingEvents: { eventType: string; data: Record<string, unknown> }[] = [];
   private sessionId: string | null = null;
   private sessionPending = false;
+  /** Resolved when session_registered arrives. */
+  private sessionReadyResolve: (() => void) | null = null;
   private codexSessionUid: string | null = null;
   private relay: RelayClient;
 
@@ -42,26 +37,22 @@ export class CodexRelay {
     });
   }
 
-  /** Register the Codex session with relay (called after thread/start). */
-  ensureSession(): void {
-    if (this.sessionPending) return;
-    this._registerSession();
+  /** Register session and wait until session_registered resolves. */
+  ensureSession(): Promise<void> {
+    if (this.sessionId) return Promise.resolve();
+    if (!this.sessionPending) this._registerSession();
+    // Return a promise that resolves when session_registered fires
+    return new Promise<void>((resolve) => {
+      this.sessionReadyResolve = resolve;
+    });
   }
 
-  /**
-   * Push a generic event to the relay under this Codex session.
-   * Used for sending task_complete, status updates, etc. back to the mini program.
-   */
   pushEvent(eventType: string, data: Record<string, unknown>): void {
-    if (!this.sessionId) return;
-    this.relay.sendRaw(JSON.stringify({
-      type: 'event',
-      payload: {
-        sessionId: this.sessionId,
-        eventType,
-        data,
-      },
-    }));
+    if (this.sessionId) {
+      this._sendEvent(eventType, data);
+    } else {
+      this.pendingEvents.push({ eventType, data });
+    }
   }
 
   registerApproval(correlationId: string, command: string, risk: string): void {
@@ -95,10 +86,7 @@ export class CodexRelay {
       payload: {
         agentType: 'codex',
         claudeSessionId: uid,
-        metadata: {
-          title: 'Codex Session',
-          source: 'managed_codex_relay',
-        },
+        metadata: { title: 'Codex Session', source: 'managed_codex_relay' },
       },
     }));
 
@@ -106,10 +94,20 @@ export class CodexRelay {
       const p = payload as { claudeSessionId?: string; sessionId: string };
       if (p.claudeSessionId !== uid || !p.sessionId) return;
       this.sessionId = p.sessionId;
-      // Register the command listener now that we have a real sessionId
-      // (re-register is harmless — the old listener already checks sessionId)
+
+      // Flush buffered approvals
       for (const a of this.pendingQueue) this._pushApproval(a.correlationId, a.command, a.risk);
       this.pendingQueue = [];
+
+      // Flush buffered events
+      for (const e of this.pendingEvents) this._sendEvent(e.eventType, e.data);
+      this.pendingEvents = [];
+
+      // Resolve the ensureSession() promise
+      if (this.sessionReadyResolve) {
+        this.sessionReadyResolve();
+        this.sessionReadyResolve = null;
+      }
     };
     this.relay.on('session_registered', onRegistered);
   }
@@ -125,6 +123,14 @@ export class CodexRelay {
         risk,
         clientEventId: correlationId,
       },
+    }));
+  }
+
+  private _sendEvent(eventType: string, data: Record<string, unknown>): void {
+    if (!this.sessionId) return;
+    this.relay.sendRaw(JSON.stringify({
+      type: 'event',
+      payload: { sessionId: this.sessionId, eventType, data },
     }));
   }
 }

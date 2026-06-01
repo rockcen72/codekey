@@ -92,6 +92,26 @@ export async function startCodexSession(context: vscode.ExtensionContext): Promi
     const threadId = await client.startThread('workspace-write');
     log('[Codex] thread started:', threadId);
 
+    // Register notification listeners BEFORE startTurn (so initial turn events are captured)
+    let agentContent = '';
+    client.on('raw_notification', (method: string, _msg: Record<string, unknown>) => {
+      if (method === 'item/agentMessage/delta') {
+        const params = _msg.params as Record<string, unknown> | undefined;
+        if (params?.delta && typeof params.delta === 'string') agentContent += params.delta;
+      }
+    });
+    client.on('notification', (method: string) => {
+      if (method === 'turn/completed') {
+        const summary = agentContent.slice(0, 500) || 'Codex turn completed';
+        agentContent = '';
+        fetch(`${bridgeUrl()}/v1/codex/event`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ eventType: 'task_complete', data: { summary } }),
+        }).catch(() => {});
+      }
+    });
+
     // Register Codex session with relay so mini program can see and interact
     try {
       await fetch(`${bridgeUrl()}/v1/codex/session/ensure`, { method: 'POST', signal: AbortSignal.timeout ? AbortSignal.timeout(5000) : undefined });
@@ -114,25 +134,7 @@ export async function startCodexSession(context: vscode.ExtensionContext): Promi
     terminal.sendText(`// Codex session ${threadId} — managed by CodeKey`);
     terminal.show();
 
-    // Aggregate agent message content and forward turn/completed with real reply
-    let agentContent = '';
-    client.on('raw_notification', (method: string, _msg: Record<string, unknown>) => {
-      if (method === 'item/agentMessage/delta') {
-        const params = _msg.params as Record<string, unknown> | undefined;
-        if (params?.delta && typeof params.delta === 'string') agentContent += params.delta;
-      }
-    });
-    client.on('notification', (method: string) => {
-      if (method === 'turn/completed') {
-        const summary = agentContent.slice(0, 500) || 'Codex turn completed';
-        agentContent = '';
-        fetch(`${bridgeUrl()}/v1/codex/event`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ eventType: 'task_complete', data: { summary } }),
-        }).catch(() => {});
-      }
-    });
+
 
     // Poll for mini program decisions (every 2s, same cadence as CommandRelayService)
     const pollTimer = setInterval(async () => {
