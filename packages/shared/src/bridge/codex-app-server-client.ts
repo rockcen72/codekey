@@ -60,6 +60,8 @@ export class CodexAppServerClient extends EventEmitter {
   private destroyed = false;
   /** Auto-restart counter. Incremented in onExit, reset on explicit user start() via resetRestartCount(). */
   private restartCount = 0;
+  /** Saved restart timer handle so stop() can cancel it. */
+  private restartTimer: ReturnType<typeof setTimeout> | null = null;
   private threadId: string | null = null;
   private seq = 0;
 
@@ -121,9 +123,13 @@ export class CodexAppServerClient extends EventEmitter {
     });
   }
 
-  /** Graceful stop. Kills the process. */
+  /** Graceful stop. Kills the process and cancels any pending restart. */
   async stop(): Promise<void> {
     this.destroyed = true;
+    if (this.restartTimer) {
+      clearTimeout(this.restartTimer);
+      this.restartTimer = null;
+    }
     this.expireAllPending('Client shutting down');
     if (this.proc) {
       this.proc.kill();
@@ -389,7 +395,9 @@ export class CodexAppServerClient extends EventEmitter {
     this.restartCount++;
     const delay = Math.min(RESTART_BASE_MS * Math.pow(2, this.restartCount - 1), 10_000);
     this.emit('reconnecting', { attempt: this.restartCount, delay });
-    setTimeout(() => {
+    this.restartTimer = setTimeout(() => {
+      this.restartTimer = null;
+      if (this.destroyed) return;
       this.start({ internal: true }).catch((err) => this.emit('error', err));
     }, delay);
   }

@@ -50,6 +50,11 @@ export class BridgeStatusService {
     BridgeStatusService._extensionPath = fsPath;
   }
 
+  /** Get the previously set extension path. */
+  static getExtensionPath(): string {
+    return BridgeStatusService._extensionPath;
+  }
+
   get state(): BridgeState {
     const hookInstalled = isHookInstalledSafe();
     const hookConfig = readHookConfigStatus();

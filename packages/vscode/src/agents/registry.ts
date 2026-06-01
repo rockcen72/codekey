@@ -18,12 +18,12 @@ export function getAgents(): AgentDef[] {
       sessionAgentTypes: ['claude-code', 'claude-code-hook'],
     },
     {
-      id: 'codex-cli',
-      name: 'Codex CLI',
-      description: 'planned adapter',
-      status: 'coming_soon',
-      mode: 'none',
-      sessionAgentTypes: [],
+      id: 'codex',
+      name: 'Codex',
+      description: 'managed app-server — remote approval + control',
+      status: 'available',
+      mode: 'pty',
+      sessionAgentTypes: ['codex'],
     },
     {
       id: 'opencode',

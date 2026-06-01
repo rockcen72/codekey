@@ -49,6 +49,10 @@
         "title": "CodeKey: Start Claude Code"
       },
       {
+        "command": "codekey.startCodexSession",
+        "title": "CodeKey: Start Codex Session"
+      },
+      {
         "command": "codekey.enableHook",
         "title": "CodeKey: Enable Hook"
       },
@@ -64,6 +68,11 @@
           "type": "string",
           "default": "",
           "description": "飞书小程序 App ID。配置后配对区域可切换到飞书平台，二维码将使用飞书 AppLink 格式。"
+        },
+        "codekey.codexExecutable": {
+          "type": "string",
+          "default": "",
+          "description": "Codex CLI 可执行文件的绝对路径。不配置时将依次搜索 PATH 和扩展内置的 codex binary。"
         }
       }
     }

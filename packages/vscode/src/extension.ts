@@ -3,6 +3,7 @@ import { loadCredentials } from './auth/credentials.js';
 import { StatusBar } from './status/bar.js';
 import { showDashboard } from './commands/show-dashboard.js';
 import { pairDevice } from './commands/pair.js';
+import { startCodexSession } from './commands/start-codex.js';
 import { findExistingClaudeTerminal, classifyTerminal, startClaudeCode, ensureCcSessionSync } from './commands/start-claude.js';
 import { enableHook } from './commands/enable-hook.js';
 import { SidebarProvider } from './webview/sidebar-provider.js';
@@ -105,6 +106,10 @@ export function activate(context: vscode.ExtensionContext) {
       log('cmd: start');
       const term = await startClaudeCode(context, statusBar!);
       if (term) commandRelay.setTerminal(term);
+    }),
+    vscode.commands.registerCommand('codekey.startCodexSession', () => {
+      log('cmd: startCodex');
+      startCodexSession(context);
     }),
     vscode.commands.registerCommand('codekey.enableHook', () => {
       log('cmd: enableHook');
