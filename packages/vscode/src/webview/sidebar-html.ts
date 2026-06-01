@@ -24,6 +24,7 @@ export interface PairingState {
 
 export interface SidebarState {
   deviceStatus: 'unpaired' | 'paired' | 'offline';
+  deviceId?: string;
   phoneName: string;
   bridge: BridgeState;
   agents: (AgentDef & {
@@ -45,6 +46,8 @@ export interface ClaudeSessionItem {
   sessionId: string;
   title: string;
   cwd: string;
+  transcriptPath?: string;
+  createdAt?: string;
   updatedAt: string;
   attached?: boolean;
   canDetach?: boolean;
