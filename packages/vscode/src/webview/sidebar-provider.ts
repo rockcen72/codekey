@@ -633,15 +633,48 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
 
   private async _handlePairingGenerate(): Promise<void> {
     const creds = loadCredentials();
+    const relayUrl = creds?.relayUrl || 'https://81.70.235.58';
+
+    // No credentials: bootstrap (first-time pair or after unpair)
     if (!creds?.deviceSecret || !creds?.deviceId) {
-      this._pairingState = { code: '', method: 'code', platform: this._pairingState?.platform || 'wechat', status: 'error', statusText: 'No device credentials', expiresAt: 0 };
-      this._pushState();
+      const deviceSecret = crypto.randomUUID();
+      const deviceSecretHash = crypto.createHash('sha256').update(deviceSecret).digest('hex');
+      try {
+        const resp = await fetch(`${relayUrl}/api/v1/devices/pair`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ deviceSecretHash, deviceName: `VS Code (${os.hostname()})` }),
+          signal: AbortSignal.timeout(10000),
+        });
+        if (!resp.ok) {
+          this._pairingState = { code: '', method: 'code', platform: this._pairingState?.platform || 'wechat', status: 'error', statusText: 'Pairing failed', expiresAt: 0 };
+          this._pushState();
+          return;
+        }
+        const result = await resp.json() as { code: string; deviceId: string; expiresIn?: number; pairUrl?: string };
+        // Save new credentials for subsequent re-pair
+        const { saveCredentials } = await import('../auth/credentials.js');
+        saveCredentials({ deviceId: result.deviceId, deviceSecret, relayUrl });
+        this._pairingState = {
+          code: String(result.code),
+          method: 'code',
+          platform: this._pairingState?.platform || 'wechat',
+          status: 'waiting',
+          statusText: 'Waiting for scan...',
+          expiresAt: Date.now() + (result.expiresIn ?? 300) * 1000,
+          pairUrl: result.pairUrl || '',
+        };
+        this._pushState();
+      } catch (err) {
+        this._pairingState = { code: '', method: 'code', platform: this._pairingState?.platform || 'wechat', status: 'error', statusText: `Connection failed: ${(err as Error).message}`, expiresAt: 0 };
+        this._pushState();
+      }
       return;
     }
 
     const deviceSecretHash = crypto.createHash('sha256').update(creds.deviceSecret).digest('hex');
     try {
-      const resp = await fetch(`${creds.relayUrl}/api/v1/devices/pair`, {
+      const resp = await fetch(`${relayUrl}/api/v1/devices/pair`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
