@@ -655,6 +655,8 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         // Save new credentials for subsequent re-pair
         const { saveCredentials } = await import('../auth/credentials.js');
         saveCredentials({ deviceId: result.deviceId, deviceSecret, relayUrl });
+        // Bridge must be running to receive deviceToken via pairing WS
+        BridgeStatusService.getInstance().ensureStarted();
         this._pairingState = {
           code: String(result.code),
           method: 'code',
