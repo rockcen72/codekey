@@ -143,8 +143,8 @@ export class BridgeStatusService {
 
     const creds = loadCredentials();
     if (!creds?.deviceId || !creds?.deviceSecret) {
-      log('[CodeKey] no credentials found — cannot start bridge');
-      this._update({ bridge: 'error' });
+      log('[CodeKey] no credentials — bridge not started, waiting for pair');
+      this._update({ bridge: 'stopped' });
       return;
     }
 
