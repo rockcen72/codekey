@@ -9,7 +9,7 @@ import { SidebarProvider } from './webview/sidebar-provider.js';
 import { CommandRelayService } from './services/command-relay.js';
 import { BridgeStatusService } from './services/bridge-status.js';
 import { SessionStore } from './services/session-store.js';
-import { log } from './log.js';
+import { log, setVerbose, isVerbose } from './log.js';
 
 let statusBar: StatusBar | null = null;
 
@@ -117,6 +117,10 @@ export function activate(context: vscode.ExtensionContext) {
       log('cmd: restartBridge');
       await BridgeStatusService.getInstance().restart();
       vscode.window.showInformationMessage('CodeKey bridge restarted');
+    }),
+    vscode.commands.registerCommand('codekey.toggleDebugLog', () => {
+      setVerbose(!isVerbose());
+      vscode.window.showInformationMessage(`CodeKey debug logging: ${isVerbose() ? 'ON' : 'OFF'}`);
     }),
   );
 

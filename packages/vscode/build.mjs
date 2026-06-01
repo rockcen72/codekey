@@ -22,6 +22,13 @@ await esbuild.build({
   minify: false,
 });
 
+// 1b. Copy admin panel HTML
+const adminSrc = path.join(root, '..', 'admin', 'index.html');
+if (fs.existsSync(adminSrc)) {
+  fs.copyFileSync(adminSrc, path.join(distDir, 'index.html'));
+  console.log('  copied admin panel → dist/index.html');
+}
+
 // 2. Bridge entry bundle (runs as child process through ELECTRON_RUN_AS_NODE)
 // Uses CJS format + .cjs extension because ws (bundled dep) does dynamic require()
 // which is not supported in ESM. The .cjs extension is always treated as CJS by Node.js

@@ -4,7 +4,7 @@ import { execSync, spawn } from 'node:child_process';
 import * as vscode from 'vscode';
 import { classifyTerminal } from '../commands/start-claude.js';
 import { findCli } from '../cli.js';
-import { log } from '../log.js';
+import { log, debug } from '../log.js';
 import { BridgeStatusService } from './bridge-status.js';
 
 const POLL_MS = 2000;
@@ -145,11 +145,11 @@ export class CommandRelayService {
 
       const term = this._findManagedTerminal();
       const claudeBinary = term ? null : this._findClaudeBinary();
-      log('[command-relay] _poll: commands=%d term=%s claudeBinary=%s', commands.length, !!term, !!claudeBinary);
-      log('[command-relay] terminals:', vscode.window.terminals.map(t => ({ name: t.name, exitStatus: t.exitStatus })));
+      debug('[command-relay] _poll: commands=%d term=%s claudeBinary=%s', commands.length, !!term, !!claudeBinary);
+      debug('[command-relay] terminals:', vscode.window.terminals.map(t => ({ name: t.name, exitStatus: t.exitStatus })));
       const deliverable = commands.filter(c => term || (claudeBinary && c.claudeSessionId));
       if (deliverable.length === 0) {
-        log('[command-relay] no deliverable target, command_ids=%s', commands.map(c => c.id).join(','));
+        debug('[command-relay] no deliverable target, command_ids=%s', commands.map(c => c.id).join(','));
         return;
       }
 
@@ -228,6 +228,7 @@ export class CommandRelayService {
         cwd: cwd ?? vscode.workspace.workspaceFolders?.[0]?.uri?.fsPath,
         shellPath: binary.path,
         shellArgs: [...binary.args, '--resume', sessionId],
+        env: { CODEKEY_WINDOW_ID: vscode.env.sessionId },
         hideFromUser: true,
       });
       this._resumeTerminals.set(sessionId, term);

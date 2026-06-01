@@ -1,6 +1,21 @@
 import { RelayClient, ApprovalBridge, startBridgeServer } from '@codekey/shared/bridge';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
 
 const PARENT_CHECK_MS = 3000;
+
+/** Load deviceSecret from credentials file (~/.codekey/credentials.json) for pairing. */
+function loadDeviceSecret(): string | undefined {
+  try {
+    const credPath = path.join(os.homedir(), '.codekey', 'credentials.json');
+    const raw = fs.readFileSync(credPath, 'utf-8');
+    const creds = JSON.parse(raw);
+    return creds.deviceSecret ?? undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 /** Check if parent process is still alive. Returns false if orphaned. */
 function isParentAlive(): boolean {
@@ -23,7 +38,7 @@ async function main(): Promise<void> {
   };
 
   const deviceId = flag('--device-id');
-  const relayUrl = process.env.CODEKEY_RELAY_URL || 'https://codekey.tinymoney.cn';
+  const relayUrl = process.env.CODEKEY_RELAY_URL || 'https://81.70.235.58';
   const token = process.env.CODEKEY_DEVICE_TOKEN;
 
   if (!deviceId || !token) {
@@ -36,6 +51,10 @@ async function main(): Promise<void> {
   const bridge = new ApprovalBridge(relay);
 
   bridge.listenRelayCommands();
+
+  // Admin panel dir: resolved relative to the bundled bridge-entry.js in extension dist
+  const adminDir = __dirname;
+
   const { close, port } = await startBridgeServer(bridge, 3001, 'vscode-bundled', () => {
     clearInterval(parentTimer);
     clearInterval(reconcileTimer);
@@ -46,7 +65,7 @@ async function main(): Promise<void> {
       relay.close();
       process.exit(0);
     });
-  }, startedAt);
+  }, startedAt, { deviceId, relayUrl, deviceToken: token, deviceSecret: loadDeviceSecret(), adminDir });
   console.error(`[bridge-entry] HTTP server listening on port ${port}`);
 
   // Periodic reconcile: sync in-memory attached-session state with the relay

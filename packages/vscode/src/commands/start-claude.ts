@@ -3,7 +3,7 @@ import { loadCredentials } from '../auth/credentials.js';
 import { findCli } from '../cli.js';
 import { installHook } from '../hook/installer.js';
 import { BridgeStatusService } from '../services/bridge-status.js';
-import { log } from '../log.js';
+import { log, debug } from '../log.js';
 import type { StatusBar } from '../status/bar.js';
 
 const bridgeService = BridgeStatusService.getInstance();
@@ -30,22 +30,43 @@ function setSessionLabel(label: string, windowId?: string): void {
   }).catch(() => { /* bridge may not be ready yet */ });
 }
 
+/** Push a tab label directly to the relay for a specific claudeSessionId.
+ *  Used on startup when windowSessions mapping isn't available yet. */
+export function syncSessionLabel(claudeSessionId: string, label: string): void {
+  fetch(`${bridgeUrl()}/v1/sync-session-label`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ claudeSessionId, label }),
+  }).catch(() => {});
+}
+
 /** Find Claude Code webview panel tab and return its label.
- *  Prefers non-default labels (i.e. not "Claude Code") so that
- *  multi-tab scenarios pick the tab whose title is already a topic summary. */
+ *  Prefers the ACTIVE tab's label (most likely what the user is looking at),
+ *  then falls back to any non-default label, then the default "Claude Code". */
 function getClaudeTabLabel(): string | undefined {
-  let fallback: string | undefined;
+  let nonDefaultFallback: string | undefined;
   for (const group of vscode.window.tabGroups.all) {
+    // 1. Check the active tab first — highest confidence it matches the current session
+    const active = group.activeTab;
+    if (active) {
+      const isWv = active.input instanceof vscode.TabInputWebview;
+      const vt = isWv ? (active.input as any).viewType : undefined;
+      if (isWv && vt && vt.endsWith(CLAUDE_CODE_VIEW_TYPE)) {
+        if (active.label !== 'Claude Code') return active.label;
+      }
+    }
+    // 2. Scan remaining tabs for a non-default label
     for (const tab of group.tabs) {
       const isWv = tab.input instanceof vscode.TabInputWebview;
       const vt = isWv ? (tab.input as any).viewType : undefined;
       if (isWv && vt && vt.endsWith(CLAUDE_CODE_VIEW_TYPE)) {
-        if (tab.label !== 'Claude Code') return tab.label;
-        if (!fallback) fallback = tab.label;
+        if (tab.label !== 'Claude Code') {
+          if (!nonDefaultFallback) nonDefaultFallback = tab.label;
+        }
       }
     }
   }
-  return fallback;
+  return nonDefaultFallback;
 }
 
 /**
@@ -66,7 +87,7 @@ function startTabLabelSync(windowId: string): vscode.Disposable {
     const lbl = getClaudeTabLabel();
     if (lbl && lbl !== 'Claude Code' && lbl !== lastLabel) {
       lastLabel = lbl;
-      log(`syncLabel: sending label "${lbl}" for window ${windowId}`);
+      debug(`syncLabel: sending label "${lbl}" for window ${windowId}`);
       setSessionLabel(lbl);
     }
   };
