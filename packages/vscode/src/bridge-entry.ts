@@ -47,7 +47,8 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  const relay = new RelayClient(deviceId, token, relayUrl);
+  const isPairing = args.includes('--pairing');
+  const relay = new RelayClient(deviceId, token, relayUrl, isPairing);
   const bridge = new ApprovalBridge(relay);
 
   bridge.listenRelayCommands();

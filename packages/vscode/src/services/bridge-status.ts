@@ -152,8 +152,11 @@ export class BridgeStatusService {
       bridgeEntry,
       '--device-id', creds.deviceId,
     ];
+    if (!creds.deviceToken) {
+      args.push('--pairing');
+    }
 
-    log(`[CodeKey] spawning bundled bridge: ${process.execPath} ${bridgeEntry} --device-id ${creds.deviceId}`);
+    log(`[CodeKey] spawning bundled bridge: ${process.execPath} ${bridgeEntry} --device-id ${creds.deviceId}${creds.deviceToken ? '' : ' --pairing'}`);
 
     const proc = spawn(process.execPath, args, {
       stdio: ['ignore', 'pipe', 'pipe'],
