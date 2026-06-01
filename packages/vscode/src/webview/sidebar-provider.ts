@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import * as path from 'node:path';
 import * as crypto from 'node:crypto';
 import * as os from 'node:os';
+import WebSocket from 'ws';
 import { loadCredentials, clearCredentials } from '../auth/credentials.js';
 import { createApi, ApiError, type SessionResponse } from '../api/client.js';
 import { getAgents } from '../agents/registry.js';
@@ -56,6 +57,8 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
   private _bridgeApprovals: BridgePendingApproval[] = [];
   private _bridgeSupportsPendingApprovals = false;
   private _lastApprovalSig = '';
+  private _pairingWs?: WebSocket;
+  private _pairingTimeout?: ReturnType<typeof setTimeout>;
 
   constructor(private _context: vscode.ExtensionContext) {}
 
@@ -280,7 +283,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       // Auto-detect mini program offline: switch to pairing view
       if (deviceStatus === 'paired' && !bridge.mpOnline) {
         // Only reset to idle if the user hasn't already started pairing
-        if (!this._pairingState || this._pairingState.status === 'paired' || this._pairingState.status === 'idle') {
+        if (!this._pairingState || this._pairingState.status === 'idle') {
           deviceStatus = 'unpaired';
           this._pairingState = {
             code: '',
@@ -606,7 +609,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         this._pushState();
         break;
       case 'pairedDevice':
-        this._handlePairingComplete(msg.token);
+        this._handlePairingComplete(msg.token, msg.deviceId);
         break;
       case 'unpairDevice':
         this._handleUnpair();
@@ -615,6 +618,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
   }
 
   private async _handleUnpair(): Promise<void> {
+    this._closePairingSocket();
     const creds = loadCredentials();
     if (creds?.deviceToken) {
       try {
@@ -655,8 +659,8 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         // Save new credentials for subsequent re-pair
         const { saveCredentials } = await import('../auth/credentials.js');
         saveCredentials({ deviceId: result.deviceId, deviceSecret, relayUrl });
-        // Bridge must be running to receive deviceToken via pairing WS
-        BridgeStatusService.getInstance().ensureStarted();
+        await BridgeStatusService.getInstance().stop();
+        this._openPairingSocket(result.deviceId, deviceSecret, relayUrl);
         this._pairingState = {
           code: String(result.code),
           method: 'code',
@@ -693,6 +697,8 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         return;
       }
       const result = await resp.json() as { code: string; expiresIn?: number; pairUrl?: string };
+      await BridgeStatusService.getInstance().stop();
+      this._openPairingSocket(creds.deviceId, creds.deviceSecret, relayUrl);
       this._pairingState = {
         code: String(result.code),
         method: 'code',
@@ -709,12 +715,104 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     }
   }
 
-  private async _handlePairingComplete(token: string): Promise<void> {
+  private _closePairingSocket(): void {
+    if (this._pairingTimeout) {
+      clearTimeout(this._pairingTimeout);
+      this._pairingTimeout = undefined;
+    }
+    if (this._pairingWs) {
+      const ws = this._pairingWs;
+      this._pairingWs = undefined;
+      try { ws.close(); } catch {}
+    }
+  }
+
+  private _openPairingSocket(deviceId: string, deviceSecret: string, relayUrl: string): void {
+    this._closePairingSocket();
+    const wsUrl = `${relayUrl.replace(/^http/, 'ws')}/ws?device_id=${encodeURIComponent(deviceId)}&device_secret=${encodeURIComponent(deviceSecret)}`;
+    const ws = new WebSocket(wsUrl, { rejectUnauthorized: false });
+    this._pairingWs = ws;
+
+    this._pairingTimeout = setTimeout(() => {
+      if (this._pairingWs !== ws) return;
+      log('Pairing socket timed out');
+      this._closePairingSocket();
+      this._pairingState = {
+        code: this._pairingState?.code || '',
+        method: 'code',
+        platform: this._pairingState?.platform || 'wechat',
+        status: 'error',
+        statusText: 'Pairing timed out',
+        expiresAt: 0,
+      };
+      this._pushState();
+    }, 5 * 60 * 1000);
+
+    ws.on('message', (raw) => {
+      try {
+        const msg = JSON.parse(raw.toString()) as {
+          type?: string;
+          payload?: { deviceToken?: string; deviceId?: string };
+          deviceToken?: string;
+          token?: string;
+          deviceId?: string;
+        };
+        if (msg.type === 'pairing_ready') {
+          this._pairingState = {
+            code: this._pairingState?.code || '',
+            method: 'code',
+            platform: this._pairingState?.platform || 'wechat',
+            status: 'waiting',
+            statusText: 'Code accepted. Waiting for confirmation...',
+            expiresAt: this._pairingState?.expiresAt || Date.now() + 5 * 60 * 1000,
+            pairUrl: this._pairingState?.pairUrl,
+          };
+          this._pushState();
+        }
+        if (msg.type === 'device_token') {
+          const token = msg.payload?.deviceToken || msg.deviceToken || msg.token;
+          const nextDeviceId = msg.payload?.deviceId || msg.deviceId;
+          this._handlePairingComplete(token, nextDeviceId);
+        }
+      } catch (err) {
+        log(`Pairing socket message parse failed: ${err}`);
+      }
+    });
+
+    ws.on('error', (err) => {
+      log(`Pairing socket error: ${err instanceof Error ? err.message : String(err)}`);
+    });
+
+    ws.on('close', () => {
+      if (this._pairingWs === ws) {
+        this._pairingWs = undefined;
+      }
+    });
+  }
+
+  private async _handlePairingComplete(token?: string, deviceId?: string): Promise<void> {
+    this._closePairingSocket();
+    if (!token) {
+      log('Pairing completed without device token');
+      this._pairingState = {
+        code: this._pairingState?.code || '',
+        method: 'code',
+        platform: this._pairingState?.platform || 'wechat',
+        status: 'error',
+        statusText: 'Pairing failed: missing device token',
+        expiresAt: 0,
+      };
+      this._pushState();
+      return;
+    }
+
     const creds = loadCredentials();
     if (creds) {
+      if (deviceId) creds.deviceId = deviceId;
       creds.deviceToken = token;
       const { saveCredentials } = await import('../auth/credentials.js');
       saveCredentials(creds);
+      BridgeStatusService.getInstance().restart();
       vscode.window.showInformationMessage('Device paired successfully!');
     }
     this._pairingState = {
