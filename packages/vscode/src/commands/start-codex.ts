@@ -60,8 +60,8 @@ export async function startCodexSession(context: vscode.ExtensionContext): Promi
       }).catch(err => debug('[Codex] failed to register approval with bridge:', err));
     },
     onInput: (req: ServerRequestMessage) => {
-      debug('[Codex] input request:', req.id);
-      // client is initialized before any events fire — safe to use here
+      debug('[Codex] input request (MVP: not wired to mini program, empty response sent):', req.id);
+      vscode.window.showWarningMessage('Codex needs input — check the Codex terminal');
       client.respondInput(req.id, {});
     },
     onExpired: (reqId, reason) => {
