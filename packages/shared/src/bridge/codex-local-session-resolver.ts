@@ -160,32 +160,45 @@ function extractFirstUserMessage(transcriptPath: string): string {
 }
 
 /**
- * Scan ~/.codex/sessions/ subdirectories for all .jsonl transcript files.
+ * Recursively scan a directory for .jsonl files, up to a max depth.
+ * Codex writes real transcripts to ~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl
+ * (three levels deep), so a depth of 6 is more than enough while still bounded.
+ */
+function collectJsonl(dir: string, depth: number, out: { path: string; mtime: number }[]): void {
+  if (depth < 0) return;
+  let entries: import('node:fs').Dirent[];
+  try {
+    entries = readdirSync(dir, { withFileTypes: true }) as import('node:fs').Dirent[];
+  } catch {
+    return;
+  }
+  for (const entry of entries) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      collectJsonl(full, depth - 1, out);
+      continue;
+    }
+    if (!entry.isFile() || !entry.name.endsWith('.jsonl')) continue;
+    try {
+      const stat = statSync(full);
+      out.push({ path: full, mtime: stat.mtimeMs });
+    } catch { /* skip unreadable */ }
+  }
+}
+
+/**
+ * Scan ~/.codex/sessions/ recursively for all .jsonl transcript files.
  * Returns absolute paths sorted by modification time (newest first).
+ *
+ * Real Codex layout is ~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl,
+ * but we recurse so a flatter or deeper layout also works.
  */
 function scanTranscriptFiles(): string[] {
   const baseDir = path.join(codexConfigDir(), 'sessions');
   if (!existsSync(baseDir)) return [];
 
   const files: { path: string; mtime: number }[] = [];
-  try {
-    const entries = readdirSync(baseDir, { withFileTypes: true });
-    for (const entry of entries) {
-      if (!entry.isDirectory()) continue;
-      const dirPath = path.join(baseDir, entry.name);
-      try {
-        const filesInDir = readdirSync(dirPath);
-        for (const file of filesInDir) {
-          if (!file.endsWith('.jsonl')) continue;
-          const fullPath = path.join(dirPath, file);
-          try {
-            const stat = statSync(fullPath);
-            files.push({ path: fullPath, mtime: stat.mtimeMs });
-          } catch { /* skip */ }
-        }
-      } catch { /* skip */ }
-    }
-  } catch { /* sessions dir not found */ }
+  collectJsonl(baseDir, 6, files);
 
   files.sort((a, b) => b.mtime - a.mtime);
   return files.map(f => f.path);
@@ -195,7 +208,8 @@ function scanTranscriptFiles(): string[] {
  * Discover all recent Codex local sessions.
  *
  * Strategy:
- * 1. Scan ~/.codex/sessions/ subdirectories for .jsonl transcript files
+ * 1. Recursively scan ~/.codex/sessions/ for .jsonl transcript files
+ *    (real layout is YYYY/MM/DD/rollout-*.jsonl, but we tolerate flatter trees)
  * 2. For each transcript, read session_meta from the first 64KB
  * 3. Filter out transcripts without a valid session id
  * 4. Build CodexLocalSession list, sorted by updatedAt (newest first)

@@ -218,38 +218,142 @@ export class CodexResumeRuntime extends EventEmitter {
 
   /**
    * Normalize a Codex JSONL event into our event format.
-   * Based on Codex CLI output format analysis.
+   *
+   * `codex exec resume --json` streams events that mirror the on-disk transcript
+   * shape (`response_item` / `event_msg`), so we handle that first and fall
+   * back to legacy `type:"user"|"assistant"|...` shapes for safety.
    */
   private normalizeEvent(obj: Record<string, unknown>): ResumeEvent {
-    const type = obj.type as string;
+    const type = obj.type as string | undefined;
+    const payload = (obj.payload && typeof obj.payload === 'object')
+      ? (obj.payload as Record<string, unknown>)
+      : null;
 
-    // User message
+    // --- Real Codex shapes ---
+    if (type === 'response_item' && payload) {
+      const itemType = payload.type as string | undefined;
+      if (itemType === 'message') {
+        const role = payload.role as string | undefined;
+        if (role === 'user' || role === 'assistant') {
+          return {
+            type: 'message',
+            role,
+            content: this.extractText(payload.content),
+            raw: obj,
+          };
+        }
+        return { type: 'unknown', raw: obj };
+      }
+      if (itemType === 'reasoning') {
+        const summary = payload.summary;
+        let text = '';
+        if (Array.isArray(summary)) text = this.extractText(summary);
+        if (!text && payload.content) text = this.extractText(payload.content);
+        return { type: 'reasoning', content: text, raw: obj };
+      }
+      if (itemType === 'function_call') {
+        const name = (payload.name as string) || 'unknown';
+        const namespace = payload.namespace ? `${payload.namespace}/` : '';
+        return {
+          type: 'tool',
+          toolName: `${namespace}${name}`,
+          toolStatus: 'in_progress',
+          content: typeof payload.arguments === 'string'
+            ? (payload.arguments as string)
+            : JSON.stringify(payload.arguments ?? {}),
+          raw: obj,
+        };
+      }
+      if (itemType === 'function_call_output') {
+        return {
+          type: 'tool',
+          toolName: (payload.name as string) || 'unknown',
+          toolStatus: 'completed',
+          content: this.extractText(payload.output ?? payload.content),
+          raw: obj,
+        };
+      }
+      return { type: 'unknown', raw: obj };
+    }
+
+    if (type === 'event_msg' && payload) {
+      const evt = payload.type as string | undefined;
+      if (evt === 'user_message') {
+        return { type: 'message', role: 'user', content: (payload.message as string) || '', raw: obj };
+      }
+      if (evt === 'agent_message') {
+        return { type: 'message', role: 'assistant', content: (payload.message as string) || '', raw: obj };
+      }
+      if (evt === 'agent_reasoning' || evt === 'agent_reasoning_delta') {
+        return {
+          type: 'reasoning',
+          content: (payload.text as string) || (payload.message as string) || '',
+          raw: obj,
+        };
+      }
+      if (evt === 'token_count' || evt === 'token_usage') {
+        const info = (payload.info && typeof payload.info === 'object')
+          ? (payload.info as Record<string, unknown>)
+          : payload;
+        return {
+          type: 'usage',
+          usage: {
+            inputTokens: Number(info.input_tokens ?? info.inputTokens ?? 0),
+            outputTokens: Number(info.output_tokens ?? info.outputTokens ?? 0),
+            totalTokens: Number(info.total_tokens ?? info.totalTokens ?? 0),
+          },
+          raw: obj,
+        };
+      }
+      if (evt === 'error' || evt === 'stream_error') {
+        return {
+          type: 'error',
+          content: (payload.message as string) || (payload.error as string) || 'Codex error',
+          raw: obj,
+        };
+      }
+      return { type: 'unknown', raw: obj };
+    }
+
+    // --- Item lifecycle events (codex exec resume --json) ---
+    if ((type === 'item.started' || type === 'item.completed') && obj.item) {
+      const item = obj.item as Record<string, unknown>;
+      const itemType = item.type as string | undefined;
+      const itemStatus = (item.status as string) || (type === 'item.started' ? 'in_progress' : 'completed');
+
+      if (itemType === 'command_execution') {
+        const cmd = (item.command as string) || this.extractText(item.arguments || item.args) || '(command)';
+        const toolStatus = itemStatus === 'declined' ? 'failed' as const : itemStatus === 'in_progress' ? 'in_progress' as const : 'completed' as const;
+        return { type: 'tool', toolName: 'command_execution', toolStatus, content: `[${itemStatus}] ${cmd}`, raw: obj };
+      }
+      if (itemType === 'file_change' || itemType === 'apply_patch') {
+        const paths = item.path || item.paths;
+        const pathStr = Array.isArray(paths) ? paths.join(', ') : (typeof paths === 'string' ? paths : '');
+        const toolStatus = itemStatus === 'declined' ? 'failed' as const : itemStatus === 'in_progress' ? 'in_progress' as const : 'completed' as const;
+        return { type: 'tool', toolName: itemType, toolStatus, content: `[${itemStatus}] ${pathStr || '(file)'}`, raw: obj };
+      }
+      return { type: 'tool', toolName: itemType || 'unknown_item', toolStatus: itemStatus === 'declined' ? 'failed' : 'completed', content: `[${itemStatus}]`, raw: obj };
+    }
+
+    if (type === 'session_meta' || type === 'turn_context') {
+      return { type: 'unknown', raw: obj };
+    }
+
+    // --- Legacy synthetic shapes (kept for older fixtures / tests) ---
     if (type === 'user' && obj.message) {
       const msg = obj.message as Record<string, unknown>;
       if (msg.role === 'user') {
-        return {
-          type: 'message',
-          role: 'user',
-          content: this.extractText(msg.content),
-          raw: obj,
-        };
+        return { type: 'message', role: 'user', content: this.extractText(msg.content), raw: obj };
       }
     }
 
-    // Assistant message
     if (type === 'assistant' && obj.message) {
       const msg = obj.message as Record<string, unknown>;
       if (msg.role === 'assistant') {
-        return {
-          type: 'message',
-          role: 'assistant',
-          content: this.extractText(msg.content),
-          raw: obj,
-        };
+        return { type: 'message', role: 'assistant', content: this.extractText(msg.content), raw: obj };
       }
     }
 
-    // Tool use
     if (type === 'tool_use' || obj.tool_use) {
       return {
         type: 'tool',
@@ -260,7 +364,6 @@ export class CodexResumeRuntime extends EventEmitter {
       };
     }
 
-    // Tool result
     if (type === 'tool_result' || obj.tool_result) {
       return {
         type: 'tool',
@@ -271,7 +374,6 @@ export class CodexResumeRuntime extends EventEmitter {
       };
     }
 
-    // Reasoning/thinking
     if (type === 'thinking' || type === 'reasoning') {
       return {
         type: 'reasoning',
@@ -280,7 +382,6 @@ export class CodexResumeRuntime extends EventEmitter {
       };
     }
 
-    // Usage statistics
     if (type === 'usage' || obj.usage) {
       const usage = obj.usage as Record<string, unknown>;
       return {
@@ -294,7 +395,6 @@ export class CodexResumeRuntime extends EventEmitter {
       };
     }
 
-    // Error
     if (type === 'error') {
       return {
         type: 'error',
@@ -303,11 +403,7 @@ export class CodexResumeRuntime extends EventEmitter {
       };
     }
 
-    // Unknown event type
-    return {
-      type: 'unknown',
-      raw: obj,
-    };
+    return { type: 'unknown', raw: obj };
   }
 
   /**

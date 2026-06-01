@@ -6,7 +6,9 @@ import * as fs from 'node:fs';
 vi.mock('node:fs', () => ({
   existsSync: vi.fn(),
   statSync: vi.fn(),
-  readFileSync: vi.fn(),
+  openSync: vi.fn(),
+  readSync: vi.fn(),
+  closeSync: vi.fn(),
   watch: vi.fn(),
 }));
 
@@ -18,7 +20,9 @@ describe('CodexTranscriptWatcher', () => {
     vi.clearAllMocks();
     vi.mocked(fs.existsSync).mockReturnValue(true);
     vi.mocked(fs.statSync).mockReturnValue({ size: 0 } as any);
-    vi.mocked(fs.readFileSync).mockReturnValue('');
+    vi.mocked(fs.openSync).mockReturnValue(7 as any);
+    vi.mocked(fs.closeSync).mockReturnValue(undefined as any);
+    vi.mocked(fs.readSync).mockReturnValue(0 as any);
     vi.mocked(fs.watch).mockReturnValue({
       close: vi.fn(),
       on: vi.fn(),
@@ -93,13 +97,30 @@ describe('CodexTranscriptWatcher', () => {
   });
 
   describe('event parsing', () => {
+    function feed(content: string): void {
+      const data = Buffer.from(content, 'utf8');
+      vi.mocked(fs.statSync).mockReturnValue({ size: data.length } as any);
+      vi.mocked(fs.readSync).mockImplementation(((
+        _fd: number,
+        buffer: Buffer,
+        offset: number,
+        length: number,
+        position: number,
+      ) => {
+        const start = position ?? 0;
+        const end = Math.min(data.length, start + length);
+        const bytes = data.slice(start, end);
+        bytes.copy(buffer, offset);
+        return bytes.length;
+      }) as any);
+    }
+
     it('should parse user messages', () => {
       const eventHandler = vi.fn();
       watcher.on('event', eventHandler);
 
       // Simulate file content - must set up mocks BEFORE starting watcher
-      vi.mocked(fs.readFileSync).mockReturnValue('{"type":"user","message":{"role":"user","content":"Hello"},"timestamp":"2026-01-01T00:00:00Z"}\n');
-      vi.mocked(fs.statSync).mockReturnValue({ size: 100 } as any);
+      feed('{"type":"user","message":{"role":"user","content":"Hello"},"timestamp":"2026-01-01T00:00:00Z"}\n');
 
       watcher.start();
 
@@ -114,8 +135,7 @@ describe('CodexTranscriptWatcher', () => {
       const eventHandler = vi.fn();
       watcher.on('event', eventHandler);
 
-      vi.mocked(fs.readFileSync).mockReturnValue('{"type":"assistant","message":{"role":"assistant","content":"Hi!"},"timestamp":"2026-01-01T00:00:00Z"}\n');
-      vi.mocked(fs.statSync).mockReturnValue({ size: 100 } as any);
+      feed('{"type":"assistant","message":{"role":"assistant","content":"Hi!"},"timestamp":"2026-01-01T00:00:00Z"}\n');
 
       watcher.start();
 
@@ -129,8 +149,7 @@ describe('CodexTranscriptWatcher', () => {
       const eventHandler = vi.fn();
       watcher.on('event', eventHandler);
 
-      vi.mocked(fs.readFileSync).mockReturnValue('{"type":"tool_use","name":"bash","input":{"command":"ls"},"timestamp":"2026-01-01T00:00:00Z"}\n');
-      vi.mocked(fs.statSync).mockReturnValue({ size: 100 } as any);
+      feed('{"type":"tool_use","name":"bash","input":{"command":"ls"},"timestamp":"2026-01-01T00:00:00Z"}\n');
 
       watcher.start();
 
@@ -142,11 +161,9 @@ describe('CodexTranscriptWatcher', () => {
 
     it('should handle malformed JSON gracefully', () => {
       const eventHandler = vi.fn();
-      const errorHandler = vi.fn();
       watcher.on('event', eventHandler);
 
-      vi.mocked(fs.readFileSync).mockReturnValue('invalid json\n');
-      vi.mocked(fs.statSync).mockReturnValue({ size: 100 } as any);
+      feed('invalid json\n');
 
       watcher.start();
 

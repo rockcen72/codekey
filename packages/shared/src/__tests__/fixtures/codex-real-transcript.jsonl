@@ -1,0 +1,10 @@
+{"timestamp":"2026-06-01T07:59:22.016Z","type":"session_meta","payload":{"id":"019e8231-a3f7-7c43-8dfb-f2107c803690","timestamp":"2026-06-01T07:59:16.892Z","cwd":"f:\\Work\\Codekey","originator":"codekey","cli_version":"0.135.0-alpha.1","source":"vscode"}}
+{"timestamp":"2026-06-01T07:59:22.025Z","type":"event_msg","payload":{"type":"task_started","turn_id":"t-1","model_context_window":258400}}
+{"timestamp":"2026-06-01T07:59:22.179Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Analyze the current project structure and provide a summary."}]}}
+{"timestamp":"2026-06-01T07:59:22.180Z","type":"event_msg","payload":{"type":"user_message","message":"Analyze the current project structure and provide a summary.","images":[]}}
+{"timestamp":"2026-06-01T07:59:25.854Z","type":"response_item","payload":{"type":"reasoning","summary":[{"type":"summary_text","text":"Looking at directory tree first."}],"content":null,"encrypted_content":"opaque"}}
+{"timestamp":"2026-06-01T07:59:27.534Z","type":"event_msg","payload":{"type":"agent_message","message":"I'll start by listing the repository tree."}}
+{"timestamp":"2026-06-01T07:59:27.537Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"I'll start by listing the repository tree."}]}}
+{"timestamp":"2026-06-01T07:59:27.537Z","type":"response_item","payload":{"type":"function_call","name":"codegraph_files","namespace":"mcp__codegraph","arguments":"{\"format\":\"tree\"}","call_id":"call_x"}}
+{"timestamp":"2026-06-01T07:59:30.000Z","type":"event_msg","payload":{"type":"token_count","info":{"input_tokens":1200,"output_tokens":350,"total_tokens":1550}}}
+{"timestamp":"2026-06-01T07:59:31.000Z","type":"event_msg","payload":{"type":"task_complete","turn_id":"t-1"}}

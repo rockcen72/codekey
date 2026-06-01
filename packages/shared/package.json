@@ -17,6 +17,18 @@
     "./bridge/codex-binary": {
       "types": "./dist/bridge/codex-binary.d.ts",
       "import": "./dist/bridge/codex-binary.js"
+    },
+    "./bridge/codex-local-session-resolver": {
+      "types": "./dist/bridge/codex-local-session-resolver.d.ts",
+      "import": "./dist/bridge/codex-local-session-resolver.js"
+    },
+    "./bridge/codex-resume-runtime": {
+      "types": "./dist/bridge/codex-resume-runtime.d.ts",
+      "import": "./dist/bridge/codex-resume-runtime.js"
+    },
+    "./bridge/codex-transcript-watcher": {
+      "types": "./dist/bridge/codex-transcript-watcher.d.ts",
+      "import": "./dist/bridge/codex-transcript-watcher.js"
     }
   },
   "scripts": {
