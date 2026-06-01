@@ -3,6 +3,7 @@ import { type AddressInfo } from 'node:net';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { ApprovalBridge, type HookEventBody } from './handler.js';
+import { CodexRelay } from './codex-relay.js';
 import { listRecentClaudeTranscripts, loadConversation } from './claude-transcripts.js';
 
 export interface BridgeConfig {
@@ -16,7 +17,8 @@ export interface BridgeConfig {
 }
 
 export function startBridgeServer(bridge: ApprovalBridge, port = 3001, source = 'cli', onShutdown?: () => void, startedAt?: number, bridgeConfig?: BridgeConfig): Promise<{ close: () => Promise<void>; port: number }> {
-  const server = createServer((req, res) => handleRequest(req, res, bridge, source, onShutdown, startedAt, bridgeConfig));
+  const codexRelay = new CodexRelay(bridge.relay);
+  const server = createServer((req, res) => handleRequest(req, res, bridge, source, onShutdown, startedAt, bridgeConfig, codexRelay));
 
   return new Promise((resolve, reject) => {
     const onListen = () => {
@@ -42,7 +44,7 @@ export function startBridgeServer(bridge: ApprovalBridge, port = 3001, source = 
   });
 }
 
-function handleRequest(req: IncomingMessage, res: ServerResponse, bridge: ApprovalBridge, source: string, onShutdown?: () => void, startedAt?: number, bridgeConfig?: BridgeConfig): void {
+function handleRequest(req: IncomingMessage, res: ServerResponse, bridge: ApprovalBridge, source: string, onShutdown?: () => void, startedAt?: number, bridgeConfig?: BridgeConfig, codexRelay?: CodexRelay): void {
   const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
 
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -88,6 +90,30 @@ function handleRequest(req: IncomingMessage, res: ServerResponse, bridge: Approv
     const commands = bridge.commandQueue.peek();
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(commands));
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/v1/codex/approval') {
+    let body = '';
+    req.on('data', (chunk) => { body += chunk; });
+    req.on('end', () => {
+      try {
+        const { correlationId, command, risk } = JSON.parse(body);
+        if (correlationId && codexRelay) codexRelay.registerApproval(correlationId, command || '', risk || 'medium');
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: true }));
+      } catch {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'invalid payload' }));
+      }
+    });
+    return;
+  }
+
+  if (req.method === 'GET' && url.pathname === '/v1/codex/decisions') {
+    const decisions = codexRelay ? codexRelay.pollDecisions() : [];
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ decisions }));
     return;
   }
 
