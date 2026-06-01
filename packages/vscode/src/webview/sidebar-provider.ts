@@ -18,7 +18,7 @@ import {
   type SidebarState,
   type PairingState,
 } from './sidebar-html.js';
-import { loadConversation } from '../../../shared/src/bridge/claude-transcripts.js';
+import { loadConversation } from '@codekey/shared/bridge';
 import { log } from '../log.js';
 
 const AGENT_DISPLAY_NAMES: Record<string, string> = {
