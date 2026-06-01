@@ -108,7 +108,7 @@ export class WsClient {
   private startHeartbeat(): void {
     this.heartbeatTimer = setInterval(() => {
       this.send({ type: 'ping', ts: new Date().toISOString() });
-    }, 30000);
+    }, 5000);
   }
 
   private stopHeartbeat(): void {

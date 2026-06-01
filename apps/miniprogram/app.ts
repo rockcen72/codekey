@@ -16,6 +16,17 @@ App({
     this.initWs();
   },
 
+  onShow() {
+    // Reconnect WS if it was killed while in background
+    if (!this.globalData.wsConnected && getClientToken()) {
+      if (this.globalData.ws) {
+        this.globalData.ws.disconnect();
+        this.globalData.ws = null;
+      }
+      this.initWs();
+    }
+  },
+
   // ── WS lifecycle ──
 
   initWs() {

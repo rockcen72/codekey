@@ -46,6 +46,7 @@ export function wsHandler(sql: postgres.Sql) {
         const msg = JSON.parse(raw.toString());
         if (msg.type === 'ping') {
           socket.send(JSON.stringify({ type: 'pong', ts: new Date().toISOString() }));
+          (socket as any).__isAlive = true; // acknowledge server WS-level heartbeat
           return;
         }
 
@@ -143,8 +144,10 @@ export function wsHandler(sql: postgres.Sql) {
               LIMIT 1
             `;
             if (existing) {
+              // Merge — don't replace — so a re-registration that lacks a
+              // sessionLabel does not wipe a title set by a previous call.
               await tx`
-                UPDATE sessions SET metadata = ${tx.json(metadata)}, last_active_at = now()
+                UPDATE sessions SET metadata = metadata || ${tx.json(metadata)}, last_active_at = now()
                 WHERE id = ${existing.id}
               `;
               return { sessionId: existing.id, isNew: false, source: metadata.source ?? null };
@@ -813,6 +816,16 @@ export function wsHandler(sql: postgres.Sql) {
         const client: WsClient = { socket, deviceId, tokenType: 'device' };
         pcClients.set(deviceId, client);
 
+        // Notify mini program clients that the device (PC bridge) is back online
+        const mpList = clientClients.get(deviceId);
+        if (mpList) {
+          for (const mp of mpList) {
+            if (mp.socket.readyState === mp.socket.OPEN) {
+              mp.socket.send(JSON.stringify({ type: 'device_online' }));
+            }
+          }
+        }
+
         // Heartbeat ping/pong: set alive initially, reset on pong reply.
         // When VS Code closes abruptly, the bridge WebSocket won't close cleanly on
         // Windows. The server pings every 10s and terminates sockets that don't reply.
@@ -833,6 +846,16 @@ export function wsHandler(sql: postgres.Sql) {
           if (current?.socket !== socket) return;
 
           pcClients.delete(deviceId);
+
+          // Notify mini program clients that the device (PC bridge) went offline
+          const mpList = clientClients.get(deviceId);
+          if (mpList) {
+            for (const mp of mpList) {
+              if (mp.socket.readyState === mp.socket.OPEN) {
+                mp.socket.send(JSON.stringify({ type: 'device_offline' }));
+              }
+            }
+          }
 
           // Delay session cleanup by DISCONNECT_GRACE_MS to tolerate brief reconnections
           const timer = setTimeout(() => {

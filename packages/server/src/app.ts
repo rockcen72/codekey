@@ -10,7 +10,7 @@ import { initDb } from './db/init.js';
 import type postgres from 'postgres';
 
 const CLEANUP_INTERVAL_MS = 60_000; // check every 60s
-const PENDING_TTL_MS = 5 * 60_000;  // expire events pending >5min
+const PENDING_TTL_MS = 30 * 60_000;  // expire events pending >30min (safety net; the bridge keeps a live approval pending until the phone answers or CC finishes — see handler.ts. Kept in sync with that bridge timer.)
 const SESSION_IDLE_TTL_MS = 30 * 60_000; // close sessions idle >30min
 const WS_HEARTBEAT_MS = 10_000; // ping bridge every 10s to detect dead connections
 
