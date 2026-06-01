@@ -10,6 +10,7 @@ export class CodexRelay {
   private sessionPending = false;
   /** Resolved when session_registered arrives. */
   private sessionReadyResolve: (() => void) | null = null;
+  private sessionReadyPromise: Promise<void> | null = null;
   private codexSessionUid: string | null = null;
   private relay: RelayClient;
 
