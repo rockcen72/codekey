@@ -13,6 +13,10 @@
     "./bridge": {
       "types": "./dist/bridge/index.d.ts",
       "import": "./dist/bridge/index.js"
+    },
+    "./bridge/codex-binary": {
+      "types": "./dist/bridge/codex-binary.d.ts",
+      "import": "./dist/bridge/codex-binary.js"
     }
   },
   "scripts": {
