@@ -73,6 +73,6 @@ describe('resolveCodexBinary', () => {
     });
     // Should search for 'codex' not 'codex.exe' on linux
     const hasCodex = calls.some(c => c.endsWith('codex') && !c.endsWith('.exe'));
-    expect(hasCodex).toBe(true, `PATH entries: ${JSON.stringify(calls)}`);
+    expect(hasCodex).toBe(true);
   });
 });

@@ -181,8 +181,10 @@ export class CodexAppServerClient extends EventEmitter {
   }
 
   /** Respond to a requestUserInput ServerRequest with answers keyed by question id.
-   *  Format per ToolRequestUserInputResponse schema: { answers: { [qId]: { answers: string[] } } } */
-  respondInput(requestId: RequestId, answers: Record<string, string[]>): void {
+   *  Format per ToolRequestUserInputResponse schema:
+   *    { answers: { [questionId]: { answers: string[] } } }
+   *  The caller provides flat { qId: [userInput] }, this wraps each value in { answers: [...] }. */
+  respondInput(requestId: RequestId, flatAnswers: Record<string, string[]>): void {
     const entry = this.pending.get(requestId);
     if (!entry || entry.status !== 'pending') return;
     if (entry.kind !== 'input') {
@@ -190,9 +192,23 @@ export class CodexAppServerClient extends EventEmitter {
       return;
     }
 
+    // Wrap each entry per schema: { qId: ["x"] } → { qId: { answers: ["x"] } }
+    const wrapped: Record<string, { answers: string[] }> = {};
+    for (const [qId, ans] of Object.entries(flatAnswers)) {
+      wrapped[qId] = { answers: ans };
+    }
+
     entry.status = 'responded';
     clearTimeout(entry.timer);
-    this.send({ id: requestId, result: { answers } });
+    this.send({ id: requestId, result: { answers: wrapped } });
+
+    // Input responses may not trigger serverRequest/resolved; clean up after 5s
+    entry.timer = setTimeout(() => {
+      if (entry.status === 'responded') {
+        entry.status = 'resolved';
+        this.pending.delete(requestId);
+      }
+    }, 5_000);
   }
 
   /** Current thread id, or null if no thread started. */
