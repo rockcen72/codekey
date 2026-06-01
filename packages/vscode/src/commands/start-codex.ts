@@ -93,7 +93,11 @@ export async function startCodexSession(context: vscode.ExtensionContext): Promi
     log('[Codex] thread started:', threadId);
 
     // Register Codex session with relay so mini program can see and interact
-    fetch(`${bridgeUrl()}/v1/codex/session/ensure`, { method: 'POST' }).catch(err => debug('[Codex] session ensure:', err));
+    try {
+      await fetch(`${bridgeUrl()}/v1/codex/session/ensure`, { method: 'POST', signal: AbortSignal.timeout ? AbortSignal.timeout(5000) : undefined });
+    } catch (err) {
+      debug('[Codex] session ensure (non-fatal):', err);
+    }
 
     // Send an initial prompt
     const prompt = vscode.workspace.getConfiguration('codekey').get<string>('codexInitialPrompt')
@@ -110,13 +114,22 @@ export async function startCodexSession(context: vscode.ExtensionContext): Promi
     terminal.sendText(`// Codex session ${threadId} — managed by CodeKey`);
     terminal.show();
 
-    // Forward useful notifications to relay → mini program (replies)
-    client.on('notification', (method: string, _msg: Record<string, unknown>) => {
+    // Aggregate agent message content and forward turn/completed with real reply
+    let agentContent = '';
+    client.on('raw_notification', (method: string, _msg: Record<string, unknown>) => {
+      if (method === 'item/agentMessage/delta') {
+        const params = _msg.params as Record<string, unknown> | undefined;
+        if (params?.delta && typeof params.delta === 'string') agentContent += params.delta;
+      }
+    });
+    client.on('notification', (method: string) => {
       if (method === 'turn/completed') {
+        const summary = agentContent.slice(0, 500) || 'Codex turn completed';
+        agentContent = '';
         fetch(`${bridgeUrl()}/v1/codex/event`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ eventType: 'task_complete', data: { summary: 'Codex turn completed' } }),
+          body: JSON.stringify({ eventType: 'task_complete', data: { summary } }),
         }).catch(() => {});
       }
     });
