@@ -73,6 +73,11 @@
           "type": "string",
           "default": "",
           "description": "Codex CLI 可执行文件的绝对路径。不配置时将依次搜索 PATH 和扩展内置的 codex binary。"
+        },
+        "codekey.codexInitialPrompt": {
+          "type": "string",
+          "default": "Analyze the current project structure and provide a summary.",
+          "description": "Codex 会话启动时的初始 prompt。"
         }
       }
     }
