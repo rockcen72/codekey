@@ -114,7 +114,16 @@ export async function startCodexSession(context: vscode.ExtensionContext): Promi
 
     // Register Codex session with relay so mini program can see and interact
     try {
-      await fetch(`${bridgeUrl()}/v1/codex/session/ensure`, { method: 'POST', signal: AbortSignal.timeout ? AbortSignal.timeout(5000) : undefined });
+      await fetch(`${bridgeUrl()}/v1/codex/session/ensure`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          windowId: vscode.env.sessionId,
+          title: `Codex: ${threadId.slice(0, 8)}`,
+          cwd,
+        }),
+        signal: AbortSignal.timeout ? AbortSignal.timeout(5000) : undefined,
+      });
     } catch (err) {
       debug('[Codex] session ensure (non-fatal):', err);
     }

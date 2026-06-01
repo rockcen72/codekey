@@ -1,9 +1,8 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { execSync } from 'node:child_process';
 
-const scriptDir = path.dirname(fileURLToPath(import.meta.url));
+const scriptDir = __dirname;
 
 // Walk up from an anchor dir to find node_modules/.bin
 function findInParent(anchor: string, isWin: boolean): string | null {

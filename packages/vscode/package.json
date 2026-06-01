@@ -13,9 +13,16 @@
     "Other"
   ],
   "activationEvents": [
-    "onStartupFinished"
+    "onStartupFinished",
+    "onView:codekey.sidebar",
+    "onCommand:codekey.showDashboard",
+    "onCommand:codekey.pairDevice",
+    "onCommand:codekey.startClaudeCode",
+    "onCommand:codekey.startCodexSession",
+    "onCommand:codekey.enableHook",
+    "onCommand:codekey.focusSidebar"
   ],
-  "main": "./dist/extension.js",
+  "main": "./dist/extension.cjs",
   "contributes": {
     "viewsContainers": {
       "activitybar": [

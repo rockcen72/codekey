@@ -12,6 +12,7 @@ export class CodexRelay {
   private sessionReadyResolve: (() => void) | null = null;
   private sessionReadyPromise: Promise<void> | null = null;
   private codexSessionUid: string | null = null;
+  private sessionMetadata: Record<string, string> = {};
   private relay: RelayClient;
 
   constructor(relay: RelayClient) {
@@ -39,8 +40,9 @@ export class CodexRelay {
   }
 
   /** Register session and wait until session_registered resolves. */
-  ensureSession(): Promise<void> {
+  ensureSession(metadata: Record<string, string> = {}): Promise<void> {
     if (this.sessionId) return Promise.resolve();
+    this.sessionMetadata = { ...this.sessionMetadata, ...metadata };
     if (!this.sessionPending) this._registerSession();
     // Return a promise that resolves when session_registered fires
     return new Promise<void>((resolve) => {
@@ -87,7 +89,7 @@ export class CodexRelay {
       payload: {
         agentType: 'codex',
         claudeSessionId: uid,
-        metadata: { title: 'Codex Session', source: 'managed_codex_relay' },
+        metadata: { title: 'Codex Session', source: 'managed_codex_relay', ...this.sessionMetadata },
       },
     }));
 

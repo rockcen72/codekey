@@ -479,6 +479,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       events,
       claudeSessions: mergedClaudeSessions,
       relayUrl: creds?.relayUrl,
+      deviceId: creds?.deviceId,
       deviceSecret: creds?.deviceSecret,
       feishuAppId: vscode.workspace.getConfiguration('codekey').get<string>('feishuAppId', ''),
       pairing: this._pairingState,

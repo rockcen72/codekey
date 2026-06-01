@@ -118,13 +118,32 @@ function handleRequest(req: IncomingMessage, res: ServerResponse, bridge: Approv
   }
 
   if (req.method === 'POST' && url.pathname === '/v1/codex/session/ensure') {
-    const p = codexRelay ? codexRelay.ensureSession() : Promise.resolve();
-    p.then(() => {
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ ok: true }));
-    }).catch(() => {
-      res.writeHead(500, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: 'session_register_failed' }));
+    let body = '';
+    req.on('data', (chunk) => { body += chunk; });
+    req.on('end', () => {
+      let metadata: Record<string, string> = {};
+      try {
+        if (body.trim()) {
+          const input = JSON.parse(body);
+          metadata = {
+            ...(typeof input.windowId === 'string' && input.windowId ? { windowId: input.windowId } : {}),
+            ...(typeof input.title === 'string' && input.title ? { title: input.title } : {}),
+            ...(typeof input.cwd === 'string' && input.cwd ? { cwd: input.cwd } : {}),
+          };
+        }
+      } catch {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'invalid payload' }));
+        return;
+      }
+      const p = codexRelay ? codexRelay.ensureSession(metadata) : Promise.resolve();
+      p.then(() => {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: true }));
+      }).catch(() => {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'session_register_failed' }));
+      });
     });
     return;
   }

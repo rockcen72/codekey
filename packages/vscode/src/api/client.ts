@@ -32,6 +32,7 @@ export function createApi(creds: Credentials) {
   const base = `${creds.relayUrl}/api/v1`;
 
   async function request<T>(method: string, path: string, body?: any): Promise<T> {
+    const signal = AbortSignal.timeout(5000);
     const res = await fetch(`${base}${path}`, {
       method,
       headers: {
@@ -39,6 +40,7 @@ export function createApi(creds: Credentials) {
         ...(creds.deviceToken ? { Authorization: `Bearer ${creds.deviceToken}` } : {}),
       },
       body: body ? JSON.stringify(body) : undefined,
+      signal,
     });
     if (!res.ok) throw new ApiError(res.status, `API error ${res.status}: ${await res.text()}`);
     return res.json() as Promise<T>;

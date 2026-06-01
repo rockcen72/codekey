@@ -13,10 +13,10 @@ fs.mkdirSync(distDir, { recursive: true });
 // 1. Extension bundle (runs inside VS Code extension host)
 await esbuild.build({
   entryPoints: [path.join(root, 'src', 'extension.ts')],
-  outfile: path.join(distDir, 'extension.js'),
+  outfile: path.join(distDir, 'extension.cjs'),
   bundle: true,
   platform: 'node',
-  format: 'esm',
+  format: 'cjs',
   external: ['vscode'],
   sourcemap: false,
   minify: false,

@@ -100,6 +100,15 @@ describe('CodexRelay', () => {
     expect(reg.length).toBe(1);
   });
 
+  it('ensureSession includes window metadata for sidebar filtering', () => {
+    codexRelay.ensureSession({ windowId: 'window-1', title: 'Codex: abc12345', cwd: '/repo' });
+    const reg = sentMessages(relay, 'register_session');
+    const payload = reg[0].payload as any;
+    expect(payload.metadata.windowId).toBe('window-1');
+    expect(payload.metadata.title).toBe('Codex: abc12345');
+    expect(payload.metadata.cwd).toBe('/repo');
+  });
+
   it('pushEvent sends event under the registered session', () => {
     codexRelay.ensureSession();
     simulateSessionRegistered(relay);
