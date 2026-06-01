@@ -144,6 +144,8 @@ export type WsMessage =
   | { type: 'attached_sessions'; payload: { sessions: { id: string; claudeSessionId: string | null }[] } }
   | { type: 'pairing_ready'; payload: { deviceId: string } }
   | { type: 'device_token'; payload: { deviceToken: string; deviceId: string } }
+  | { type: 'mp_online' }
+  | { type: 'mp_offline' }
   | { type: 'error'; payload: { code: string } }
   // Raw-only client-originated messages (sent via sendRaw, not typed serialization):
   | { type: 'attach_session'; payload: { sessionId: string; claudeSessionId: string; metadata?: SessionMetadataPayload } }

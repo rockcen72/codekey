@@ -98,6 +98,12 @@ export class RelayClient extends EventEmitter {
         if (msg.type === 'attached_sessions') {
           this.emit('attached_sessions', msg.payload);
         }
+        if (msg.type === 'mp_online') {
+          this.emit('mp_online');
+        }
+        if (msg.type === 'mp_offline') {
+          this.emit('mp_offline');
+        }
         if (msg.type === 'command') {
           this.emit('command', msg.payload);
           return;

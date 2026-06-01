@@ -147,16 +147,18 @@ export class BridgeStatusService {
       this._update({ bridge: 'stopped' });
       return;
     }
+    if (!creds.deviceToken) {
+      log('[CodeKey] no device token — bridge not started, waiting for pair');
+      this._update({ bridge: 'stopped' });
+      return;
+    }
 
     const args = [
       bridgeEntry,
       '--device-id', creds.deviceId,
     ];
-    if (!creds.deviceToken) {
-      args.push('--pairing');
-    }
 
-    log(`[CodeKey] spawning bundled bridge: ${process.execPath} ${bridgeEntry} --device-id ${creds.deviceId}${creds.deviceToken ? '' : ' --pairing'}`);
+    log(`[CodeKey] spawning bundled bridge: ${process.execPath} ${bridgeEntry} --device-id ${creds.deviceId}`);
 
     const proc = spawn(process.execPath, args, {
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -164,7 +166,7 @@ export class BridgeStatusService {
       env: {
         ...process.env,
         ELECTRON_RUN_AS_NODE: '1',
-        CODEKEY_DEVICE_TOKEN: creds.deviceToken ?? creds.deviceSecret,
+        CODEKEY_DEVICE_TOKEN: creds.deviceToken,
         CODEKEY_RELAY_URL: creds.relayUrl,
         NODE_TLS_REJECT_UNAUTHORIZED: '0',
       },
@@ -303,11 +305,12 @@ export class BridgeStatusService {
       if (resp.ok) {
         const body = await resp.json() as { relay?: string; mpOnline?: boolean };
         const relay = (body.relay ?? 'disconnected') as BridgeState['relay'];
-        const updates: Partial<BridgeState> = { bridge: 'running', relay };
+        const mpOnline = body.mpOnline ?? false;
+        const updates: Partial<BridgeState> = { bridge: 'running', relay, mpOnline };
         if (this._state.bridge !== 'running') {
           this._update(updates);
-        } else if (this._state.relay !== relay) {
-          this._update({ relay });
+        } else if (this._state.relay !== relay || this._state.mpOnline !== mpOnline) {
+          this._update({ relay, mpOnline });
         }
         if (!this._windowRegistered) {
           this._windowRegistered = true;

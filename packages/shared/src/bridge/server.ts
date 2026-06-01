@@ -21,7 +21,7 @@ export function startBridgeServer(bridge: ApprovalBridge, port = 3001, source = 
   bridge.relay.on('mp_online', () => { mpOnline = true; });
   bridge.relay.on('mp_offline', () => { mpOnline = false; });
   const codexRelay = new CodexRelay(bridge.relay);
-  const server = createServer((req, res) => handleRequest(req, res, bridge, source, onShutdown, startedAt, bridgeConfig, codexRelay));
+  const server = createServer((req, res) => handleRequest(req, res, bridge, source, onShutdown, startedAt, bridgeConfig, codexRelay, () => mpOnline));
 
   return new Promise((resolve, reject) => {
     const onListen = () => {
@@ -47,7 +47,7 @@ export function startBridgeServer(bridge: ApprovalBridge, port = 3001, source = 
   });
 }
 
-function handleRequest(req: IncomingMessage, res: ServerResponse, bridge: ApprovalBridge, source: string, onShutdown?: () => void, startedAt?: number, bridgeConfig?: BridgeConfig, codexRelay?: CodexRelay): void {
+function handleRequest(req: IncomingMessage, res: ServerResponse, bridge: ApprovalBridge, source: string, onShutdown?: () => void, startedAt?: number, bridgeConfig?: BridgeConfig, codexRelay?: CodexRelay, getMpOnline?: () => boolean): void {
   const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
 
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -503,6 +503,7 @@ function handleRequest(req: IncomingMessage, res: ServerResponse, bridge: Approv
       source,
       version: '0.1.0',
       relay: bridge.relay.status,
+      mpOnline: getMpOnline?.() ?? false,
       supports,
       startedAt: startedAt ?? 0,
     }));

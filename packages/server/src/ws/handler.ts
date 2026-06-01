@@ -825,6 +825,9 @@ export function wsHandler(sql: postgres.Sql) {
             }
           }
         }
+        if (mpList && mpList.size > 0 && socket.readyState === socket.OPEN) {
+          socket.send(JSON.stringify({ type: 'mp_online' }));
+        }
 
         // Heartbeat ping/pong: set alive initially, reset on pong reply.
         // When VS Code closes abruptly, the bridge WebSocket won't close cleanly on
@@ -881,6 +884,10 @@ export function wsHandler(sql: postgres.Sql) {
           clientClients.set(deviceId, new Set());
         }
         clientClients.get(deviceId)!.add(client);
+        const bridge = pcClients.get(deviceId);
+        if (bridge && bridge.socket.readyState === bridge.socket.OPEN) {
+          bridge.socket.send(JSON.stringify({ type: 'mp_online' }));
+        }
         socket.on('close', () => {
           const clients = clientClients.get(deviceId);
           if (clients) {

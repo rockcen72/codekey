@@ -280,21 +280,6 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
           deviceStatus = 'offline';
         }
       }
-      // Auto-detect mini program offline: switch to pairing view
-      if (deviceStatus === 'paired' && !bridge.mpOnline) {
-        // Only reset to idle if the user hasn't already started pairing
-        if (!this._pairingState || this._pairingState.status === 'idle') {
-          deviceStatus = 'unpaired';
-          this._pairingState = {
-            code: '',
-            method: 'code',
-            platform: this._pairingState?.platform || 'wechat',
-            status: 'idle',
-            statusText: 'Phone offline — generate a pairing code to reconnect',
-            expiresAt: 0,
-          };
-        }
-      }
     }
 
     // Pending approvals: prefer bridge's in-memory list (real-time, ~1s lag),

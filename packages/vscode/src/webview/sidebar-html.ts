@@ -106,7 +106,7 @@ export function renderDeviceContent(state: SidebarState): string {
   const serverDot = dot(serverConnected ? 'green' : 'red');
   const serverLabel = serverConnected ? 'Connected' : 'Disconnected';
   const mpOnline = state.deviceStatus === 'paired' && state.bridge.mpOnline;
-  const mpDot = dot(mpOnline ? 'green' : state.deviceStatus === 'paired' ? 'orange' : 'gray');
+  const mpDot = dot(mpOnline ? 'green' : 'gray');
   const mpLabel = mpOnline ? 'Phone Online' : state.deviceStatus === 'paired' ? 'Phone Offline' : '';
   const hookOk = state.bridge.hookConfig === 'enabled';
   const hookDot = dot(hookOk ? 'green' : 'orange');
@@ -114,6 +114,7 @@ export function renderDeviceContent(state: SidebarState): string {
   return `<div class="row"><span class="row-label">Server</span><span class="row-val">${serverDot}${serverLabel}</span></div>
     <div class="row"><span class="row-label">Hook</span><span class="row-val">${hookDot}${hookLabel}</span></div>
     ${mpLabel ? `<div class="row"><span class="row-label">Phone</span><span class="row-val">${mpDot}${mpLabel}</span></div>` : ''}
+    ${mpLabel ? '<div class="section-divider"></div>' : ''}
     <div class="btn-group">
       <button class="btn btn-sm" data-action="hook-settings">Hook</button>
       <button class="btn btn-ghost btn-sm" data-action="relayReconnect">Reconnect</button>
@@ -500,6 +501,7 @@ export function renderPairingContent(state: SidebarState): string {
   const isFeishu = platform === 'feishu';
   const feishuAppId = state.feishuAppId || '';
   const hasFeishu = !!feishuAppId;
+  const hasPartialCreds = !!(state.deviceId || state.deviceSecret);
   const platName = isFeishu ? 'Feishu' : 'WeChat';
 
   // When paired, collapse to a compact connected card (no code/QR clutter)
@@ -513,9 +515,7 @@ export function renderPairingContent(state: SidebarState): string {
           <div class="paired-title">Connected via ${platName}</div>
           <div class="paired-sub">${platName} Mini Program</div>
         </div>
-      </div>
-      <div class="paired-actions">
-        <button class="btn btn-sm btn-danger" data-action="unpairDevice">Unpair</button>
+        <button class="btn btn-sm btn-danger" data-action="unpairDevice" style="margin-left:auto">Unpair</button>
       </div>
     </div>`;
   }
@@ -557,6 +557,7 @@ export function renderPairingContent(state: SidebarState): string {
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
               Regenerate
             </button>
+            ${hasPartialCreds ? '<button class="btn btn-sm btn-ghost" data-action="unpairDevice">Reset</button>' : ''}
           </div>
           <div class="pairing-status ${isPaired ? 'success' : isWaiting ? 'waiting' : ''}" id="pairingStatus">
             ${isPaired ? `Connected via ${platName}` : isWaiting ? (p?.statusText || 'Waiting for scan...') : 'Generate a code to pair'}
@@ -621,7 +622,7 @@ export function renderSidebar(state: SidebarState): string {
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src https: data:; script-src 'nonce-${NONCE}'; connect-src http://* ws://*;">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src https: data:; script-src 'nonce-${NONCE}'; connect-src http://* https://* ws://* wss://*;">
 <style>${STYLES}</style>
 </head>
 <body>
@@ -662,7 +663,10 @@ ${renderSubscribe()}
           if (ps) { ps.textContent = 'Code scanned! Waiting for confirmation...'; ps.className = 'pairing-status waiting'; }
         }
         if (msg.type === 'device_token') {
-          api.postMessage({ action: 'pairedDevice', token: msg.token });
+          var payload = msg.payload || {};
+          var token = payload.deviceToken || msg.deviceToken || msg.token;
+          var deviceId = payload.deviceId || msg.deviceId;
+          api.postMessage({ action: 'pairedDevice', token: token, deviceId: deviceId });
           ws.close(); _pairingWs = null;
           var ps = document.getElementById('pairingStatus');
           if (ps) { ps.textContent = 'Paired successfully!'; ps.className = 'pairing-status success'; }
@@ -1094,6 +1098,7 @@ body{
 .row + .row{border-top:1px solid rgba(255,255,255,.03)}
 .row-label{font-size:11px;color:var(--vscode-descriptionForeground,#50506e);flex-shrink:0}
 .row-val{font-size:11px;color:var(--vscode-editor-foreground,#8888a8);display:flex;align-items:center}
+.section-divider{height:1px;background:rgba(255,255,255,.05);margin:6px 0 8px}
 
 /* ═══════════════════════════════════════════════
    BUTTONS
@@ -1301,7 +1306,6 @@ body{
 
 /* paired-compact: shown when device is already paired */
 .paired-compact{padding:2px 0}
-.paired-actions{margin-top:6px}
 .paired-row{display:flex;align-items:center;gap:10px}
 .paired-icon{
   width:24px;height:24px;border-radius:50%;
