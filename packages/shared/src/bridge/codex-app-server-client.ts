@@ -359,7 +359,8 @@ export class CodexAppServerClient extends EventEmitter {
     if (forwardable.includes(method)) {
       this.emit('notification', method, _msg);
     }
-    // All other notifications (agentMessage/delta, mcpServer/*, etc.) are filtered
+    // Raw notification always emitted (for content capture in start-codex.ts)
+    this.emit('raw_notification', method, _msg);
   }
 
   private expireAllPending(reason: string): void {
