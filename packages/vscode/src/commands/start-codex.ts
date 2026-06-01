@@ -20,6 +20,17 @@ function bridgeUrl(): string {
  * Approvals are posted to the bridge, which forwards them to the relay/mini program.
  * The extension polls the bridge for decisions and calls respondApproval().
  */
+async function waitForBridgeHealth(url: string, maxRetries: number = 10, delayMs: number = 1000): Promise<void> {
+  for (let i = 0; i < maxRetries; i++) {
+    try {
+      const resp = await fetch(url + '/v1/health', { signal: AbortSignal.timeout(2000) });
+      if (resp.ok) return;
+    } catch {}
+    await new Promise(r => setTimeout(r, delayMs));
+  }
+  throw new Error('Bridge did not become healthy');
+}
+
 export async function startCodexSession(context: vscode.ExtensionContext): Promise<void> {
   const binaryPath = resolveCodexBinaryForVSCode(context.extensionUri.fsPath);
   if (!binaryPath) {
@@ -30,6 +41,11 @@ export async function startCodexSession(context: vscode.ExtensionContext): Promi
   }
 
   log('[Codex] starting session with binary:', binaryPath);
+
+  // Ensure bridge is running before starting Codex (approvals go through bridge HTTP)
+  BridgeStatusService.getInstance().ensureStarted();
+  await waitForBridgeHealth(bridgeUrl());
+  log('[Codex] bridge is healthy');
 
   const cwd = vscode.workspace.workspaceFolders?.[0]?.uri?.fsPath;
   if (!cwd) {
