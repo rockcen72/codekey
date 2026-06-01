@@ -92,6 +92,9 @@ export async function startCodexSession(context: vscode.ExtensionContext): Promi
     const threadId = await client.startThread('workspace-write');
     log('[Codex] thread started:', threadId);
 
+    // Register Codex session with relay so mini program can see and interact
+    fetch(`${bridgeUrl()}/v1/codex/session/ensure`, { method: 'POST' }).catch(err => debug('[Codex] session ensure:', err));
+
     // Send an initial prompt
     const prompt = vscode.workspace.getConfiguration('codekey').get<string>('codexInitialPrompt')
       || 'Analyze the current project structure and provide a summary.';
@@ -106,6 +109,17 @@ export async function startCodexSession(context: vscode.ExtensionContext): Promi
     });
     terminal.sendText(`// Codex session ${threadId} — managed by CodeKey`);
     terminal.show();
+
+    // Forward useful notifications to relay → mini program (replies)
+    client.on('notification', (method: string, _msg: Record<string, unknown>) => {
+      if (method === 'turn/completed') {
+        fetch(`${bridgeUrl()}/v1/codex/event`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ eventType: 'task_complete', data: { summary: 'Codex turn completed' } }),
+        }).catch(() => {});
+      }
+    });
 
     // Poll for mini program decisions (every 2s, same cadence as CommandRelayService)
     const pollTimer = setInterval(async () => {
@@ -126,9 +140,15 @@ export async function startCodexSession(context: vscode.ExtensionContext): Promi
         const prResp = await fetch(`${bridgeUrl()}/v1/codex/prompts`);
         if (prResp.ok) {
           const { prompts } = await prResp.json() as { prompts: string[] };
+          // Serial queue: process one prompt at a time, await each
           for (const prompt of prompts) {
             debug('[Codex] remote prompt:', prompt.slice(0, 80));
-            client.startTurn(prompt);
+            try {
+              await client.startTurn(prompt);
+              debug('[Codex] prompt completed');
+            } catch (err) {
+              log('[Codex] prompt failed:', err);
+            }
           }
         }
       } catch {}
