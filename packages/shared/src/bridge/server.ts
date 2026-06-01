@@ -117,6 +117,30 @@ function handleRequest(req: IncomingMessage, res: ServerResponse, bridge: Approv
     return;
   }
 
+  if (req.method === 'POST' && url.pathname === '/v1/codex/session/ensure') {
+    if (codexRelay) codexRelay.ensureSession();
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ ok: true }));
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/v1/codex/event') {
+    let body = '';
+    req.on('data', (chunk) => { body += chunk; });
+    req.on('end', () => {
+      try {
+        const { eventType, data } = JSON.parse(body);
+        if (eventType && codexRelay) codexRelay.pushEvent(eventType, data || {});
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: true }));
+      } catch {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'invalid payload' }));
+      }
+    });
+    return;
+  }
+
   if (req.method === 'GET' && url.pathname === '/v1/codex/prompts') {
     const prompts = codexRelay ? codexRelay.pollPrompts() : [];
     res.writeHead(200, { 'Content-Type': 'application/json' });
