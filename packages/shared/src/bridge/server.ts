@@ -117,6 +117,13 @@ function handleRequest(req: IncomingMessage, res: ServerResponse, bridge: Approv
     return;
   }
 
+  if (req.method === 'GET' && url.pathname === '/v1/codex/prompts') {
+    const prompts = codexRelay ? codexRelay.pollPrompts() : [];
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ prompts }));
+    return;
+  }
+
   if (req.method === 'GET' && url.pathname === '/v1/pending-approvals') {
     const approvals = bridge.getPendingApprovals();
     res.writeHead(200, { 'Content-Type': 'application/json' });

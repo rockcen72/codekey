@@ -110,15 +110,28 @@ export async function startCodexSession(context: vscode.ExtensionContext): Promi
     // Poll for mini program decisions (every 2s, same cadence as CommandRelayService)
     const pollTimer = setInterval(async () => {
       try {
-        const resp = await fetch(`${bridgeUrl()}/v1/codex/decisions`);
-        if (!resp.ok) return;
-        const { decisions } = await resp.json() as { decisions: { correlationId: string; decision: string }[] };
-        for (const d of decisions) {
-          const codexDecision = d.decision === 'approve' ? 'approve' as const : d.decision === 'deny' ? 'deny' as const : 'pause' as const;
-          client.respondApproval(d.correlationId, codexDecision);
-          debug('[Codex] applied decision:', d.correlationId, d.decision);
+        // Poll decisions (approval responses)
+        const decResp = await fetch(`${bridgeUrl()}/v1/codex/decisions`);
+        if (decResp.ok) {
+          const { decisions } = await decResp.json() as { decisions: { correlationId: string; decision: string }[] };
+          for (const d of decisions) {
+            const codexDecision = d.decision === 'approve' ? 'approve' as const : d.decision === 'deny' ? 'deny' as const : 'pause' as const;
+            client.respondApproval(d.correlationId, codexDecision);
+            debug('[Codex] applied decision:', d.correlationId, d.decision);
+          }
         }
       } catch { /* bridge not ready yet */ }
+      try {
+        // Poll prompts (remote input from mini program)
+        const prResp = await fetch(`${bridgeUrl()}/v1/codex/prompts`);
+        if (prResp.ok) {
+          const { prompts } = await prResp.json() as { prompts: string[] };
+          for (const prompt of prompts) {
+            debug('[Codex] remote prompt:', prompt.slice(0, 80));
+            client.startTurn(prompt);
+          }
+        }
+      } catch {}
     }, 2000);
 
     context.subscriptions.push({
