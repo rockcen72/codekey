@@ -510,6 +510,9 @@ export function renderPairingContent(state: SidebarState): string {
           <div class="paired-sub">${platName} Mini Program</div>
         </div>
       </div>
+      <div class="paired-actions">
+        <button class="btn btn-sm btn-danger" data-action="unpairDevice">Unpair</button>
+      </div>
     </div>`;
   }
 
@@ -1294,6 +1297,7 @@ body{
 
 /* paired-compact: shown when device is already paired */
 .paired-compact{padding:2px 0}
+.paired-actions{margin-top:6px}
 .paired-row{display:flex;align-items:center;gap:10px}
 .paired-icon{
   width:24px;height:24px;border-radius:50%;

@@ -30,6 +30,12 @@ export function loadCredentials(): Credentials | null {
   }
 }
 
+export function clearCredentials(): void {
+  try {
+    fs.unlinkSync(credentialsPath());
+  } catch {}
+}
+
 export function saveCredentials(creds: Credentials): void {
   const dir = path.dirname(credentialsPath());
   fs.mkdirSync(dir, { recursive: true });

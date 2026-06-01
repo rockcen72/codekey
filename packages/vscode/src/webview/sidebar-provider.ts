@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import * as path from 'node:path';
 import * as crypto from 'node:crypto';
 import * as os from 'node:os';
-import { loadCredentials } from '../auth/credentials.js';
+import { loadCredentials, clearCredentials } from '../auth/credentials.js';
 import { createApi, ApiError, type SessionResponse } from '../api/client.js';
 import { getAgents } from '../agents/registry.js';
 import { BridgeStatusService } from '../services/bridge-status.js';
@@ -593,7 +593,27 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       case 'pairedDevice':
         this._handlePairingComplete(msg.token);
         break;
+      case 'unpairDevice':
+        this._handleUnpair();
+        break;
     }
+  }
+
+  private async _handleUnpair(): Promise<void> {
+    const creds = loadCredentials();
+    if (creds?.deviceToken) {
+      try {
+        await fetch(`${creds.relayUrl}/api/v1/devices/${creds.deviceId}`, {
+          method: 'DELETE',
+          headers: { 'Authorization': `Bearer ${creds.deviceToken}` },
+          signal: AbortSignal.timeout(5000),
+        });
+      } catch {}
+    }
+    clearCredentials();
+    this._pairingState = undefined;
+    this._pushState();
+    vscode.window.showInformationMessage('Device unpaired');
   }
 
   private async _handlePairingGenerate(): Promise<void> {
