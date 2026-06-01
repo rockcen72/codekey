@@ -140,7 +140,7 @@ export async function startCodexSession(context: vscode.ExtensionContext): Promi
       cwd,
       hideFromUser: false,
     });
-    terminal.sendText(`// Codex session ${threadId} — managed by CodeKey`);
+    terminal.sendText(`# Codex session ${threadId.slice(0, 8)} — managed by CodeKey`);
     terminal.show();
 
 
