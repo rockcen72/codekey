@@ -885,7 +885,13 @@ export function wsHandler(sql: postgres.Sql) {
           const clients = clientClients.get(deviceId);
           if (clients) {
             clients.delete(client);
-            if (clients.size === 0) clientClients.delete(deviceId);
+            if (clients.size === 0) {
+            clientClients.delete(deviceId);
+            const bridge = pcClients.get(deviceId);
+            if (bridge && bridge.socket.readyState === bridge.socket.OPEN) {
+              bridge.socket.send(JSON.stringify({ type: 'mp_offline' }));
+            }
+          }
           }
         });
       }

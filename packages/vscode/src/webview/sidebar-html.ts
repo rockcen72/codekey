@@ -105,11 +105,15 @@ export function renderDeviceContent(state: SidebarState): string {
   const serverConnected = state.bridge.relay === 'connected';
   const serverDot = dot(serverConnected ? 'green' : 'red');
   const serverLabel = serverConnected ? 'Connected' : 'Disconnected';
+  const mpOnline = state.deviceStatus === 'paired' && state.bridge.mpOnline;
+  const mpDot = dot(mpOnline ? 'green' : state.deviceStatus === 'paired' ? 'orange' : 'gray');
+  const mpLabel = mpOnline ? 'Phone Online' : state.deviceStatus === 'paired' ? 'Phone Offline' : '';
   const hookOk = state.bridge.hookConfig === 'enabled';
   const hookDot = dot(hookOk ? 'green' : 'orange');
   const hookLabel = hookOk ? 'Enabled' : 'Installed';
   return `<div class="row"><span class="row-label">Server</span><span class="row-val">${serverDot}${serverLabel}</span></div>
     <div class="row"><span class="row-label">Hook</span><span class="row-val">${hookDot}${hookLabel}</span></div>
+    ${mpLabel ? `<div class="row"><span class="row-label">Phone</span><span class="row-val">${mpDot}${mpLabel}</span></div>` : ''}
     <div class="btn-group">
       <button class="btn btn-sm" data-action="hook-settings">Hook</button>
       <button class="btn btn-ghost btn-sm" data-action="relayReconnect">Reconnect</button>

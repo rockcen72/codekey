@@ -15,6 +15,7 @@ export interface BridgeState {
   relay: 'connected' | 'connecting' | 'disconnected';
   hookInstalled: boolean;
   hookConfig: HookConfigStatus;
+  mpOnline: boolean;
 }
 
 type Listener = (state: BridgeState) => void;
@@ -32,7 +33,7 @@ export class BridgeStatusService {
   private _process: ChildProcess | null = null;
   private _myPid: number | null = null;
   private _port = 3001;
-  private _state: BridgeState = { bridge: 'stopped', relay: 'disconnected', hookInstalled: false, hookConfig: 'not_found' };
+  private _state: BridgeState = { bridge: 'stopped', relay: 'disconnected', hookInstalled: false, hookConfig: 'not_found', mpOnline: false };
   private _listeners = new Set<Listener>();
   private _healthTimer?: ReturnType<typeof setInterval>;
   private _startedAt = 0;
@@ -297,7 +298,7 @@ export class BridgeStatusService {
     try {
       const resp = await fetch(`${this.getBridgeUrl()}/v1/health`);
       if (resp.ok) {
-        const body = await resp.json() as { relay?: string };
+        const body = await resp.json() as { relay?: string; mpOnline?: boolean };
         const relay = (body.relay ?? 'disconnected') as BridgeState['relay'];
         const updates: Partial<BridgeState> = { bridge: 'running', relay };
         if (this._state.bridge !== 'running') {

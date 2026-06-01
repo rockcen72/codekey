@@ -17,6 +17,9 @@ export interface BridgeConfig {
 }
 
 export function startBridgeServer(bridge: ApprovalBridge, port = 3001, source = 'cli', onShutdown?: () => void, startedAt?: number, bridgeConfig?: BridgeConfig): Promise<{ close: () => Promise<void>; port: number }> {
+  let mpOnline = false;
+  bridge.relay.on('mp_online', () => { mpOnline = true; });
+  bridge.relay.on('mp_offline', () => { mpOnline = false; });
   const codexRelay = new CodexRelay(bridge.relay);
   const server = createServer((req, res) => handleRequest(req, res, bridge, source, onShutdown, startedAt, bridgeConfig, codexRelay));
 
@@ -493,7 +496,7 @@ function handleRequest(req: IncomingMessage, res: ServerResponse, bridge: Approv
   }
 
   if (url.pathname === '/v1/health') {
-    const supports = ['register-window', 'window-id', 'session-label', 'approval_forward', 'activate-session', 'deactivate-session', 'claude-sessions/recent', 'claude-sessions/attach', 'detach-session', 'attached-sessions', 'relay-reconnect', 'admin-config', 'pending-approvals'];
+    const supports = ['mp-status', 'register-window', 'window-id', 'session-label', 'approval_forward', 'activate-session', 'deactivate-session', 'claude-sessions/recent', 'claude-sessions/attach', 'detach-session', 'attached-sessions', 'relay-reconnect', 'admin-config', 'pending-approvals'];
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({
       ok: true,
