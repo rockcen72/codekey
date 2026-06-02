@@ -164,8 +164,11 @@ export class ApprovalBridge {
   }
 
   /** Register an event ack handler for clientEventId → serverEventId migration. */
-  onEventAck(handler: (clientEventId: string, serverEventId: string) => void): void {
+  onEventAck(handler: (clientEventId: string, serverEventId: string) => void): () => void {
     this._eventAckHandlers.push(handler);
+    return () => {
+      this._eventAckHandlers = this._eventAckHandlers.filter((h) => h !== handler);
+    };
   }
 
   /** Public wrapper: send event to relay via sendEvent(). */
@@ -1481,6 +1484,16 @@ export class ApprovalBridge {
             console.error('[bridge] reconcile: re-registering lost session %s', csid);
             this.ensureSession(csid, undefined, 'transcript_attach').catch((err) => {
               console.error('[bridge] reconcile: re-register failed for %s: %s', csid, err);
+            });
+          }
+        }
+
+        // Re-register opencode sessions that persisted from last run
+        for (const csid of this._opencodeAttachedIds) {
+          if (!this.sessions.has(csid)) {
+            console.error('[bridge] reconcile: re-registering opencode session %s', csid);
+            this.ensureSession(csid, undefined, 'opencode', { agentType: 'opencode', runtime: 'opencode' }).catch((err) => {
+              console.error('[bridge] reconcile: opencode re-register failed for %s: %s', csid, err);
             });
           }
         }

@@ -2,10 +2,31 @@ import { randomUUID } from 'node:crypto';
 import { get as httpGet } from 'node:http';
 import { createEventStreamParser } from './sse-parser.js';
 import { ApprovalBridge } from './handler.js';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 
 const INITIAL_RECONNECT_DELAY = 1000;
 const MAX_RECONNECT_DELAY = 30_000;
 const BACKOFF_MULTIPLIER = 2;
+
+function getAttachedStoragePath(): string {
+  const { tmpdir } = require('node:os');
+  const { join } = require('node:path');
+  return join(tmpdir(), 'codekey-opencode-attached.json');
+}
+
+function loadAttachedIds(): string[] {
+  try {
+    const path = getAttachedStoragePath();
+    if (!existsSync(path)) return [];
+    return JSON.parse(readFileSync(path, 'utf-8')) as string[];
+  } catch { return []; }
+}
+
+function saveAttachedIds(ids: Set<string>): void {
+  try {
+    writeFileSync(getAttachedStoragePath(), JSON.stringify([...ids]), 'utf-8');
+  } catch {}
+}
 
 export class OpenCodeSessionManager {
   private bridge: ApprovalBridge;
@@ -53,6 +74,12 @@ export class OpenCodeSessionManager {
     this._abortController = new AbortController();
     this._stopped = false;
     this._reconnectDelay = INITIAL_RECONNECT_DELAY;
+
+    // Restore previously attached opencode session IDs from disk
+    for (const id of loadAttachedIds()) {
+      this.bridge.addOpenCodeAttachedSession(id);
+    }
+
     await this.connectSSE();
   }
 
@@ -76,13 +103,13 @@ export class OpenCodeSessionManager {
   async attachSession(localSessionId: string, title?: string): Promise<string> {
     const serverSessionId = await this.ensureRelaySession(localSessionId);
     this.bridge.addOpenCodeAttachedSession(localSessionId);
+    saveAttachedIds(new Set([...loadAttachedIds(), localSessionId]));
     if (title) {
       this.bridge.relay.sendRaw(JSON.stringify({
         type: 'update_session_label',
         payload: { sessionId: serverSessionId, label: title },
       }));
     }
-    // Replay recent conversation history to relay
     this.replayHistory(localSessionId, serverSessionId).catch(() => {});
     return serverSessionId;
   }
@@ -90,6 +117,7 @@ export class OpenCodeSessionManager {
   async detachSession(localSessionId: string): Promise<boolean> {
     const serverSessionId = await this.ensureRelaySession(localSessionId);
     this.bridge.removeOpenCodeAttachedSession(localSessionId);
+    saveAttachedIds(new Set(loadAttachedIds().filter(id => id !== localSessionId)));
     this.bridge.relay.sendRaw(JSON.stringify({
       type: 'deactivate_session',
       payload: { sessionId: serverSessionId },
