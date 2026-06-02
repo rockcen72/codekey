@@ -30,7 +30,7 @@ describe('OpenCodeSessionManager event handling', () => {
 
   beforeEach(() => {
     relay = new FakeRelay();
-    bridge = new ApprovalBridge(relay);
+    bridge = new ApprovalBridge(relay as any);
     bridge.listenRelayCommands();
     manager = new OpenCodeSessionManager('http://127.0.0.1:4096', bridge);
     // Register handlers without starting SSE
