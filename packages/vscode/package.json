@@ -72,6 +72,10 @@
       {
         "command": "codekey.toggleCodexHook",
         "title": "CodeKey: Toggle Codex Hook"
+      },
+      {
+        "command": "codekey.toggleDebugLog",
+        "title": "CodeKey: Toggle Debug Log"
       }
     ],
     "configuration": {
