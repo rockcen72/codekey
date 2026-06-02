@@ -13,6 +13,7 @@ export class OpenCodeSessionManager {
 
   private opencodeSessions: Set<string> = new Set();
   private opencodeSessionToRelayId: Map<string, string> = new Map();
+  private inFlightSessions: Map<string, Promise<string>> = new Map();
   private permissionMap: Map<string, { requestID: string; serverSessionId: string; localSessionID: string }> = new Map();
   private deliveredMessageParts: Set<string> = new Set();
 
@@ -67,8 +68,108 @@ export class OpenCodeSessionManager {
     }
     this.opencodeSessions.clear();
     this.opencodeSessionToRelayId.clear();
+    this.inFlightSessions.clear();
     this.permissionMap.clear();
     this.deliveredMessageParts.clear();
+  }
+
+  async attachSession(localSessionId: string, title?: string): Promise<string> {
+    const serverSessionId = await this.ensureRelaySession(localSessionId);
+    this.bridge.addOpenCodeAttachedSession(localSessionId);
+    if (title) {
+      this.bridge.relay.sendRaw(JSON.stringify({
+        type: 'update_session_label',
+        payload: { sessionId: serverSessionId, label: title },
+      }));
+    }
+    // Replay recent conversation history to relay
+    this.replayHistory(localSessionId, serverSessionId).catch(() => {});
+    return serverSessionId;
+  }
+
+  async detachSession(localSessionId: string): Promise<boolean> {
+    const serverSessionId = await this.ensureRelaySession(localSessionId);
+    this.bridge.removeOpenCodeAttachedSession(localSessionId);
+    this.bridge.relay.sendRaw(JSON.stringify({
+      type: 'deactivate_session',
+      payload: { sessionId: serverSessionId },
+    }));
+    return true;
+  }
+
+  /** Fetch recent messages and push user prompts as relay events. */
+  private async replayHistory(localSessionId: string, serverSessionId: string): Promise<void> {
+    try {
+      const resp = await fetch(`${this.opencodeBaseUrl}/session/${encodeURIComponent(localSessionId)}/message?limit=5`);
+      if (!resp.ok) return;
+      const msgs = await resp.json() as any[];
+      if (!Array.isArray(msgs)) return;
+
+      for (const m of msgs) {
+        const info = m.info || {};
+        if (info.role === 'user' && Array.isArray(m.parts)) {
+          const text = m.parts
+            .filter((p: any) => p.type === 'text' && p.text)
+            .map((p: any) => p.text)
+            .join('\n');
+          if (text) {
+            this.bridge.sendEventToRelay(serverSessionId, {
+              clientEventId: `oc-hist:${localSessionId}:${Date.now()}:${Math.random()}`,
+              sessionId: serverSessionId,
+              agent: 'opencode',
+              eventType: 'user_prompt',
+              data: {
+                type: 'user_prompt',
+                prompt: text,
+                summary: text.slice(0, 200),
+              },
+              ts: info.time?.created ? new Date(info.time.created).toISOString() : new Date().toISOString(),
+            });
+          }
+        } else if (info.role === 'assistant' && m.parts) {
+          // Push assistant messages as task_complete
+          const text = m.parts
+            .filter((p: any) => p.type === 'text' && p.text)
+            .map((p: any) => p.text)
+            .join('\n');
+          if (text) {
+            this.bridge.sendEventToRelay(serverSessionId, {
+              clientEventId: `oc-hist:${localSessionId}:${Date.now()}:${Math.random()}`,
+              sessionId: serverSessionId,
+              agent: 'opencode',
+              eventType: 'task_complete',
+              data: {
+                type: 'task_complete',
+                summary: text.slice(0, 500),
+              },
+              ts: info.time?.created ? new Date(info.time.created).toISOString() : new Date().toISOString(),
+            });
+          }
+        }
+      }
+    } catch { /* best-effort */ }
+  }
+
+  private ensureRelaySession(localSessionId: string): Promise<string> {
+    const existing = this.opencodeSessionToRelayId.get(localSessionId);
+    if (existing) return Promise.resolve(existing);
+
+    const inFlight = this.inFlightSessions.get(localSessionId);
+    if (inFlight) return inFlight;
+
+    const promise = this.bridge.ensureSession(localSessionId, undefined, 'opencode', {
+      agentType: 'opencode',
+      runtime: 'opencode',
+    }).then((serverSessionId) => {
+      this.opencodeSessions.add(serverSessionId);
+      this.opencodeSessionToRelayId.set(localSessionId, serverSessionId);
+      return serverSessionId;
+    }).finally(() => {
+      this.inFlightSessions.delete(localSessionId);
+    });
+
+    this.inFlightSessions.set(localSessionId, promise);
+    return promise;
   }
 
   // ── SSE connection ──────────────────────────────────────
@@ -161,13 +262,7 @@ export class OpenCodeSessionManager {
       // Register each existing session with relay
       for (const s of sessions) {
         if (s.id && !this.opencodeSessionToRelayId.has(s.id)) {
-          this.bridge.ensureSession(s.id, undefined, 'opencode', {
-            agentType: 'opencode',
-            runtime: 'opencode',
-          }).then((serverSessionId) => {
-            this.opencodeSessions.add(serverSessionId);
-            this.opencodeSessionToRelayId.set(s.id, serverSessionId);
-          }).catch(() => {});
+          this.ensureRelaySession(s.id).catch(() => {});
         }
       }
     } catch {
@@ -212,12 +307,7 @@ export class OpenCodeSessionManager {
 
     if (!requestID || !sessionID) return;
 
-    const serverSessionId = await this.bridge.ensureSession(sessionID, undefined, 'opencode', {
-      agentType: 'opencode',
-      runtime: 'opencode',
-    });
-    this.opencodeSessions.add(serverSessionId);
-    this.opencodeSessionToRelayId.set(sessionID, serverSessionId);
+    const serverSessionId = await this.ensureRelaySession(sessionID);
 
     const command = permissionToCommand(permissionType, metadata);
     const rawRisk = this.bridge.evaluateRisk(command);
@@ -264,13 +354,7 @@ export class OpenCodeSessionManager {
     if (!sessionID) return;
 
     if (type === 'session.created') {
-      this.bridge.ensureSession(sessionID, undefined, 'opencode', {
-        agentType: 'opencode',
-        runtime: 'opencode',
-      }).then((serverSessionId) => {
-        this.opencodeSessions.add(serverSessionId);
-        this.opencodeSessionToRelayId.set(sessionID, serverSessionId);
-      }).catch(() => {});
+      this.ensureRelaySession(sessionID).catch(() => {});
     } else if (type === 'session.deleted') {
       const serverSessionId = this.opencodeSessionToRelayId.get(sessionID);
       if (serverSessionId) {

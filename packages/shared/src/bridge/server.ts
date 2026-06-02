@@ -6,6 +6,7 @@ import { resolve } from 'node:path';
 import { ApprovalBridge, type HookEventBody } from './handler.js';
 import { CodexRelay } from './codex-relay.js';
 import { CodexResumeManager } from './codex-resume-manager.js';
+import type { OpenCodeSessionManager } from './opencode-session-manager.js';
 import { listRecentClaudeTranscripts, loadConversation } from './claude-transcripts.js';
 
 export interface BridgeConfig {
@@ -20,12 +21,20 @@ export interface BridgeConfig {
   openCodeUrl?: string;
 }
 
-export function startBridgeServer(bridge: ApprovalBridge, port = 3001, source = 'cli', onShutdown?: () => void, startedAt?: number, bridgeConfig?: BridgeConfig, codexResumeManager?: CodexResumeManager): Promise<{ close: () => Promise<void>; port: number }> {
+interface CodexHookResponse {
+  hookSpecificOutput: {
+    hookEventName: 'PermissionRequest';
+    decision: { behavior: string; message?: string };
+  };
+}
+
+export function startBridgeServer(bridge: ApprovalBridge, port = 3001, source = 'cli', onShutdown?: () => void, startedAt?: number, bridgeConfig?: BridgeConfig, codexResumeManager?: CodexResumeManager, opencodeManager?: OpenCodeSessionManager): Promise<{ close: () => Promise<void>; port: number }> {
   let mpOnline = false;
   bridge.relay.on('mp_online', () => { mpOnline = true; });
   bridge.relay.on('mp_offline', () => { mpOnline = false; });
   const codexRelay = new CodexRelay(bridge.relay);
-  const server = createServer((req, res) => handleRequest(req, res, bridge, source, onShutdown, startedAt, bridgeConfig, codexRelay, codexResumeManager, () => mpOnline));
+  const pendingCodexHookRequests = new Map<string, Promise<CodexHookResponse>>();
+  const server = createServer((req, res) => handleRequest(req, res, bridge, source, onShutdown, startedAt, bridgeConfig, codexRelay, codexResumeManager, opencodeManager, pendingCodexHookRequests, () => mpOnline));
 
   return new Promise((resolve, reject) => {
     const onListen = () => {
@@ -51,7 +60,27 @@ export function startBridgeServer(bridge: ApprovalBridge, port = 3001, source = 
   });
 }
 
-function handleRequest(req: IncomingMessage, res: ServerResponse, bridge: ApprovalBridge, source: string, onShutdown?: () => void, startedAt?: number, bridgeConfig?: BridgeConfig, codexRelay?: CodexRelay, codexResumeManager?: CodexResumeManager, getMpOnline?: () => boolean): void {
+function codexHookDedupKey(input: Record<string, unknown>): string {
+  const sessionId = typeof input.session_id === 'string' ? input.session_id : 'unknown';
+  const turnId = typeof input.turn_id === 'string' ? input.turn_id : '';
+  const toolName = typeof input.tool_name === 'string' ? input.tool_name : 'unknown';
+  return stableStringify({
+    sessionId,
+    turnId,
+    toolName,
+    toolInput: input.tool_input ?? null,
+    cwd: input.cwd ?? '',
+  });
+}
+
+function stableStringify(value: unknown): string {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(stableStringify).join(',')}]`;
+  const obj = value as Record<string, unknown>;
+  return `{${Object.keys(obj).sort().map((key) => `${JSON.stringify(key)}:${stableStringify(obj[key])}`).join(',')}}`;
+}
+
+function handleRequest(req: IncomingMessage, res: ServerResponse, bridge: ApprovalBridge, source: string, onShutdown?: () => void, startedAt?: number, bridgeConfig?: BridgeConfig, codexRelay?: CodexRelay, codexResumeManager?: CodexResumeManager, opencodeManager?: OpenCodeSessionManager, pendingCodexHookRequests?: Map<string, Promise<CodexHookResponse>>, getMpOnline?: () => boolean): void {
   const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
 
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -299,28 +328,54 @@ function handleRequest(req: IncomingMessage, res: ServerResponse, bridge: Approv
       let regTimer: ReturnType<typeof setTimeout> | null = null;
       let regHandler: ((p: unknown) => void) | null = null;
       let handler: ((p: unknown) => void) | null = null;
+      let ackCleanup: (() => void) | null = null;
       let clearLocalPending: (() => void) | null = null;
       let resolved = false;
+      let dedupKey = '';
+      let currentDedupPromise: Promise<CodexHookResponse> | null = null;
+      let resolveDedup: ((value: CodexHookResponse) => void) | null = null;
+      const acceptedEventIds = new Set<string>();
 
       function finish(behavior: string, message?: string) {
         if (resolved) return;
         resolved = true;
         if (timeout) clearTimeout(timeout);
         if (handler) { bridge.relay.off('approval_forward', handler as (...args: unknown[]) => void); handler = null; }
+        if (ackCleanup) { ackCleanup(); ackCleanup = null; }
         if (regTimer) { clearTimeout(regTimer); regTimer = null; }
         if (regHandler) { bridge.relay.off('session_registered', regHandler); regHandler = null; }
         if (clearLocalPending) { clearLocalPending(); clearLocalPending = null; }
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({
+        const output: CodexHookResponse = {
           hookSpecificOutput: {
             hookEventName: 'PermissionRequest',
             decision: { behavior, ...(message ? { message } : {}) },
           },
-        }));
+        };
+        if (dedupKey && pendingCodexHookRequests?.get(dedupKey) === currentDedupPromise) {
+          pendingCodexHookRequests.delete(dedupKey);
+        }
+        resolveDedup?.(output);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(output));
       }
 
       try {
         const input = JSON.parse(body);
+        dedupKey = codexHookDedupKey(input);
+        const existing = dedupKey ? pendingCodexHookRequests?.get(dedupKey) : undefined;
+        if (existing) {
+          const output = await existing;
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify(output));
+          return;
+        }
+        if (dedupKey && pendingCodexHookRequests) {
+          currentDedupPromise = new Promise<CodexHookResponse>((resolve) => {
+            resolveDedup = resolve;
+          });
+          pendingCodexHookRequests.set(dedupKey, currentDedupPromise);
+        }
+
         const codexSessionId = input.session_id || 'unknown';
         const toolName = input.tool_name || 'unknown';
         const toolInput = input.tool_input || {};
@@ -387,6 +442,12 @@ function handleRequest(req: IncomingMessage, res: ServerResponse, bridge: Approv
         // Step 3: Register approval_forward handler BEFORE sending event (avoid race)
         // Use randomUUID to avoid collision when concurrent hooks fire for the same session.
         const clientEventId = `hook:${codexSessionId}:${randomUUID()}`;
+        acceptedEventIds.add(clientEventId);
+        ackCleanup = bridge.onEventAck((ackedClientEventId, serverEventId) => {
+          if (ackedClientEventId === clientEventId) {
+            acceptedEventIds.add(serverEventId);
+          }
+        });
 
         const approvalTimeoutMs = parseInt(process.env.CODEX_HOOK_APPROVAL_TIMEOUT_MS || '300000', 10);
         timeout = setTimeout(() => {
@@ -396,7 +457,7 @@ function handleRequest(req: IncomingMessage, res: ServerResponse, bridge: Approv
 
         handler = (payload: unknown) => {
           const fwd = payload as { clientEventId?: string; eventId?: string; decision?: string; message?: string };
-          if (fwd.clientEventId !== clientEventId && fwd.eventId !== clientEventId) return;
+          if (!(fwd.clientEventId && acceptedEventIds.has(fwd.clientEventId)) && !(fwd.eventId && acceptedEventIds.has(fwd.eventId))) return;
           const approved = fwd.decision === 'approve';
           console.error('[codex-hooks] decision: session=%s tool=%s decision=%s', codexSessionId, toolName, fwd.decision);
           finish(approved ? 'allow' : 'deny', fwd.message);
@@ -509,15 +570,20 @@ function handleRequest(req: IncomingMessage, res: ServerResponse, bridge: Approv
       try {
         const { sessionId, title } = JSON.parse(body);
         if (!sessionId) { res.writeHead(400); res.end('{}'); return; }
-        bridge.ensureSession(sessionId, undefined, 'opencode', { agentType: 'opencode', runtime: 'opencode' })
+        const attach = opencodeManager
+          ? opencodeManager.attachSession(sessionId, typeof title === 'string' ? title : undefined)
+          : bridge.ensureSession(sessionId, undefined, 'opencode', { agentType: 'opencode', runtime: 'opencode' }).then((serverSessionId) => {
+              bridge.addOpenCodeAttachedSession(sessionId);
+              if (title && typeof title === 'string') {
+                bridge.relay.sendRaw(JSON.stringify({
+                  type: 'update_session_label',
+                  payload: { sessionId: serverSessionId, label: title },
+                }));
+              }
+              return serverSessionId;
+            });
+        attach
           .then((serverSessionId) => {
-            bridge.addOpenCodeAttachedSession(sessionId);
-            if (title && typeof title === 'string') {
-              bridge.relay.sendRaw(JSON.stringify({
-                type: 'update_session_label',
-                payload: { sessionId: serverSessionId, label: title },
-              }));
-            }
             res.writeHead(200, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({ ok: true, serverSessionId }));
           })
@@ -540,10 +606,19 @@ function handleRequest(req: IncomingMessage, res: ServerResponse, bridge: Approv
       try {
         const { sessionId } = JSON.parse(body);
         if (!sessionId) { res.writeHead(400); res.end('{}'); return; }
-        bridge.detachClaudeSession(sessionId).then((r) => {
-          bridge.removeOpenCodeAttachedSession(sessionId);
+        const detach = opencodeManager
+          ? opencodeManager.detachSession(sessionId)
+          : bridge.ensureSession(sessionId, undefined, 'opencode', { agentType: 'opencode', runtime: 'opencode' }).then((serverSessionId) => {
+              bridge.removeOpenCodeAttachedSession(sessionId);
+              bridge.relay.sendRaw(JSON.stringify({ type: 'deactivate_session', payload: { sessionId: serverSessionId } }));
+              return false;
+            });
+        detach.then(() => {
           res.writeHead(200, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify(r));
+          res.end(JSON.stringify({ ok: true }));
+        }).catch(() => {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: true }));
         });
       } catch {
         res.writeHead(200, { 'Content-Type': 'application/json' });
