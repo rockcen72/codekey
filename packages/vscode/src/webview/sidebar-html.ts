@@ -59,6 +59,7 @@ export interface ClaudeSessionItem {
   isCodexSession?: boolean;
   /** Set to true for OpenCode sessions */
   isOpenCodeSession?: boolean;
+  serverSessionId?: string;
   /** True when this Codex session has been resumed */
   resumed?: boolean;
 }
@@ -272,13 +273,14 @@ function _sessionItemHtml(s: any, extraCls: string): string {
       const isCodex = s.isCodexSession ? 'true' : 'false';
       const isOpenCode = s.isOpenCodeSession ? 'true' : '';
       const title = _displayTitle(s);
+      const serverSessionId = s.serverSessionId || '';
       return `<div class="session-item${extraCls}" data-sid="${h(sid)}" data-agent="${agent}">
         <div class="session-title-row">
           <span class="session-title-click" data-action="togglePreview" data-session-id="${h(sid)}" data-iscodex="${isCodex}" data-isopencode="${isOpenCode}">
             <span class="chevron">&#9654;</span>
             <span class="session-title" title="${h(title)}">${h(truncate(title, 60))}</span>
           </span>
-          <button class="btn btn-sm ${btnCls}" data-action="toggleAttachClaudeSession" data-session-id="${h(sid)}" data-title="${h(title)}" data-attached="${isAttached ? 'true' : 'false'}"${s.isCodexSession ? ' data-iscodex="true"' : ''}${s.isOpenCodeSession ? ' data-isopencode="true"' : ''}>${btnText}</button>
+          <button class="btn btn-sm ${btnCls}" data-action="toggleAttachClaudeSession" data-session-id="${h(sid)}" data-title="${h(title)}" data-server-session-id="${h(serverSessionId)}" data-attached="${isAttached ? 'true' : 'false'}"${s.isCodexSession ? ' data-iscodex="true"' : ''}${s.isOpenCodeSession ? ' data-isopencode="true"' : ''}>${btnText}</button>
         </div>
         <div class="session-meta">
           <span class="session-cwd">${h(truncate(s.cwd || '', 50))}</span>
@@ -290,7 +292,11 @@ function _sessionItemHtml(s: any, extraCls: string): string {
 
 function _displayTitle(s: any): string {
   var t = s.title || s.sessionId || '';
-  if (s.isOpenCodeSession && !s.title) return 'OpenCode session';
+  if (s.isOpenCodeSession) {
+    // OpenCode often returns the session ID as the title
+    if (!s.title || /^ses_/.test(t) || t === s.sessionId) return 'OpenCode session';
+    return t;
+  }
   if (/^[0-9a-f]{8}/.test(t) && t.length >= 8) return 'Codex session';
   return t;
 }
@@ -1016,6 +1022,7 @@ ${renderSubscribe()}
         sessionId: target.dataset.sessionId,
         attached: target.dataset.attached === 'true',
         title: target.dataset.title || '',
+        serverSessionId: target.dataset.serverSessionId || '',
         iscodex: target.dataset.iscodex === 'true',
         isopencode: target.dataset.isopencode === 'true',
       });
