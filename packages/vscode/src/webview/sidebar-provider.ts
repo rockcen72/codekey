@@ -9,7 +9,7 @@ import { getAgents } from '../agents/registry.js';
 import { BridgeStatusService } from '../services/bridge-status.js';
 import { SessionStore } from '../services/session-store.js';
 import { isOpenCodeCliInstalled } from '../hook/opencode-installer.js';
-import { startOpenCodeTerminal } from '../commands/start-opencode.js';
+import { startOpenCodeTerminal, hasOpenCodeTerminal } from '../commands/start-opencode.js';
 
 
 import {
@@ -688,9 +688,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
             } else {
               await SessionStore.addOpenCode(this._context, creds.deviceId, msg.sessionId, { title: msg.title || '', cwd: '' });
               // Auto-open terminal in tab area for this session
-              const termName = `opencode-${msg.sessionId.slice(0, 8)}`;
-              const exists = vscode.window.terminals.some(t => t.name === termName);
-              if (!exists) {
+              if (!hasOpenCodeTerminal(msg.sessionId)) {
                 startOpenCodeTerminal(msg.sessionId);
               }
             }
