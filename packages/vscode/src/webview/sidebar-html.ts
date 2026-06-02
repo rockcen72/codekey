@@ -855,6 +855,8 @@ ${renderSubscribe()}
   });
 
   // Apply current agent filter and per-tab folding
+  var _foldExpanded = false;
+
   function applyAgentFilter() {
     var stored = 'all';
     try { stored = sessionStorage.getItem('agentFilter') || 'all'; } catch(e) {}
@@ -868,41 +870,49 @@ ${renderSubscribe()}
     var items = document.querySelectorAll('.session-item');
     var matching: HTMLElement[] = [];
     items.forEach(function(it) {
-      var ag = (it as HTMLElement).dataset.agent || 'claude-code';
+      var el = it as HTMLElement;
+      var ag = el.dataset.agent || 'claude-code';
       var match = (key === 'all') || (ag === key);
-      (it as HTMLElement).style.display = match ? '' : 'none';
-      if (match) matching.push(it as HTMLElement);
+      // Reset — remove both class and inline
+      el.classList.remove('session-hidden');
+      el.style.display = '';
+      if (!match) {
+        el.style.display = 'none';
+      } else {
+        matching.push(el);
+      }
     });
 
-    // Per-tab folding: show first 5, hide rest
+    // Per-tab folding
     var maxVisible = 5;
-    var moreBtn = document.getElementById('sessionShowMore');
     var overflow = matching.length - maxVisible;
-    for (var i = 0; i < matching.length; i++) {
-      var hidden = i >= maxVisible && !(moreBtn && moreBtn.dataset.expanded === '1');
-      matching[i].classList.toggle('session-hidden', hidden);
+    if (!_foldExpanded) {
+      for (var i = 0; i < matching.length; i++) {
+        if (i >= maxVisible) matching[i].style.display = 'none';
+      }
     }
+    var moreBtn = document.getElementById('sessionShowMore');
     if (moreBtn) {
-      if (overflow > 0) {
+      if (overflow > 0 && !_foldExpanded) {
         moreBtn.style.display = '';
         var b = moreBtn.querySelector('button');
-        if (b) b.textContent = '+ ' + overflow + ' more session' + (overflow > 1 ? 's' : '');
+        if (b) b.textContent = '+ ' + overflow + ' more' + (overflow > 1 ? ' sessions' : '');
       } else {
         moreBtn.style.display = 'none';
       }
     }
+    if (_foldExpanded && matching.length <= maxVisible) {
+      _foldExpanded = false;
+    }
 
-    // Show empty state if no matches
     var emptyMsg = document.getElementById('sessionsEmpty');
-    if (matching.length === 0 && !emptyMsg) {
-      var scroll = document.querySelector('#sessionsContent .session-scroll');
-      if (scroll) {
-        var div = document.createElement('div');
-        div.id = 'sessionsEmpty';
-        div.className = 'empty-state';
-        div.textContent = 'No sessions for this agent';
-        scroll.appendChild(div);
-      }
+    var scroll = document.querySelector('#sessionsContent .session-scroll');
+    if (matching.length === 0 && scroll && !emptyMsg) {
+      var div = document.createElement('div');
+      div.id = 'sessionsEmpty';
+      div.className = 'empty-state';
+      div.textContent = 'No sessions for this agent';
+      scroll.appendChild(div);
     } else if (matching.length > 0 && emptyMsg) {
       emptyMsg.remove();
     }
@@ -1013,13 +1023,8 @@ ${renderSubscribe()}
     }
 
     if (action === 'toggleShowMoreSessions') {
-      var moreBtn = document.getElementById('sessionShowMore');
-      if (moreBtn) {
-        moreBtn.dataset.expanded = '1';
-      }
-      var hidden = document.querySelectorAll('.session-hidden');
-      hidden.forEach(function(h) { h.classList.remove('session-hidden'); });
-      if (moreBtn) moreBtn.style.display = 'none';
+      _foldExpanded = true;
+      applyAgentFilter();
       return;
     }
 
@@ -1172,7 +1177,7 @@ body{
 }
 .badge.green{background:rgba(46,204,113,.12);color:#2ecc71}
 .badge.orange{background:rgba(245,166,35,.12);color:#f5a623}
-.session-hidden{display:none !important}
+.session-hidden{display:none}
 .session-show-more{padding:4px 12px;text-align:center}
 
 /* ═══════════════════════════════════════════════
