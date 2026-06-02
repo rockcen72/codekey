@@ -6,12 +6,11 @@ import { pairDevice } from './commands/pair.js';
 import { startCodexSession } from './commands/start-codex.js';
 import { findExistingClaudeTerminal, classifyTerminal, startClaudeCode, ensureCcSessionSync } from './commands/start-claude.js';
 import { enableHook } from './commands/enable-hook.js';
-import { installCodexHook, isCodexHookInstalled, isCodexExtensionActive } from './hook/codex-installer.js';
+import { installCodexHook, isCodexHookInstalled, isCodexExtensionActive, uninstallCodexHook } from './hook/codex-installer.js';
 import { installOpenCodePlugin, isOpenCodePluginInstalled, isOpenCodeCliInstalled, uninstallOpenCodePlugin } from './hook/opencode-installer.js';
 import { startOpenCodeTerminal } from './commands/start-opencode.js';
 import { SidebarProvider } from './webview/sidebar-provider.js';
 import { CommandRelayService } from './services/command-relay.js';
-import { ApprovalNotificationService } from './services/approval-notification.js';
 import { BridgeStatusService } from './services/bridge-status.js';
 import { SessionStore } from './services/session-store.js';
 import { log, setVerbose, isVerbose } from './log.js';
@@ -54,10 +53,6 @@ export function activate(context: vscode.ExtensionContext) {
   const commandRelay = new CommandRelayService();
   commandRelay.start();
   context.subscriptions.push(commandRelay);
-
-  const approvalNotifications = new ApprovalNotificationService();
-  approvalNotifications.start();
-  context.subscriptions.push(approvalNotifications);
 
   // Auto-bind: if VS Code already has a Claude Code terminal, attach to it
   const existingTerm = findExistingClaudeTerminal();
@@ -167,6 +162,17 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand('codekey.startOpenCode', (sessionId?: string) => {
       log('cmd: startOpenCode' + (sessionId ? ` session=${sessionId}` : ''));
       startOpenCodeTerminal(sessionId);
+    }),
+    vscode.commands.registerCommand('codekey.toggleCodexHook', () => {
+      log('cmd: toggleCodexHook');
+      if (isCodexHookInstalled()) {
+        uninstallCodexHook();
+        vscode.window.showInformationMessage('Codex hook removed');
+      } else {
+        const scriptsDir = vscode.Uri.joinPath(context.extensionUri, 'scripts').fsPath;
+        installCodexHook(scriptsDir);
+        vscode.window.showInformationMessage('Codex hook installed');
+      }
     }),
   );
 

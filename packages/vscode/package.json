@@ -22,7 +22,8 @@
     "onCommand:codekey.enableHook",
     "onCommand:codekey.focusSidebar",
     "onCommand:codekey.enableOpenCode",
-    "onCommand:codekey.startOpenCode"
+    "onCommand:codekey.startOpenCode",
+    "onCommand:codekey.toggleCodexHook"
   ],
   "main": "./dist/extension.cjs",
   "contributes": {
@@ -76,6 +77,10 @@
       {
         "command": "codekey.startOpenCode",
         "title": "CodeKey: Start OpenCode Terminal"
+      },
+      {
+        "command": "codekey.toggleCodexHook",
+        "title": "CodeKey: Toggle Codex Hook"
       }
     ],
     "configuration": {

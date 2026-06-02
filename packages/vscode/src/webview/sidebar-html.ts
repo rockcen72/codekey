@@ -160,10 +160,14 @@ export function renderAgentsContent(state: SidebarState): string {
     if (a.canInstall) {
       modeHtml = `<a class="agent-install" data-action="install-opencode">Install</a>`;
     } else if (!integOk) {
-      modeHtml = 'Reinstall CodeKey';
+      modeHtml = a.id === 'codex' ? `<a class="agent-install" data-action="toggle-codex-hook">Install Hook</a>` : 'Reinstall CodeKey';
     } else {
-      const modeMap: Record<string, string> = { 'claude-code': 'Hook', 'codex': 'Hook', 'opencode': 'Plugin + SDK' };
-      modeHtml = modeMap[a.id] || 'Ready';
+      const modeLinks: Record<string, string> = {
+        'claude-code': 'Hook',
+        'codex': `<a class="agent-install" data-action="toggle-codex-hook">Hook</a>`,
+        'opencode': 'Plugin + SDK',
+      };
+      modeHtml = modeLinks[a.id] || 'Ready';
     }
     return `<div class="agent-item">
       <div class="agent-title-row">

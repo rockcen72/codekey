@@ -9,7 +9,6 @@ import { getAgents } from '../agents/registry.js';
 import { BridgeStatusService } from '../services/bridge-status.js';
 import { SessionStore } from '../services/session-store.js';
 import { isOpenCodeCliInstalled } from '../hook/opencode-installer.js';
-import { startOpenCodeTerminal } from '../commands/start-opencode.js';
 
 
 import {
@@ -64,6 +63,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
   private _lastApprovalSig = '';
   private _pairingWs?: WebSocket;
   private _pairingTimeout?: ReturnType<typeof setTimeout>;
+  private _opencodeAttachInFlight = new Set<string>();
 
   constructor(private _context: vscode.ExtensionContext) {}
 
@@ -272,6 +272,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     const bridge = this._bridgeService.state;
     let deviceStatus: SidebarState['deviceStatus'] = 'unpaired';
     let sessions: SessionResponse[] = [];
+    let allDeviceSessions: SessionResponse[] = [];
     let events: Record<string, any[]> = {};
     let pendingApprovals: SidebarState['pendingApprovals'] = [];
 
@@ -280,6 +281,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         const api = createApi(creds);
         const windowId = vscode.env.sessionId;
         sessions = await api.getSessions(windowId);
+        allDeviceSessions = await api.getSessions().catch(() => sessions);
         await Promise.all(sessions.map(async (s) => {
           events[s.id] = await api.getSessionEvents(s.id).catch(() => []);
         }));
@@ -292,6 +294,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         }
       }
     }
+    if (allDeviceSessions.length === 0) allDeviceSessions = sessions;
 
     // Pending approvals: prefer bridge's in-memory list (real-time, ~1s lag),
     // fall back to relay events scrape for older bridges that lack the endpoint.
@@ -438,6 +441,13 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         relayTitleByClaudeSessionId.set(csid, title);
       }
     }
+    const remoteOpenCodeByLocalId = new Map<string, { serverSessionId: string; title?: string }>();
+    for (const s of allDeviceSessions) {
+      if (s.agent_type !== 'opencode') continue;
+      const localId = s.metadata?.claudeSessionId || s.metadata?.localSessionId;
+      if (!localId) continue;
+      remoteOpenCodeByLocalId.set(localId, { serverSessionId: s.id, title: s.metadata?.title });
+    }
 
     // Load stored (attached) sessions — these persist in the list even when CC exits
     const storedSessions = creds?.deviceId
@@ -501,9 +511,14 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     const ocStoredIds = new Set(ocStored.map(s => s.claudeSessionId));
     for (const s of mergedClaudeSessions) {
       if (ocStoredIds.has(s.sessionId)) {
+        const remote = remoteOpenCodeByLocalId.get(s.sessionId);
         (s as any).isOpenCodeSession = true;
-        (s as any).attached = attachedSessions.includes(s.sessionId);
-        (s as any).canDetach = attachedSessions.includes(s.sessionId);
+        (s as any).attached = attachedSessions.includes(s.sessionId) || !!remote;
+        (s as any).canDetach = attachedSessions.includes(s.sessionId) || !!remote;
+        if (remote) {
+          (s as any).serverSessionId = remote.serverSessionId;
+          if (remote.title) (s as any).title = remote.title;
+        }
       }
     }
 
@@ -563,19 +578,24 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       if (ocResp.ok) {
         const ocBody = await ocResp.json() as { sessions?: any[] };
         if (ocBody.sessions) {
-          const existingIds = new Set(mergedClaudeSessions.map(s => s.sessionId));
           for (const s of ocBody.sessions) {
-            if (!s.id || existingIds.has(s.id)) continue;
-            existingIds.add(s.id);
-            mergedClaudeSessions.push({
+            if (!s.id) continue;
+            const item = {
               sessionId: s.id,
               title: s.title || 'OpenCode session',
               cwd: s.directory || '',
               updatedAt: s.time?.updated ? new Date(s.time.updated).toISOString() : '',
-              attached: attachedSessions.includes(s.id),
-              canDetach: attachedSessions.includes(s.id),
+              attached: attachedSessions.includes(s.id) || remoteOpenCodeByLocalId.has(s.id),
+              canDetach: attachedSessions.includes(s.id) || remoteOpenCodeByLocalId.has(s.id),
               isOpenCodeSession: true,
-            });
+              serverSessionId: remoteOpenCodeByLocalId.get(s.id)?.serverSessionId,
+            };
+            const existing = mergedClaudeSessions.find(ms => ms.sessionId === s.id);
+            if (existing) {
+              Object.assign(existing, item);
+              continue;
+            }
+            mergedClaudeSessions.push(item);
           }
         }
       }
@@ -656,6 +676,9 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       case 'install-opencode':
         vscode.commands.executeCommand('codekey.enableOpenCode');
         break;
+      case 'toggle-codex-hook':
+        vscode.commands.executeCommand('codekey.toggleCodexHook');
+        break;
       case 'refreshClaudeSessions':
         this._pushState();
         break;
@@ -671,29 +694,45 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         break;
       case 'toggleAttachClaudeSession':
         if (msg.isopencode) {
-          const ocUrl = msg.attached
+          const sessionId = String(msg.sessionId || '');
+          const attached = msg.attached === true;
+          if (!sessionId) {
+            vscode.window.showErrorMessage('OpenCode attach failed: missing session id');
+            break;
+          }
+
+          const op = attached ? 'detach' : 'attach';
+          const inFlightKey = `${op}:${sessionId}`;
+          if (this._opencodeAttachInFlight.has(inFlightKey)) {
+            log(`OpenCode ${op} already in flight for ${sessionId.slice(0, 8)}`);
+            break;
+          }
+          this._opencodeAttachInFlight.add(inFlightKey);
+
+          const ocUrl = attached
             ? `${this._bridgeService.getBridgeUrl()}/v1/opencode-sessions/detach`
             : `${this._bridgeService.getBridgeUrl()}/v1/opencode-sessions/attach`;
           fetch(ocUrl, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ sessionId: msg.sessionId, title: msg.title || '' }),
+            body: JSON.stringify({ sessionId, title: msg.title || '', serverSessionId: msg.serverSessionId || '' }),
           }).then(async (res) => {
             if (!res.ok) {
               const body = await res.json().catch(() => ({} as Record<string, unknown>));
-              vscode.window.showErrorMessage(`${msg.attached ? 'Detach' : 'Attach'} failed: ${(body as Record<string, unknown>).error || res.statusText}`);
+              vscode.window.showErrorMessage(`${attached ? 'Detach' : 'Attach'} failed: ${(body as Record<string, unknown>).error || res.statusText}`);
             } else {
               const creds = loadCredentials();
               if (creds?.deviceId) {
-                if (!msg.attached) {
-                  startOpenCodeTerminal(msg.sessionId);
-                  await SessionStore.addOpenCode(this._context, creds.deviceId, msg.sessionId, { title: msg.title || '', cwd: '' });
+                if (!attached) {
+                  await SessionStore.addOpenCode(this._context, creds.deviceId, sessionId, { title: msg.title || '', cwd: '' });
                 }
               }
             }
-            this._pushState();
           }).catch(() => {
-            vscode.window.showErrorMessage(`${msg.attached ? 'Detach' : 'Attach'} failed: bridge not available`);
+            vscode.window.showErrorMessage(`${attached ? 'Detach' : 'Attach'} failed: bridge not available`);
+          }).finally(() => {
+            this._opencodeAttachInFlight.delete(inFlightKey);
+            this._pushState();
           });
           break;
         }
