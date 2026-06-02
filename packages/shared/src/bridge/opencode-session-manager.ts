@@ -75,6 +75,10 @@ export class OpenCodeSessionManager {
 
   private scheduleReconnect(): void {
     if (this._stopped) return;
+    if (this._reconnectTimer) {
+      clearTimeout(this._reconnectTimer);
+      this._reconnectTimer = null;
+    }
     const delay = this._reconnectDelay;
     this._reconnectDelay = Math.min(
       this._reconnectDelay * BACKOFF_MULTIPLIER,
@@ -105,6 +109,7 @@ export class OpenCodeSessionManager {
         (res) => {
           if (!res.statusCode || res.statusCode >= 300) {
             reject(new Error(`SSE connection failed: ${res.statusCode}`));
+            if (!this._stopped) this.scheduleReconnect();
             return;
           }
           resolve();

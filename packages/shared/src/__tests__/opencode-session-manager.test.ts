@@ -307,31 +307,30 @@ describe('OpenCodeSessionManager event handling', () => {
 
   describe('syncSessions', () => {
     it('pre-registers sessions returned from /session endpoint', async () => {
-      // Mock the fetch to return sessions
       const originalFetch = globalThis.fetch;
-      globalThis.fetch = async (input: string | URL | Request) => {
-        const url = typeof input === 'string' ? input : input.toString();
-        if (url.endsWith('/session')) {
-          return {
-            ok: true,
-            json: async () => [
-              { id: 'existing-session-1' },
-              { id: 'existing-session-2' },
-            ],
-          } as Response;
-        }
-        return originalFetch(url);
-      };
+      try {
+        globalThis.fetch = async (input: string | URL | Request) => {
+          const url = typeof input === 'string' ? input : input.toString();
+          if (url.endsWith('/session')) {
+            return {
+              ok: true,
+              json: async () => [
+                { id: 'existing-session-1' },
+                { id: 'existing-session-2' },
+              ],
+            } as Response;
+          }
+          return originalFetch(input);
+        };
 
-      await (manager as any).syncSessions();
+        await (manager as any).syncSessions();
+        await new Promise(r => setTimeout(r, 50));
 
-      // Give ensureSession time to resolve
-      await new Promise(r => setTimeout(r, 50));
-
-      expect(manager.ownsSession('server-existing-session-1')).toBe(true);
-      expect(manager.ownsSession('server-existing-session-2')).toBe(true);
-
-      globalThis.fetch = originalFetch;
+        expect(manager.ownsSession('server-existing-session-1')).toBe(true);
+        expect(manager.ownsSession('server-existing-session-2')).toBe(true);
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
     });
   });
 });
