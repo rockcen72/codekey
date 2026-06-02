@@ -34,6 +34,7 @@ export interface SidebarState {
     statusLine?: string;
     lastMessage?: string;
     integrationStatus?: 'enabled' | 'not_found';
+    canInstall?: boolean;
   })[];
   pendingApprovals: PendingApprovalItem[];
   sessions: SessionResponse[];
@@ -152,19 +153,21 @@ export function renderAgentsContent(state: SidebarState): string {
     const activeColor = AGENT_DOT_CLASS[a.id] || 'green';
     const dotClass = isActive ? `${activeColor} pulse` : 'gray';
     const integOk = a.integrationStatus === 'enabled';
-    let modeLabel = '';
-    if (!integOk) {
-      modeLabel = 'Reinstall CodeKey';
+    let modeHtml = '';
+    if (a.canInstall) {
+      modeHtml = `<a class="agent-install" data-action="install-opencode">Install</a>`;
+    } else if (!integOk) {
+      modeHtml = 'Reinstall CodeKey';
     } else {
       const modeMap: Record<string, string> = { 'claude-code': 'Hook', 'codex': 'Hook', 'opencode': 'Plugin + SDK' };
-      modeLabel = modeMap[a.id] || 'Ready';
+      modeHtml = modeMap[a.id] || 'Ready';
     }
     return `<div class="agent-item">
       <div class="agent-title-row">
         <span class="agent-name">${h(a.name)}</span>
         ${dot(dotClass)}
       </div>
-      <div class="agent-mode">${modeLabel}</div>
+      <div class="agent-mode">${modeHtml}</div>
       ${a.lastMessage ? `<div class="agent-last">${h(a.lastMessage)}</div>` : ''}
     </div>`;
   }).join('');
@@ -1206,6 +1209,8 @@ body{
 .agent-title-row{display:flex;align-items:center;gap:6px}
 .agent-name{font-size:12px;font-weight:500;color:var(--vscode-editor-foreground);flex:1}
 .agent-mode{font-size:10px;color:var(--vscode-descriptionForeground,#50506e);margin-top:2px}
+.agent-install{font-size:10px;color:var(--vscode-textLink-foreground,#4fc1ff);cursor:pointer;text-decoration:none}
+.agent-install:hover{text-decoration:underline}
 .agent-last{
   font-size:10px;color:var(--vscode-descriptionForeground,#50506e);margin-top:2px;
   overflow:hidden;text-overflow:ellipsis;white-space:nowrap;

@@ -8,6 +8,7 @@ import { createApi, ApiError, type SessionResponse } from '../api/client.js';
 import { getAgents } from '../agents/registry.js';
 import { BridgeStatusService } from '../services/bridge-status.js';
 import { SessionStore } from '../services/session-store.js';
+import { isOpenCodeCliInstalled } from '../hook/opencode-installer.js';
 
 
 import {
@@ -335,6 +336,12 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     // Local-running probes
     const ccLocallyRunning = this._checkCcRunning();
     const codexAvailable = this._checkCodexAvailable();
+    let _opencodeCliInstalled: boolean | null = null;
+    const opencodeCliInstalled = () => {
+      if (_opencodeCliInstalled !== null) return _opencodeCliInstalled;
+      try { _opencodeCliInstalled = isOpenCodeCliInstalled(); } catch { _opencodeCliInstalled = false; }
+      return _opencodeCliInstalled;
+    };
 
     // Determine runtime agent status
     const agentIntegrations: Record<string, 'enabled' | 'not_found'> = {
@@ -355,7 +362,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         if (a.id === 'codex' && codexAvailable) {
           return { ...a, runtimeStatus: 'active' as const, integrationStatus: defaultInteg };
         }
-        return { ...a, runtimeStatus: 'idle' as const, integrationStatus: defaultInteg };
+        return { ...a, runtimeStatus: 'idle' as const, integrationStatus: defaultInteg, ...(a.id === 'opencode' && defaultInteg === 'not_found' && opencodeCliInstalled() ? { canInstall: true as const } : {}) };
       }
 
       // Collect all events, sort newest first, skip resolved and stale approvals
@@ -391,7 +398,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         statusLine = 'Idle';
       }
 
-      return { ...a, runtimeStatus: 'active' as const, statusLine, lastMessage, integrationStatus: agentIntegrations[a.id] || 'not_found' };
+      return { ...a, runtimeStatus: 'active' as const, statusLine, lastMessage, integrationStatus: agentIntegrations[a.id] || 'not_found', ...(a.id === 'opencode' && (agentIntegrations[a.id] || 'not_found') === 'not_found' && opencodeCliInstalled() ? { canInstall: true as const } : {}) };
     });
 
     // Check bridge capabilities + attached sessions
@@ -592,6 +599,9 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       case 'relayReconnect':
         fetch(`${this._bridgeService.getBridgeUrl()}/v1/relay-reconnect`, { method: 'POST' }).catch(() => {});
         vscode.window.showInformationMessage('Relay reconnecting...');
+        break;
+      case 'install-opencode':
+        vscode.commands.executeCommand('codekey.enableOpenCode');
         break;
       case 'refreshClaudeSessions':
         this._pushState();
