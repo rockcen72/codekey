@@ -157,7 +157,12 @@ export class CommandRelayService {
       const claudeBinary = term ? null : this._findClaudeBinary();
       debug('[command-relay] _poll: commands=%d term=%s claudeBinary=%s', commands.length, !!term, !!claudeBinary);
       debug('[command-relay] terminals:', vscode.window.terminals.map(t => ({ name: t.name, exitStatus: t.exitStatus })));
-      const deliverable = commands.filter(c => term || (claudeBinary && c.claudeSessionId && !codexSessionIds.has(c.claudeSessionId)));
+      const deliverable = commands.filter(c => {
+        // Skip Codex and OpenCode sessions — handled by their own managers
+        if (c.claudeSessionId && codexSessionIds.has(c.claudeSessionId)) return false;
+        if (c.claudeSessionId && /^ses_/.test(c.claudeSessionId)) return false;
+        return term || !!(claudeBinary && c.claudeSessionId);
+      });
       if (deliverable.length === 0) {
         debug('[command-relay] no deliverable target, command_ids=%s', commands.map(c => c.id).join(','));
         return;

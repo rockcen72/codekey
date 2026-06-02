@@ -1248,6 +1248,13 @@ export class ApprovalBridge {
         ?? Array.from(this.sessions.entries())
             .find(([, serverSessionId]) => serverSessionId === payload.sessionId)?.[0];
 
+      // OpenCode sessions: skip CC command queue — handled by their own manager
+      if (claudeSessionId && this._opencodeAttachedIds.has(claudeSessionId)) {
+        console.error('[bridge] command dropped: opencode session %s', payload.sessionId);
+        this.sendErrorToRelay(payload.sessionId, 'OpenCode 会话命令路由暂未就绪，请在侧边栏重新 Attach');
+        return;
+      }
+
       if (claudeSessionId && this.knownCodexLocalSessionIds().has(claudeSessionId)) {
         console.error('[bridge] command dropped: codex session is not resumed, sessionId=%s localSessionId=%s', payload.sessionId, claudeSessionId);
         const errorMsg: SessionEventMessage = {
