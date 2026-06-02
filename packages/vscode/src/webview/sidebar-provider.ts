@@ -546,8 +546,8 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
               title: s.title || 'OpenCode session',
               cwd: s.directory || '',
               updatedAt: s.time?.updated ? new Date(s.time.updated).toISOString() : '',
-              attached: false,
-              canDetach: false,
+              attached: attachedSessions.includes(s.id),
+              canDetach: attachedSessions.includes(s.id),
               isOpenCodeSession: true,
             });
           }

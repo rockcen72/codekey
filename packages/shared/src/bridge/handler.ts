@@ -212,6 +212,17 @@ export class ApprovalBridge {
     this._codexAttachedIds.delete(localSessionId);
   }
 
+  /** OpenCode session IDs registered via ensureSession — included in getAttachedSessionIds(). */
+  private _opencodeAttachedIds = new Set<string>();
+
+  addOpenCodeAttachedSession(localSessionId: string): void {
+    this._opencodeAttachedIds.add(localSessionId);
+  }
+
+  removeOpenCodeAttachedSession(localSessionId: string): void {
+    this._opencodeAttachedIds.delete(localSessionId);
+  }
+
   private knownCodexLocalSessionIds(): Set<string> {
     const now = Date.now();
     if (now < this.codexLocalIdCache.expiresAt) return this.codexLocalIdCache.ids;
@@ -1406,7 +1417,8 @@ export class ApprovalBridge {
   getAttachedSessionIds(): string[] {
     const cc = Array.from(this.transcriptAttachedIds).filter((csid) => this.sessions.has(csid));
     const codex = Array.from(this._codexAttachedIds);
-    return [...cc, ...codex];
+    const opencode = Array.from(this._opencodeAttachedIds);
+    return [...cc, ...codex, ...opencode];
   }
 
   /** Return all claudeSessionIds currently tracked as active (have fired hook events). */

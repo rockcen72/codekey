@@ -511,6 +511,7 @@ function handleRequest(req: IncomingMessage, res: ServerResponse, bridge: Approv
         if (!sessionId) { res.writeHead(400); res.end('{}'); return; }
         bridge.ensureSession(sessionId, undefined, 'opencode', { agentType: 'opencode', runtime: 'opencode' })
           .then((serverSessionId) => {
+            bridge.addOpenCodeAttachedSession(sessionId);
             if (title && typeof title === 'string') {
               bridge.relay.sendRaw(JSON.stringify({
                 type: 'update_session_label',
@@ -540,6 +541,7 @@ function handleRequest(req: IncomingMessage, res: ServerResponse, bridge: Approv
         const { sessionId } = JSON.parse(body);
         if (!sessionId) { res.writeHead(400); res.end('{}'); return; }
         bridge.detachClaudeSession(sessionId).then((r) => {
+          bridge.removeOpenCodeAttachedSession(sessionId);
           res.writeHead(200, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify(r));
         });
