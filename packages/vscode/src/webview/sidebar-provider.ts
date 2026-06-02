@@ -362,7 +362,10 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         if (a.id === 'codex' && codexAvailable) {
           return { ...a, runtimeStatus: 'active' as const, integrationStatus: defaultInteg };
         }
-        return { ...a, runtimeStatus: 'idle' as const, integrationStatus: defaultInteg, ...(a.id === 'opencode' && defaultInteg === 'not_found' && opencodeCliInstalled() ? { canInstall: true as const } : {}) };
+        if (a.id === 'opencode' && opencodeCliInstalled()) {
+          return { ...a, runtimeStatus: 'active' as const, integrationStatus: defaultInteg, ...(defaultInteg === 'not_found' ? { canInstall: true as const } : {}) };
+        }
+        return { ...a, runtimeStatus: 'idle' as const, integrationStatus: defaultInteg };
       }
 
       // Collect all events, sort newest first, skip resolved and stale approvals
