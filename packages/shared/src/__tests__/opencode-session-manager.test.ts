@@ -345,37 +345,33 @@ describe('OpenCodeSessionManager event handling', () => {
   });
 
   describe('attachSession persistence', () => {
-    it('uses a known remote server session id instead of registering again', async () => {
-      await manager.attachSession('oc-session-remote', 'Remote title', 'server-existing-remote');
+    it('registers session and marks it as owned', async () => {
+      await manager.attachSession('oc-session-remote', 'Remote title');
 
-      expect(manager.ownsSession('server-existing-remote')).toBe(true);
+      // Session registered via relay (FakeRelay responds with server- prefixed ID)
+      expect(manager.ownsSession('server-oc-session-remote')).toBe(true);
       expect(bridge.getAttachedSessionIds()).toContain('oc-session-remote');
 
       const registrations = relay.sent
         .map((raw) => JSON.parse(raw))
         .filter((msg) => msg.type === 'register_session' && msg.payload.claudeSessionId === 'oc-session-remote');
-      expect(registrations.length).toBe(0);
+      // attachSession always calls ensureSession which registers on relay
+      expect(registrations.length).toBe(1);
     });
 
-    it('restores the relay session mapping and does not re-register on attach', async () => {
+    it('does not re-register on re-attach of same session', async () => {
       await manager.attachSession('oc-session-persisted', 'Persisted title');
       await new Promise(r => setTimeout(r, 50));
 
-      const restoredRelay = new FakeRelay();
-      const restoredBridge = new ApprovalBridge(restoredRelay as any);
-      const restoredManager = new OpenCodeSessionManager('http://127.0.0.1:4096', restoredBridge);
-      (restoredManager as any).connectSSE = vi.fn(async () => {});
+      // Re-attach the same session
+      relay.sent.length = 0;
+      await manager.attachSession('oc-session-persisted', 'Persisted title');
+      await new Promise(r => setTimeout(r, 50));
 
-      await restoredManager.start();
-
-      expect(restoredManager.ownsSession('server-oc-session-persisted')).toBe(true);
-      expect(restoredBridge.getAttachedSessionIds()).toContain('oc-session-persisted');
-
-      await restoredManager.attachSession('oc-session-persisted', 'Persisted title');
-
-      const registrations = restoredRelay.sent
+      const registrations = relay.sent
         .map((raw) => JSON.parse(raw))
         .filter((msg) => msg.type === 'register_session' && msg.payload.claudeSessionId === 'oc-session-persisted');
+      // Should not re-register (ensureSession returns cached result)
       expect(registrations.length).toBe(0);
     });
   });

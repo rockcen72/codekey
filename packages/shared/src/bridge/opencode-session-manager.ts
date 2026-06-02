@@ -130,25 +130,24 @@ export class OpenCodeSessionManager {
     this.deliveredMessageParts.clear();
   }
 
-  async attachSession(localSessionId: string, title?: string, knownServerSessionId?: string): Promise<string> {
-    if (knownServerSessionId) {
-      this.opencodeSessions.add(knownServerSessionId);
-      this.opencodeSessionToRelayId.set(localSessionId, knownServerSessionId);
-    }
-    const serverSessionId = await this.ensureRelaySession(localSessionId);
-    this.bridge.addOpenCodeAttachedSession(localSessionId);
-    saveAttachedSessions([
-      ...loadAttachedSessions().filter(s => s.localSessionId !== localSessionId),
-      { localSessionId, serverSessionId },
-    ]);
-    if (title) {
-      this.bridge.relay.sendRaw(JSON.stringify({
-        type: 'update_session_label',
-        payload: { sessionId: serverSessionId, label: title },
-      }));
-    }
-    this.replayHistory(localSessionId, serverSessionId).catch(() => {});
-    return serverSessionId;
+  async attachSession(localSessionId: string, title?: string): Promise<string> {
+    // Fire-and-forget: registration + history should not block the HTTP response
+    return this.ensureRelaySession(localSessionId).then((serverSessionId) => {
+      this.bridge.addOpenCodeAttachedSession(localSessionId);
+      saveAttachedSessions([
+        ...loadAttachedSessions().filter(s => s.localSessionId !== localSessionId),
+        { localSessionId, serverSessionId },
+      ]);
+      if (title) {
+        this.bridge.relay.sendRaw(JSON.stringify({
+          type: 'update_session_label',
+          payload: { sessionId: serverSessionId, label: title },
+        }));
+      }
+      // Push history in background
+      this.replayHistory(localSessionId, serverSessionId).catch(() => {});
+      return serverSessionId;
+    });
   }
 
   async detachSession(localSessionId: string, knownServerSessionId?: string): Promise<boolean> {

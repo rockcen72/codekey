@@ -576,14 +576,14 @@ function handleRequest(req: IncomingMessage, res: ServerResponse, bridge: Approv
     req.on('data', (chunk) => { body += chunk; });
     req.on('end', () => {
       try {
-        const { sessionId, title, serverSessionId } = JSON.parse(body);
+        const { sessionId, title } = JSON.parse(body);
         if (!sessionId) { res.writeHead(400); res.end('{}'); return; }
-        const attach = opencodeManager
-          ? opencodeManager.attachSession(
-              sessionId,
-              typeof title === 'string' ? title : undefined,
-              typeof serverSessionId === 'string' ? serverSessionId : undefined,
-            )
+        // Respond immediately — relay registration + history push runs async
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: true }));
+
+        const run = opencodeManager
+          ? opencodeManager.attachSession(sessionId, typeof title === 'string' ? title : undefined)
           : bridge.ensureSession(sessionId, undefined, 'opencode', { agentType: 'opencode', runtime: 'opencode' }).then((serverSessionId) => {
               bridge.addOpenCodeAttachedSession(sessionId);
               if (title && typeof title === 'string') {
@@ -594,15 +594,9 @@ function handleRequest(req: IncomingMessage, res: ServerResponse, bridge: Approv
               }
               return serverSessionId;
             });
-        attach
-          .then((serverSessionId) => {
-            res.writeHead(200, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ ok: true, serverSessionId }));
-          })
-          .catch((err: Error) => {
-            res.writeHead(500, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ ok: false, error: err.message }));
-          });
+        run.catch((err: Error) => {
+          console.error('[bridge] opencode-attach failed: %s', err.message);
+        });
       } catch {
         res.writeHead(400);
         res.end('{}');
