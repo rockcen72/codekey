@@ -166,13 +166,16 @@ export class OpenCodeSessionManager {
     return true;
   }
 
-  /** Fetch recent messages and push user prompts as relay events. */
+  /** Fetch recent messages and push as relay events. */
   private async replayHistory(localSessionId: string, serverSessionId: string): Promise<void> {
+    const url = `${this.opencodeBaseUrl}/session/${encodeURIComponent(localSessionId)}/message?limit=5`;
+    console.error('[opencode] replayHistory: fetching %s', url);
     try {
-      const resp = await fetch(`${this.opencodeBaseUrl}/session/${encodeURIComponent(localSessionId)}/message?limit=5`);
-      if (!resp.ok) return;
+      const resp = await fetch(url);
+      if (!resp.ok) { console.error('[opencode] replayHistory: %s %s', resp.status, resp.statusText); return; }
       const msgs = await resp.json() as any[];
-      if (!Array.isArray(msgs)) return;
+      if (!Array.isArray(msgs)) { console.error('[opencode] replayHistory: unexpected response type'); return; }
+      console.error('[opencode] replayHistory: got %d messages', msgs.length);
 
       for (const m of msgs) {
         const info = m.info || {};
@@ -187,16 +190,11 @@ export class OpenCodeSessionManager {
               sessionId: serverSessionId,
               agent: 'opencode',
               eventType: 'user_prompt',
-              data: {
-                type: 'user_prompt',
-                prompt: text,
-                summary: text.slice(0, 200),
-              },
+              data: { type: 'user_prompt', prompt: text, summary: text.slice(0, 200) },
               ts: info.time?.created ? new Date(info.time.created).toISOString() : new Date().toISOString(),
             });
           }
         } else if (info.role === 'assistant' && m.parts) {
-          // Push assistant messages as task_complete
           const text = m.parts
             .filter((p: any) => p.type === 'text' && p.text)
             .map((p: any) => p.text)
@@ -207,16 +205,13 @@ export class OpenCodeSessionManager {
               sessionId: serverSessionId,
               agent: 'opencode',
               eventType: 'task_complete',
-              data: {
-                type: 'task_complete',
-                summary: text.slice(0, 500),
-              },
-              ts: info.time?.created ? new Date(info.time.created).toISOString() : new Date().toISOString(),
+              data: { type: 'task_complete', summary: text.slice(0, 500) },
+              ts: info.time?.completed || info.time?.created ? new Date((info.time.completed || info.time.created) as number).toISOString() : new Date().toISOString(),
             });
           }
         }
       }
-    } catch { /* best-effort */ }
+    } catch (err: any) { console.error('[opencode] replayHistory error: %s', err.message || err); }
   }
 
   private ensureRelaySession(localSessionId: string): Promise<string> {
