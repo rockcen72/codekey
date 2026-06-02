@@ -5,7 +5,10 @@ export function startOpenCodeTerminal(sessionId?: string): void {
   const port = randomInt(16384, 65536);
   const term = vscode.window.createTerminal({
     name: 'opencode',
-    location: vscode.TerminalLocation.Panel,
+    location: {
+      viewColumn: vscode.ViewColumn.Beside,
+      preserveFocus: false,
+    },
     env: {
       _EXTENSION_OPENCODE_PORT: String(port),
       OPENCODE_CALLER: 'vscode',
