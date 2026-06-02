@@ -868,18 +868,16 @@ ${renderSubscribe()}
       });
     }
     var items = document.querySelectorAll('.session-item');
-    var matching: HTMLElement[] = [];
+    var matching = [];
     items.forEach(function(it) {
-      var el = it as HTMLElement;
-      var ag = el.dataset.agent || 'claude-code';
+      var ag = it.dataset.agent || 'claude-code';
       var match = (key === 'all') || (ag === key);
-      // Reset — remove both class and inline
-      el.classList.remove('session-hidden');
-      el.style.display = '';
+      it.classList.remove('session-hidden');
+      it.style.display = '';
       if (!match) {
-        el.style.display = 'none';
+        it.style.display = 'none';
       } else {
-        matching.push(el);
+        matching.push(it);
       }
     });
 
