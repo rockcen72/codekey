@@ -14,16 +14,7 @@
   ],
   "activationEvents": [
     "onStartupFinished",
-    "onView:codekey.sidebar",
-    "onCommand:codekey.showDashboard",
-    "onCommand:codekey.pairDevice",
-    "onCommand:codekey.startClaudeCode",
-    "onCommand:codekey.startCodexSession",
-    "onCommand:codekey.enableHook",
-    "onCommand:codekey.focusSidebar",
-    "onCommand:codekey.enableOpenCode",
-    "onCommand:codekey.startOpenCode",
-    "onCommand:codekey.toggleCodexHook"
+    "onView:codekey.sidebar"
   ],
   "main": "./dist/extension.cjs",
   "contributes": {
