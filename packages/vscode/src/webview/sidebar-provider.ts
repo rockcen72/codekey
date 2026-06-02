@@ -686,11 +686,8 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
               const creds = loadCredentials();
               if (creds?.deviceId) {
                 if (!msg.attached) {
+                  startOpenCodeTerminal(msg.sessionId);
                   await SessionStore.addOpenCode(this._context, creds.deviceId, msg.sessionId, { title: msg.title || '', cwd: '' });
-                  const termName = `opencode-${msg.sessionId.slice(0, 8)}`;
-                  if (!vscode.window.terminals.some(t => t.name === termName)) {
-                    startOpenCodeTerminal(msg.sessionId);
-                  }
                 }
               }
             }
