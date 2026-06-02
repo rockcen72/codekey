@@ -1248,10 +1248,19 @@ export class ApprovalBridge {
         ?? Array.from(this.sessions.entries())
             .find(([, serverSessionId]) => serverSessionId === payload.sessionId)?.[0];
 
-      // OpenCode sessions: skip CC command queue — handled by their own manager
+      // OpenCode sessions: route through any registered command handler
+      // (the handler's ownsSession may fail after restart — try handleCommand anyway)
       if (claudeSessionId && this._opencodeAttachedIds.has(claudeSessionId)) {
-        console.error('[bridge] command dropped: opencode session %s', payload.sessionId);
-        this.sendErrorToRelay(payload.sessionId, 'OpenCode 会话命令路由暂未就绪，请在侧边栏重新 Attach');
+        for (const handler of this._agentCommandHandlers) {
+          // Blindly try the first handler; it resolves sessionId internally
+          handler.handleCommand({ sessionId: payload.sessionId, data: payload.data }).catch((err) => {
+            console.error('[bridge] opencode command handler error: %s', err);
+          });
+          return;
+        }
+        // No handler registered — drop with error
+        console.error('[bridge] command dropped: opencode session without handler %s', payload.sessionId);
+        this.sendErrorToRelay(payload.sessionId, 'OpenCode handler not available');
         return;
       }
 
