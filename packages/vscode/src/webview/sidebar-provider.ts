@@ -681,19 +681,20 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
               const body = await res.json().catch(() => ({} as Record<string, unknown>));
               vscode.window.showErrorMessage(`${msg.attached ? 'Detach' : 'Attach'} failed: ${(body as Record<string, unknown>).error || res.statusText}`);
             } else {
-              const creds = loadCredentials();
-              if (creds?.deviceId) {
-                if (msg.attached) {
-                  await SessionStore.removeOpenCode(this._context, creds.deviceId, msg.sessionId);
-                } else {
-                  await SessionStore.addOpenCode(this._context, creds.deviceId, msg.sessionId, { title: msg.title || '', cwd: '' });
-                  // Auto-open terminal in tab area with this session
-                  const hasOcTerm = vscode.window.terminals.some(t => t.name === 'opencode');
-                  if (!hasOcTerm) {
-                    startOpenCodeTerminal(msg.sessionId);
-                  }
-                }
+          const creds = loadCredentials();
+          if (creds?.deviceId) {
+            if (msg.attached) {
+              await SessionStore.removeOpenCode(this._context, creds.deviceId, msg.sessionId);
+            } else {
+              await SessionStore.addOpenCode(this._context, creds.deviceId, msg.sessionId, { title: msg.title || '', cwd: '' });
+              // Auto-open terminal in tab area for this session
+              const termName = `opencode-${msg.sessionId.slice(0, 8)}`;
+              const exists = vscode.window.terminals.some(t => t.name === termName);
+              if (!exists) {
+                startOpenCodeTerminal(msg.sessionId);
               }
+            }
+          }
             }
             this._pushState();
           }).catch(() => {
