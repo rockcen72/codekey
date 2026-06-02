@@ -1,5 +1,6 @@
 export { ApprovalBridge } from './handler.js';
-export type { HookEventBody } from './handler.js';
+export type { HookEventBody, ApprovalResponder, CommandHandler } from './handler.js';
+export { RiskEngine } from '../risk.js';
 export { startBridgeServer } from './server.js';
 export { RelayClient } from './relay-client.js';
 export { CommandQueue } from './command-queue.js';
@@ -26,3 +27,4 @@ export { CodexTranscriptWatcher } from './codex-transcript-watcher.js';
 export type { TranscriptEvent, CodexTranscriptWatcherOptions } from './codex-transcript-watcher.js';
 
 export { CodexResumeManager } from './codex-resume-manager.js';
+export { OpenCodeSessionManager } from './opencode-session-manager.js';

@@ -64,4 +64,17 @@ export class RiskEngine {
 
     return { level: 'unknown', label: 'Unrecognized command' };
   }
+
+  /** Adapt an OpenCode permission to a command string for risk evaluation. */
+  evaluateOpenCodePermission(permission: string, metadata: Record<string, unknown>): { level: RiskLevel; label: string } {
+    const command = permissionToCommand(permission, metadata);
+    return this.evaluate(command);
+  }
+}
+
+function permissionToCommand(permission: string, metadata: Record<string, unknown>): string {
+  if (metadata.command) return metadata.command as string;
+  if (metadata.filePath) return `${permission} ${metadata.filePath}`;
+  if (metadata.patch) return `${permission} (patch: ${(metadata.patch as string).slice(0, 50)})`;
+  return permission;
 }

@@ -82,6 +82,18 @@ interface ApprovalText {
   summary: string;
 }
 
+/** External approval responder (OpenCode, etc.). Tried before the default approval path. */
+export interface ApprovalResponder {
+  agentType: string;
+  onApprovalForward: (eventId: string, decision: string, clientEventId?: string) => Promise<boolean>;
+}
+
+/** External agent command handler. Routes commands by ownsSession(). */
+export interface CommandHandler {
+  ownsSession: (serverSessionId: string) => boolean;
+  handleCommand: (payload: { sessionId: string; data: string }) => Promise<void>;
+}
+
 export class ApprovalBridge {
   readonly commandQueue = new CommandQueue();
 
@@ -129,6 +141,53 @@ export class ApprovalBridge {
    *  The Set is owned by CodexResumeManager; its values must be serverSessionIds. */
   registerResumedServerSessionIds(set: Set<string>): void {
     this._resumedServerSessionIds = set;
+  }
+
+  /** External approval responders (OpenCode, etc.). Tried before the default approval path. */
+  private _approvalResponders: ApprovalResponder[] = [];
+
+  /** External agent command handlers (OpenCode, etc.). Tried before the default command path. */
+  private _agentCommandHandlers: CommandHandler[] = [];
+
+  /** Register an external approval responder. */
+  registerExternalApprovalResponder(responder: ApprovalResponder): void {
+    this._approvalResponders.push(responder);
+  }
+
+  /** Register an external agent command handler (ownsSession + handleCommand). */
+  registerAgentCommandHandler(handler: CommandHandler): void {
+    this._agentCommandHandlers.push(handler);
+  }
+
+  /** Public wrapper: send event to relay via sendEvent(). */
+  sendEventToRelay(serverSessionId: string, payload: Record<string, unknown>): void {
+    this.relay.sendEvent(serverSessionId, { type: 'event', payload } as any);
+  }
+
+  /** Public wrapper: send error event to relay. */
+  sendErrorToRelay(serverSessionId: string, message: string): void {
+    this.relay.sendRaw(JSON.stringify({
+      type: 'event',
+      payload: {
+        clientEventId: `error:${serverSessionId}:${Date.now()}`,
+        sessionId: serverSessionId,
+        agent: 'opencode',
+        eventType: 'error',
+        data: { type: 'error', message },
+        ts: new Date().toISOString(),
+      },
+    }));
+  }
+
+  /** Public wrapper: evaluate command risk via RiskEngine. */
+  evaluateRisk(command: string): 'low' | 'medium' | 'high' | 'critical' | 'unknown' {
+    try {
+      const { RiskEngine } = require('./risk.js');
+      const engine = new RiskEngine();
+      return engine.evaluate(command).level;
+    } catch {
+      return 'medium';
+    }
   }
 
   /** Codex resumed session IDs — stored separately so reconcileAttachedSessions doesn't touch them. */
@@ -188,23 +247,26 @@ export class ApprovalBridge {
 
     // Resolve pending approval from phone decision (keyed by serverEventId,
     // with clientEventId fallback for WS reconnect edge case).
-    this.relay.on('approval_forward', (payload: unknown) => {
+    this.relay.on('approval_forward', async (payload: unknown) => {
       const fwd = payload as { eventId: string; decision: string; clientEventId?: string | null };
+
+      // Try external approval responders first (OpenCode, etc.)
+      for (const responder of this._approvalResponders) {
+        const handled = await responder.onApprovalForward(fwd.eventId, fwd.decision, fwd.clientEventId ?? undefined);
+        if (handled) return;
+      }
+
+      // Default path: look up pending entry by serverEventId or clientEventId
       let entry = this.pendingByServerEventId.get(fwd.eventId);
-      // Fallback: relay may not know serverEventId if event_ack was lost during WS reconnect
       if (!entry && fwd.clientEventId && fwd.clientEventId !== fwd.eventId) {
         entry = this.pendingByServerEventId.get(fwd.clientEventId);
       }
       if (entry) {
         clearTimeout(entry.timer);
-        // Notify relay to mark the event as resolved (pending=false) immediately,
-        // so the sidebar's next poll sees the updated state instead of waiting
-        // for a hook event to trigger cleanup.
-        this._resolveEventOnRelay(fwd.eventId);
+        this.resolveEventOnRelay(fwd.eventId);
         if (fwd.clientEventId && fwd.clientEventId !== fwd.eventId) {
-          this._resolveEventOnRelay(fwd.clientEventId);
+          this.resolveEventOnRelay(fwd.clientEventId);
         }
-        // Clean up ALL keys pointing to this entry (clientEventId + serverEventId)
         for (const [key, val] of this.pendingByServerEventId) {
           if (val === entry) this.pendingByServerEventId.delete(key);
         }
@@ -477,8 +539,9 @@ export class ApprovalBridge {
   /** Ensure a server session exists for the given claudeSessionId.
    *  Uses claudeSessionId as the only canonical key — each CC instance gets its own session.
    *  windowId is forwarded as metadata only, not used for routing heuristic.
-   *  @param source - metadata source label ('hook' | 'transcript_attach'), defaults to 'hook'. */
-  async ensureSession(claudeSessionId: string, windowId?: string, source?: string): Promise<string> {
+   *  @param source - metadata source label ('hook' | 'transcript_attach'), defaults to 'hook'.
+   *  @param options - optional overrides for agentType and runtime metadata. */
+  async ensureSession(claudeSessionId: string, windowId?: string, source?: string, options?: { agentType?: string; runtime?: string }): Promise<string> {
     if (!claudeSessionId) {
       throw new Error('ensureSession requires non-empty claudeSessionId');
     }
@@ -492,7 +555,7 @@ export class ApprovalBridge {
     const inFlightExisting = this.inFlightSessions.get(claudeSessionId);
     if (inFlightExisting) return inFlightExisting;
 
-    const promise = this._registerOnRelay(claudeSessionId, windowId, source).then((serverSessionId) => {
+    const promise = this._registerOnRelay(claudeSessionId, windowId, source, options).then((serverSessionId) => {
       this.sessions.set(claudeSessionId, serverSessionId);
       if (windowId) this.windowSessions.set(windowId, serverSessionId);
       if (!this.primarySessionId) this.primarySessionId = serverSessionId;
@@ -523,7 +586,7 @@ export class ApprovalBridge {
     return promise;
   }
 
-  private async _registerOnRelay(claudeSessionId: string, windowId?: string, source?: string): Promise<string> {
+  private async _registerOnRelay(claudeSessionId: string, windowId?: string, source?: string, options?: { agentType?: string; runtime?: string }): Promise<string> {
     const clientRequestId = randomUUID();
     const transcript = await resolveClaudeTranscript(claudeSessionId).catch(() => null);
 
@@ -536,14 +599,13 @@ export class ApprovalBridge {
         clearTimeout(timer);
         resolve(sid);
       });
-      // Title priority: synced tab label > transcript-derived title > omit.
-      // Omitting title lets the relay's metadata-merge preserve whatever it
-      // already has (from a previous register_session or update_session_label).
       const label = windowId ? this.windowLabels.get(windowId) : undefined;
       const title = label || transcript?.title || undefined;
+      const agentType = options?.agentType || 'claude-code-hook';
+      const runtime = options?.runtime || 'claude-code';
       const metadata: Record<string, unknown> = {
         claudeSessionId,
-        runtime: 'claude-code',
+        runtime,
         source: source || 'hook',
         cwd: transcript?.cwd || '',
         lastHookAt: new Date().toISOString(),
@@ -551,7 +613,7 @@ export class ApprovalBridge {
       if (title) metadata.title = title;
 
       const payload: Record<string, unknown> = {
-        agentType: 'claude-code-hook',
+        agentType,
         claudeSessionId,
         clientRequestId,
         metadata,
@@ -560,7 +622,7 @@ export class ApprovalBridge {
         payload.windowId = windowId;
         if (label) payload.sessionLabel = label;
       }
-      console.error('[bridge] _registerOnRelay: sending register_session for %s (windowId=%s, source=%s)', claudeSessionId, windowId || '(none)', source || 'hook');
+      console.error('[bridge] _registerOnRelay: sending register_session for %s (windowId=%s, source=%s, agentType=%s)', claudeSessionId, windowId || '(none)', source || 'hook', agentType);
       this.relay.sendRaw(JSON.stringify({
         type: 'register_session',
         payload,
@@ -817,7 +879,7 @@ export class ApprovalBridge {
     for (const [key, val] of this.pendingByServerEventId) {
       if (val.serverSessionId === serverSessionId) {
         clearTimeout(val.timer);
-        this._resolveEventOnRelay(key);
+        this.resolveEventOnRelay(key);
         val.resolve({ approved: false });
         this.pendingByServerEventId.delete(key);
       }
@@ -847,13 +909,13 @@ export class ApprovalBridge {
           if (val === entry) this.pendingByServerEventId.delete(key);
         }
         // Notify relay to mark the event as resolved (timeout)
-        this._resolveEventOnRelay(clientEventId);
+        this.resolveEventOnRelay(clientEventId);
         resolve({ approved: false });
       }, 30 * 60_000);
       // Wrap resolve to also notify relay on normal approval_forward resolution
       const originalResolve = resolve;
       entry.resolve = (value) => {
-        this._resolveEventOnRelay(clientEventId);
+        this.resolveEventOnRelay(clientEventId);
         originalResolve(value);
       };
       this.pendingByServerEventId.set(clientEventId, entry);
@@ -920,7 +982,7 @@ export class ApprovalBridge {
 
   /** Notify relay that an approval event has been resolved (approved/denied/timeout).
    *  Relay marks the event as pending=false so the mini program stops showing it. */
-  private _resolveEventOnRelay(eventId: string): void {
+  resolveEventOnRelay(eventId: string): void {
     try {
       this.relay.sendRaw(JSON.stringify({
         type: 'resolve_event',
@@ -1013,7 +1075,7 @@ export class ApprovalBridge {
       for (const [key, entry] of this.pendingByServerEventId) {
         if (entry.serverSessionId !== serverSessionId) continue;
         clearTimeout(entry.timer);
-        this._resolveEventOnRelay(key);
+        this.resolveEventOnRelay(key);
         this.pendingByServerEventId.delete(key);
         entry.resolve({ approved: false });
       }
@@ -1058,6 +1120,16 @@ export class ApprovalBridge {
       // Codex resume routing guard: if this serverSessionId is managed by
       // CodexResumeManager, skip the Claude command queue.
       if (this._resumedServerSessionIds?.has(payload.sessionId)) return;
+
+      // External agent command handlers (ownsSession pattern)
+      for (const handler of this._agentCommandHandlers) {
+        if (handler.ownsSession(payload.sessionId)) {
+          handler.handleCommand({ sessionId: payload.sessionId, data: payload.data }).catch((err) => {
+            console.error('[bridge] command handler error for sessionId=%s: %s', payload.sessionId, err);
+          });
+          return;
+        }
+      }
 
       const claudeSessionId = payload.claudeSessionId
         ?? Array.from(this.sessions.entries())

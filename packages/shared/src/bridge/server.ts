@@ -440,6 +440,28 @@ function handleRequest(req: IncomingMessage, res: ServerResponse, bridge: Approv
     return;
   }
 
+  // ── OpenCode Telemetry ────────────────────────────────────
+  // POST /v1/opencode/telemetry
+  // OpenCode plugin sends events here for sidebar state display only.
+  // No decision logic is derived from this data.
+  if (req.method === 'POST' && url.pathname === '/v1/opencode/telemetry') {
+    let body = '';
+    req.on('data', (chunk) => { body += chunk; });
+    req.on('end', () => {
+      try {
+        const input = JSON.parse(body);
+        // Only store in memory for sidebar polling — no persistence
+        // TODO: store last N events in a ring buffer for sidebar display
+        console.error('[bridge] opencode telemetry: type=%s', input.type || 'unknown');
+      } catch {
+        // best-effort, don't fail
+      }
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: true }));
+    });
+    return;
+  }
+
   if (req.method === 'GET' && url.pathname === '/v1/pending-approvals') {
     const approvals = bridge.getPendingApprovals();
     res.writeHead(200, { 'Content-Type': 'application/json' });
