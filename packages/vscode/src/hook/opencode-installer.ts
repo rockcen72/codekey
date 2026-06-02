@@ -14,16 +14,19 @@ export function isOpenCodePluginInstalled(): boolean {
   return fs.existsSync(getPluginPath());
 }
 
-/** Copy the bundled plugin file to the OpenCode plugins directory. */
-export function installOpenCodePlugin(extensionScriptsDir: string): void {
+/** Copy the bundled plugin file to the OpenCode plugins directory. Returns true on success. */
+export function installOpenCodePlugin(extensionScriptsDir: string): boolean {
   const pluginPath = getPluginPath();
-  if (fs.existsSync(pluginPath)) return;
+  if (fs.existsSync(pluginPath)) return true;
 
   const srcPath = path.join(extensionScriptsDir, PLUGIN_NAME);
-  if (!fs.existsSync(srcPath)) return;
+  if (!fs.existsSync(srcPath)) {
+    throw new Error(`Bundled plugin not found: ${srcPath}`);
+  }
 
   fs.mkdirSync(OPENCODE_PLUGIN_DIR, { recursive: true });
   fs.copyFileSync(srcPath, pluginPath);
+  return true;
 }
 
 export function uninstallOpenCodePlugin(): void {

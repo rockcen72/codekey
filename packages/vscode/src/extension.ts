@@ -154,10 +154,14 @@ export function activate(context: vscode.ExtensionContext) {
         vscode.window.showInformationMessage('OpenCode integration already enabled');
         return;
       }
-      const scriptsDir = vscode.Uri.joinPath(context.extensionUri, 'scripts').fsPath;
-      installOpenCodePlugin(scriptsDir);
-      vscode.window.showInformationMessage('OpenCode integration enabled — restart OpenCode to load the telemetry plugin');
-      log('OpenCode telemetry plugin installed');
+      try {
+        const scriptsDir = vscode.Uri.joinPath(context.extensionUri, 'scripts').fsPath;
+        installOpenCodePlugin(scriptsDir);
+        vscode.window.showInformationMessage('OpenCode integration enabled — restart OpenCode to load the telemetry plugin');
+        log('OpenCode telemetry plugin installed');
+      } catch (err) {
+        vscode.window.showErrorMessage(`Failed to enable OpenCode integration: ${err}`);
+      }
     }),
   );
 
