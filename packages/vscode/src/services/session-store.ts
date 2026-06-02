@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 
 const STORAGE_KEY = 'codekey.attachedSessionsV2';
+const OC_STORAGE_KEY = 'codekey.opencodeSessions';
 
 export interface StoredSession {
   deviceId: string;
@@ -8,25 +9,22 @@ export interface StoredSession {
   title?: string;
   cwd?: string;
   updatedAt: string;
+  agentType?: string;
 }
 
 export class SessionStore {
-  /** Read all stored sessions from globalState. */
   static getAll(context: vscode.ExtensionContext): StoredSession[] {
     return context.globalState.get<StoredSession[]>(STORAGE_KEY, []);
   }
 
-  /** Replace the entire list (used for bulk save after pruning). */
   static async setAll(context: vscode.ExtensionContext, sessions: StoredSession[]): Promise<void> {
     await context.globalState.update(STORAGE_KEY, sessions);
   }
 
-  /** Get sessions for a specific deviceId. */
   static getByDevice(context: vscode.ExtensionContext, deviceId: string): StoredSession[] {
     return SessionStore.getAll(context).filter(s => s.deviceId === deviceId);
   }
 
-  /** Add one session and persist. No-op if duplicate (by deviceId + claudeSessionId). */
   static async add(
     context: vscode.ExtensionContext,
     deviceId: string,
@@ -45,7 +43,6 @@ export class SessionStore {
     await context.globalState.update(STORAGE_KEY, sessions);
   }
 
-  /** Remove one session and persist. */
   static async remove(
     context: vscode.ExtensionContext,
     deviceId: string,
@@ -55,5 +52,43 @@ export class SessionStore {
       s => !(s.deviceId === deviceId && s.claudeSessionId === claudeSessionId),
     );
     await context.globalState.update(STORAGE_KEY, sessions);
+  }
+
+  // ── OpenCode sessions ──────────────────────────────────────
+
+  static getOpenCodeByDevice(context: vscode.ExtensionContext, deviceId: string): StoredSession[] {
+    const all = context.globalState.get<StoredSession[]>(OC_STORAGE_KEY, []);
+    return all.filter(s => s.deviceId === deviceId);
+  }
+
+  static async addOpenCode(
+    context: vscode.ExtensionContext,
+    deviceId: string,
+    sessionId: string,
+    metadata?: { title?: string; cwd?: string },
+  ): Promise<void> {
+    const all = context.globalState.get<StoredSession[]>(OC_STORAGE_KEY, []);
+    if (all.some(s => s.deviceId === deviceId && s.claudeSessionId === sessionId)) return;
+    all.push({
+      deviceId,
+      claudeSessionId: sessionId,
+      title: metadata?.title,
+      cwd: metadata?.cwd,
+      updatedAt: new Date().toISOString(),
+      agentType: 'opencode',
+    });
+    await context.globalState.update(OC_STORAGE_KEY, all);
+  }
+
+  static async removeOpenCode(
+    context: vscode.ExtensionContext,
+    deviceId: string,
+    sessionId: string,
+  ): Promise<void> {
+    const all = context.globalState.get<StoredSession[]>(OC_STORAGE_KEY, []);
+    await context.globalState.update(
+      OC_STORAGE_KEY,
+      all.filter(s => !(s.deviceId === deviceId && s.claudeSessionId === sessionId)),
+    );
   }
 }

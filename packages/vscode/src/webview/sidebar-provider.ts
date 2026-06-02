@@ -474,12 +474,35 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       }
     }
 
+    // Restore stored OpenCode sessions that aren't already in the live API list
+    const ocStored = creds?.deviceId
+      ? SessionStore.getOpenCodeByDevice(this._context, creds.deviceId)
+      : [];
+    for (const oc of ocStored) {
+      filteredSessions.push({
+        sessionId: oc.claudeSessionId,
+        cwd: oc.cwd || '',
+        title: oc.title || 'OpenCode session',
+        transcriptPath: '',
+        createdAt: oc.updatedAt,
+        updatedAt: oc.updatedAt,
+      });
+    }
+
     const mergedClaudeSessions = filteredSessions.map(s => ({
       ...s,
       title: relayTitleByClaudeSessionId.get(s.sessionId) || s.title,
       attached: attachedSessions.includes(s.sessionId),
       canDetach,
     }));
+
+    // Mark stored opencode sessions
+    const ocStoredIds = new Set(ocStored.map(s => s.claudeSessionId));
+    for (const s of mergedClaudeSessions) {
+      if (ocStoredIds.has(s.sessionId)) {
+        (s as any).isOpenCodeSession = true;
+      }
+    }
 
     // Inject the bridge-known active session if it's not already in the list.
     // This covers: session just started (transcript not written yet), transcript
@@ -656,11 +679,20 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
             if (!res.ok) {
               const body = await res.json().catch(() => ({} as Record<string, unknown>));
               vscode.window.showErrorMessage(`${msg.attached ? 'Detach' : 'Attach'} failed: ${(body as Record<string, unknown>).error || res.statusText}`);
-            } else if (!msg.attached) {
-              // Auto-open opencode terminal with this session
-              const hasOcTerm = vscode.window.terminals.some(t => t.name.startsWith('opencode'));
-              if (!hasOcTerm) {
-                vscode.commands.executeCommand('codekey.startOpenCode', msg.sessionId);
+            } else {
+              const creds = loadCredentials();
+              if (creds?.deviceId) {
+                if (msg.attached) {
+                  await SessionStore.removeOpenCode(this._context, creds.deviceId, msg.sessionId);
+                } else {
+                  await SessionStore.addOpenCode(this._context, creds.deviceId, msg.sessionId, { title: msg.title || '', cwd: '' });
+                }
+              }
+              if (!msg.attached) {
+                const hasOcTerm = vscode.window.terminals.some(t => t.name.startsWith('opencode'));
+                if (!hasOcTerm) {
+                  vscode.commands.executeCommand('codekey.startOpenCode', msg.sessionId);
+                }
               }
             }
             this._pushState();
