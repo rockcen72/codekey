@@ -78,6 +78,12 @@ export class OpenCodeSessionManager {
     return this.opencodeSessions.has(serverSessionId);
   }
 
+  /** Register a session mapping so command routing works. Called from attach endpoint. */
+  registerSession(localSessionId: string, serverSessionId: string): void {
+    this.opencodeSessions.add(serverSessionId);
+    this.opencodeSessionToRelayId.set(localSessionId, serverSessionId);
+  }
+
   async start(): Promise<void> {
     this.bridge.registerExternalApprovalResponder({
       agentType: 'opencode',

@@ -596,9 +596,11 @@ function handleRequest(req: IncomingMessage, res: ServerResponse, bridge: Approv
           });
         };
         bridge.attachOpenCodeSession(sessionId, fetchMessages, typeof title === 'string' ? title : undefined)
-          .catch((err: Error) => {
-            console.error('[bridge] opencode-attach failed: %s', err.message);
-          });
+          .then((serverSessionId) => {
+            if (typeof serverSessionId === 'string' && opencodeManager) {
+              opencodeManager.registerSession(sessionId, serverSessionId);
+            }
+          })
       } catch {
         res.writeHead(400);
         res.end('{}');
