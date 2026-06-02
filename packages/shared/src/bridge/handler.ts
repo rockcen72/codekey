@@ -226,6 +226,78 @@ export class ApprovalBridge {
     this._opencodeAttachedIds.delete(localSessionId);
   }
 
+  /** Attach an OpenCode session — registers on relay and replays recent history.
+   *  Same pattern as attachClaudeSession, but reads messages from OpenCode API. */
+  async attachOpenCodeSession(
+    localSessionId: string,
+    fetchMessages: (sessionId: string) => Promise<any[]>,
+    title?: string,
+  ): Promise<string> {
+    this.addOpenCodeAttachedSession(localSessionId);
+    const existingServerSessionId = this.sessions.get(localSessionId);
+    const serverSessionId = existingServerSessionId
+      ?? await this.ensureSession(localSessionId, undefined, 'opencode', { agentType: 'opencode', runtime: 'opencode' });
+    if (existingServerSessionId) {
+      this.relay.sendRaw(JSON.stringify({
+        type: 'attach_session',
+        payload: {
+          sessionId: existingServerSessionId,
+          claudeSessionId: localSessionId,
+          metadata: { claudeSessionId: localSessionId, runtime: 'opencode', source: 'opencode_attach' },
+        },
+      }));
+    }
+    if (title) {
+      this.relay.sendRaw(JSON.stringify({
+        type: 'update_session_label',
+        payload: { sessionId: serverSessionId, label: title },
+      }));
+    }
+    // Replay history in background
+    this._replayOpenCodeHistory(localSessionId, serverSessionId, fetchMessages).catch(() => {});
+    return serverSessionId;
+  }
+
+  private async _replayOpenCodeHistory(
+    localSessionId: string,
+    serverSessionId: string,
+    fetchMessages: (sessionId: string) => Promise<any[]>,
+  ): Promise<void> {
+    try {
+      const msgs = await fetchMessages(localSessionId);
+      if (!Array.isArray(msgs) || msgs.length === 0) return;
+
+      for (const m of msgs) {
+        const info = m.info || {};
+        if (info.role === 'user' && Array.isArray(m.parts)) {
+          const text = m.parts.filter((p: any) => p.type === 'text' && p.text).map((p: any) => p.text).join('\n');
+          if (text) {
+            this.sendEventToRelay(serverSessionId, {
+              clientEventId: `oc-hist:${localSessionId}:${Date.now()}:${Math.random()}`,
+              sessionId: serverSessionId,
+              agent: 'opencode',
+              eventType: 'user_prompt',
+              data: { type: 'user_prompt', prompt: text, summary: text.slice(0, 200) },
+              ts: info.time?.created ? new Date(info.time.created).toISOString() : new Date().toISOString(),
+            });
+          }
+        } else if (info.role === 'assistant' && m.parts) {
+          const text = m.parts.filter((p: any) => p.type === 'text' && p.text).map((p: any) => p.text).join('\n');
+          if (text) {
+            this.sendEventToRelay(serverSessionId, {
+              clientEventId: `oc-hist:${localSessionId}:${Date.now()}:${Math.random()}`,
+              sessionId: serverSessionId,
+              agent: 'opencode',
+              eventType: 'task_complete',
+              data: { type: 'task_complete', summary: text.slice(0, 500) },
+              ts: info.time?.completed || info.time?.created ? new Date((info.time.completed || info.time.created) as number).toISOString() : new Date().toISOString(),
+            });
+          }
+        }
+      }
+    } catch { /* best-effort */ }
+  }
+
   private knownCodexLocalSessionIds(): Set<string> {
     const now = Date.now();
     if (now < this.codexLocalIdCache.expiresAt) return this.codexLocalIdCache.ids;
@@ -548,19 +620,6 @@ export class ApprovalBridge {
     const prev = this.windowLabels.get(windowId);
     this.windowLabels.set(windowId, label);
     if (prev !== label) {
-      const sessionId = this.windowSessions.get(windowId);
-      if (sessionId) {
-        this.relay.sendRaw(JSON.stringify({
-          type: 'update_session_label',
-          payload: { sessionId, label },
-        }));
-      }
-    }
-  }
-
-  /** Push all cached window labels to relay. Called after reconciliation. */
-  flushPendingLabels(): void {
-    for (const [windowId, label] of this.windowLabels) {
       const sessionId = this.windowSessions.get(windowId);
       if (sessionId) {
         this.relay.sendRaw(JSON.stringify({

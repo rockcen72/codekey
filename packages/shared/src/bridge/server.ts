@@ -582,21 +582,23 @@ function handleRequest(req: IncomingMessage, res: ServerResponse, bridge: Approv
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ ok: true }));
 
-        const run = opencodeManager
-          ? opencodeManager.attachSession(sessionId, typeof title === 'string' ? title : undefined)
-          : bridge.ensureSession(sessionId, undefined, 'opencode', { agentType: 'opencode', runtime: 'opencode' }).then((serverSessionId) => {
-              bridge.addOpenCodeAttachedSession(sessionId);
-              if (title && typeof title === 'string') {
-                bridge.relay.sendRaw(JSON.stringify({
-                  type: 'update_session_label',
-                  payload: { sessionId: serverSessionId, label: title },
-                }));
-              }
-              return serverSessionId;
-            });
-        run.catch((err: Error) => {
-          console.error('[bridge] opencode-attach failed: %s', err.message);
-        });
+        const fetchMessages = (sid: string) => {
+          const ocUrl = new URL(`/session/${encodeURIComponent(sid)}/message?limit=5`, bridgeConfig?.openCodeUrl || 'http://127.0.0.1:4096');
+          return new Promise<any[]>((resolve) => {
+            httpGet({ hostname: ocUrl.hostname, port: ocUrl.port, path: ocUrl.pathname + ocUrl.search, timeout: 5000 }, (ocRes) => {
+              let body = '';
+              ocRes.on('data', (chunk: Buffer) => { body += chunk; });
+              ocRes.on('end', () => {
+                try { resolve(ocRes.statusCode && ocRes.statusCode < 300 ? JSON.parse(body) : []); }
+                catch { resolve([]); }
+              });
+            }).on('error', () => resolve([])).on('timeout', function(this: any) { this.destroy(); resolve([]); });
+          });
+        };
+        bridge.attachOpenCodeSession(sessionId, fetchMessages, typeof title === 'string' ? title : undefined)
+          .catch((err: Error) => {
+            console.error('[bridge] opencode-attach failed: %s', err.message);
+          });
       } catch {
         res.writeHead(400);
         res.end('{}');

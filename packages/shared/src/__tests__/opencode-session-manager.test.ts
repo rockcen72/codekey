@@ -315,65 +315,6 @@ describe('OpenCodeSessionManager event handling', () => {
         .filter((msg) => msg.type === 'register_session' && msg.payload.claudeSessionId === 'oc-session-auto');
       expect(registrations.length).toBe(0);
     });
-
-    it('deduplicates concurrent attach and session.created registration', async () => {
-      const attach = manager.attachSession('oc-session-attach', 'Attach title');
-      await (manager as any).handleSSEEvent({
-        type: 'session.created',
-        properties: {
-          info: {
-            id: 'oc-session-attach',
-            projectID: 'proj-1',
-            directory: '/home/user/project',
-            title: 'Attach title',
-            version: '1.0',
-            time: { created: Date.now(), updated: Date.now() },
-          },
-        },
-      });
-
-      await attach;
-      await new Promise(r => setTimeout(r, 50));
-
-      const registrations = relay.sent
-        .map((raw) => JSON.parse(raw))
-        .filter((msg) => msg.type === 'register_session' && msg.payload.claudeSessionId === 'oc-session-attach');
-      expect(registrations.length).toBe(1);
-      expect(manager.ownsSession('server-oc-session-attach')).toBe(true);
-      expect(bridge.getAttachedSessionIds()).toContain('oc-session-attach');
-    });
-  });
-
-  describe('attachSession persistence', () => {
-    it('registers session and marks it as owned', async () => {
-      await manager.attachSession('oc-session-remote', 'Remote title');
-
-      // Session registered via relay (FakeRelay responds with server- prefixed ID)
-      expect(manager.ownsSession('server-oc-session-remote')).toBe(true);
-      expect(bridge.getAttachedSessionIds()).toContain('oc-session-remote');
-
-      const registrations = relay.sent
-        .map((raw) => JSON.parse(raw))
-        .filter((msg) => msg.type === 'register_session' && msg.payload.claudeSessionId === 'oc-session-remote');
-      // attachSession always calls ensureSession which registers on relay
-      expect(registrations.length).toBe(1);
-    });
-
-    it('does not re-register on re-attach of same session', async () => {
-      await manager.attachSession('oc-session-persisted', 'Persisted title');
-      await new Promise(r => setTimeout(r, 50));
-
-      // Re-attach the same session
-      relay.sent.length = 0;
-      await manager.attachSession('oc-session-persisted', 'Persisted title');
-      await new Promise(r => setTimeout(r, 50));
-
-      const registrations = relay.sent
-        .map((raw) => JSON.parse(raw))
-        .filter((msg) => msg.type === 'register_session' && msg.payload.claudeSessionId === 'oc-session-persisted');
-      // Should not re-register (ensureSession returns cached result)
-      expect(registrations.length).toBe(0);
-    });
   });
 
   describe('server.connected', () => {

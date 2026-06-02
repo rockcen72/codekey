@@ -131,23 +131,12 @@ export class OpenCodeSessionManager {
   }
 
   async attachSession(localSessionId: string, title?: string): Promise<string> {
-    // Fire-and-forget: registration + history should not block the HTTP response
-    return this.ensureRelaySession(localSessionId).then((serverSessionId) => {
-      this.bridge.addOpenCodeAttachedSession(localSessionId);
-      saveAttachedSessions([
-        ...loadAttachedSessions().filter(s => s.localSessionId !== localSessionId),
-        { localSessionId, serverSessionId },
-      ]);
-      if (title) {
-        this.bridge.relay.sendRaw(JSON.stringify({
-          type: 'update_session_label',
-          payload: { sessionId: serverSessionId, label: title },
-        }));
-      }
-      // Push history in background
-      this.replayHistory(localSessionId, serverSessionId).catch(() => {});
-      return serverSessionId;
-    });
+    const fetchMessages = (sid: string): Promise<any[]> => {
+      return fetch(`${this.opencodeBaseUrl}/session/${encodeURIComponent(sid)}/message?limit=5`)
+        .then(r => r.ok ? r.json() as Promise<any[]> : Promise.resolve([]))
+        .catch((): any[] => []);
+    };
+    return this.bridge.attachOpenCodeSession(localSessionId, fetchMessages, title);
   }
 
   async detachSession(localSessionId: string, knownServerSessionId?: string): Promise<boolean> {
