@@ -497,11 +497,13 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       canDetach,
     }));
 
-    // Mark stored opencode sessions
+    // Mark stored opencode sessions — sessionStore is the persistent source of truth
     const ocStoredIds = new Set(ocStored.map(s => s.claudeSessionId));
     for (const s of mergedClaudeSessions) {
       if (ocStoredIds.has(s.sessionId)) {
         (s as any).isOpenCodeSession = true;
+        (s as any).attached = true;
+        (s as any).canDetach = true;
       }
     }
 
