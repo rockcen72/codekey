@@ -281,4 +281,57 @@ describe('OpenCodeSessionManager event handling', () => {
       expect(taskComplete).toBeDefined();
     });
   });
+
+  describe('session.created', () => {
+    it('pre-registers session on session.created event', async () => {
+      await (manager as any).handleSSEEvent({
+        type: 'session.created',
+        properties: {
+          info: {
+            id: 'oc-session-auto',
+            projectID: 'proj-1',
+            directory: '/home/user/project',
+            title: 'Auto session',
+            version: '1.0',
+            time: { created: Date.now(), updated: Date.now() },
+          },
+        },
+      });
+
+      // Should be registered via ensureSession
+      // The ensureSession call goes through relay which responds with server- prefixed ID
+      await new Promise(r => setTimeout(r, 50));
+      expect(manager.ownsSession('server-oc-session-auto')).toBe(true);
+    });
+  });
+
+  describe('syncSessions', () => {
+    it('pre-registers sessions returned from /session endpoint', async () => {
+      // Mock the fetch to return sessions
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = async (input: string | URL | Request) => {
+        const url = typeof input === 'string' ? input : input.toString();
+        if (url.endsWith('/session')) {
+          return {
+            ok: true,
+            json: async () => [
+              { id: 'existing-session-1' },
+              { id: 'existing-session-2' },
+            ],
+          } as Response;
+        }
+        return originalFetch(url);
+      };
+
+      await (manager as any).syncSessions();
+
+      // Give ensureSession time to resolve
+      await new Promise(r => setTimeout(r, 50));
+
+      expect(manager.ownsSession('server-existing-session-1')).toBe(true);
+      expect(manager.ownsSession('server-existing-session-2')).toBe(true);
+
+      globalThis.fetch = originalFetch;
+    });
+  });
 });

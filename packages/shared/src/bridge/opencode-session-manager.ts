@@ -3,16 +3,10 @@ import { get as httpGet } from 'node:http';
 import { createEventStreamParser } from './sse-parser.js';
 import { ApprovalBridge } from './handler.js';
 
-/**
- * OpenCodeSessionManager manages the OpenCode integration via SSE + REST.
- *
- * API docs: https://opencode.ai/docs/server/
- * SDK types: https://github.com/sst/opencode/blob/dev/packages/sdk/js/src/gen/types.gen.ts
- *
- * SSE: GET /event
- * Permission reply: POST /session/:id/permissions/:permissionID { response }
- * Async prompt: POST /session/:id/prompt_async
- */
+const INITIAL_RECONNECT_DELAY = 1000;
+const MAX_RECONNECT_DELAY = 30_000;
+const BACKOFF_MULTIPLIER = 2;
+
 export class OpenCodeSessionManager {
   private bridge: ApprovalBridge;
   private opencodeBaseUrl: string;
@@ -24,6 +18,8 @@ export class OpenCodeSessionManager {
 
   private _abortController: AbortController | null = null;
   private _stopped = false;
+  private _reconnectDelay = INITIAL_RECONNECT_DELAY;
+  private _reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(opencodeBaseUrl: string, bridge: ApprovalBridge) {
     this.opencodeBaseUrl = opencodeBaseUrl;
@@ -55,11 +51,16 @@ export class OpenCodeSessionManager {
 
     this._abortController = new AbortController();
     this._stopped = false;
+    this._reconnectDelay = INITIAL_RECONNECT_DELAY;
     await this.connectSSE();
   }
 
   stop(): void {
     this._stopped = true;
+    if (this._reconnectTimer) {
+      clearTimeout(this._reconnectTimer);
+      this._reconnectTimer = null;
+    }
     if (this._abortController) {
       this._abortController.abort();
       this._abortController = null;
@@ -71,6 +72,23 @@ export class OpenCodeSessionManager {
   }
 
   // ── SSE connection ──────────────────────────────────────
+
+  private scheduleReconnect(): void {
+    if (this._stopped) return;
+    const delay = this._reconnectDelay;
+    this._reconnectDelay = Math.min(
+      this._reconnectDelay * BACKOFF_MULTIPLIER,
+      MAX_RECONNECT_DELAY,
+    );
+    console.error('[opencode] SSE reconnecting in %dms', delay);
+    this._reconnectTimer = setTimeout(() => {
+      if (!this._stopped) this.connectSSE().catch(() => {});
+    }, delay);
+  }
+
+  private resetBackoff(): void {
+    this._reconnectDelay = INITIAL_RECONNECT_DELAY;
+  }
 
   private connectSSE(): Promise<void> {
     return new Promise((resolve, reject) => {
@@ -90,6 +108,7 @@ export class OpenCodeSessionManager {
             return;
           }
           resolve();
+          this.resetBackoff();
 
           const parser = createEventStreamParser();
           res.on('data', (chunk: Buffer) => {
@@ -100,19 +119,14 @@ export class OpenCodeSessionManager {
               });
             }
           });
-          res.on('error', (err) => {
+          res.on('error', (_err) => {
             if (!this._stopped) {
-              console.error('[opencode] SSE error:', err);
-              setTimeout(() => {
-                if (!this._stopped) this.connectSSE().catch(() => {});
-              }, 5000);
+              this.scheduleReconnect();
             }
           });
           res.on('end', () => {
             if (!this._stopped) {
-              setTimeout(() => {
-                if (!this._stopped) this.connectSSE().catch(() => {});
-              }, 5000);
+              this.scheduleReconnect();
             }
           });
         },
@@ -120,20 +134,48 @@ export class OpenCodeSessionManager {
 
       req.on('error', (err) => {
         if (!this._stopped) {
-          console.error('[opencode] SSE request error:', err);
-          setTimeout(() => {
-            if (!this._stopped) this.connectSSE().catch(() => {});
-          }, 5000);
+          console.error('[opencode] SSE connection error:', err.message);
+          this.scheduleReconnect();
         }
         reject(err);
       });
     });
   }
 
+  // ── Session list sync ───────────────────────────────────
+
+  /** Fetch existing OpenCode sessions and pre-register them with the relay. */
+  private async syncSessions(): Promise<void> {
+    try {
+      const resp = await fetch(`${this.opencodeBaseUrl}/session`);
+      if (!resp.ok) return;
+      const sessions = await resp.json() as Array<{ id: string }>;
+      if (!Array.isArray(sessions)) return;
+
+      // Register each existing session with relay
+      for (const s of sessions) {
+        if (s.id && !this.opencodeSessionToRelayId.has(s.id)) {
+          this.bridge.ensureSession(s.id, undefined, 'opencode', {
+            agentType: 'opencode',
+            runtime: 'opencode',
+          }).then((serverSessionId) => {
+            this.opencodeSessions.add(serverSessionId);
+            this.opencodeSessionToRelayId.set(s.id, serverSessionId);
+          }).catch(() => {});
+        }
+      }
+    } catch {
+      // best-effort
+    }
+  }
+
   // ── Event dispatch ──────────────────────────────────────
 
   private async handleSSEEvent(event: { type: string; properties: Record<string, unknown> }): Promise<void> {
     switch (event.type) {
+      case 'server.connected':
+        await this.syncSessions();
+        return;
       case 'permission.updated':
         return this.onPermissionUpdated(event.properties);
       case 'permission.replied':
@@ -155,11 +197,6 @@ export class OpenCodeSessionManager {
 
   // ── Permission handling ─────────────────────────────────
 
-  /**
-   * EventPermissionUpdated:
-   *   properties IS the Permission object directly:
-   *   { id, type, pattern?, sessionID, messageID, callID?, title, metadata, time }
-   */
   private async onPermissionUpdated(props: Record<string, unknown>): Promise<void> {
     const requestID = props.id as string;
     const sessionID = props.sessionID as string;
@@ -210,24 +247,25 @@ export class OpenCodeSessionManager {
     this.permissionMap.set(clientEventId, { requestID, serverSessionId, localSessionID: sessionID });
   }
 
-  private onPermissionReplied(_props: Record<string, unknown>): void {
-    // OpenCode already handled the reply locally.
-    // Our pending will be resolved through approval_forward from the phone or local VS Code.
-  }
+  private onPermissionReplied(_props: Record<string, unknown>): void {}
 
   // ── Session lifecycle ───────────────────────────────────
 
-  /**
-   * EventSessionCreated/Updated/Deleted:
-   *   properties: { info: Session }
-   */
   private onSessionEvent(type: string, props: Record<string, unknown>): void {
     const info = props.info as Record<string, unknown> | undefined;
     if (!info) return;
     const sessionID = info.id as string;
     if (!sessionID) return;
 
-    if (type === 'session.deleted') {
+    if (type === 'session.created') {
+      this.bridge.ensureSession(sessionID, undefined, 'opencode', {
+        agentType: 'opencode',
+        runtime: 'opencode',
+      }).then((serverSessionId) => {
+        this.opencodeSessions.add(serverSessionId);
+        this.opencodeSessionToRelayId.set(sessionID, serverSessionId);
+      }).catch(() => {});
+    } else if (type === 'session.deleted') {
       const serverSessionId = this.opencodeSessionToRelayId.get(sessionID);
       if (serverSessionId) {
         this.opencodeSessions.delete(serverSessionId);
@@ -236,10 +274,6 @@ export class OpenCodeSessionManager {
     }
   }
 
-  /**
-   * EventSessionIdle:
-   *   properties: { sessionID: string }
-   */
   private onSessionIdle(props: Record<string, unknown>): void {
     const sessionID = props.sessionID as string;
     if (!sessionID) return;
@@ -257,10 +291,6 @@ export class OpenCodeSessionManager {
     });
   }
 
-  /**
-   * EventSessionError:
-   *   properties: { sessionID?: string, error?: ... }
-   */
   private onSessionError(props: Record<string, unknown>): void {
     const sessionID = props.sessionID as string;
     if (!sessionID) return;
@@ -283,13 +313,6 @@ export class OpenCodeSessionManager {
 
   // ── Message handling ────────────────────────────────────
 
-  /**
-   * EventMessageUpdated:
-   *   properties: { info: Message }
-   *   Message = UserMessage | AssistantMessage
-   *   Both have: id, sessionID, role
-   *   AssistantMessage has: cost, tokens, error?, finish?
-   */
   private onMessageUpdated(props: Record<string, unknown>): void {
     const info = props.info as Record<string, unknown> | undefined;
     if (!info) return;
@@ -300,7 +323,6 @@ export class OpenCodeSessionManager {
     const serverSessionId = this.opencodeSessionToRelayId.get(sessionID);
     if (!serverSessionId) return;
 
-    // Track message completion for status updates
     const key = `msg:${messageID}`;
     if (this.deliveredMessageParts.has(key)) return;
     this.deliveredMessageParts.add(key);
@@ -310,7 +332,6 @@ export class OpenCodeSessionManager {
       this.deliveredMessageParts = new Set(arr.slice(-5000));
     }
 
-    // Check for errors in assistant messages
     const error = info.error as Record<string, unknown> | undefined;
     if (error) {
       this.bridge.sendEventToRelay(serverSessionId, {
@@ -325,13 +346,6 @@ export class OpenCodeSessionManager {
     }
   }
 
-  /**
-   * EventMessagePartUpdated:
-   *   properties: { part: Part, delta?: string }
-   *   Part = TextPart | ToolPart | FilePart | ...
-   *   TextPart: { id, sessionID, messageID, type: "text", text: string }
-   *   ToolPart: { id, sessionID, messageID, type: "tool", state: ToolState }
-   */
   private onMessagePartUpdated(props: Record<string, unknown>): void {
     const part = props.part as Record<string, unknown> | undefined;
     if (!part) return;
@@ -340,16 +354,14 @@ export class OpenCodeSessionManager {
     const messageID = part.messageID as string;
     const partID = part.id as string;
     const partType = part.type as string;
-    if (!sessionID || !messageID) return;
 
+    if (!sessionID || !messageID) return;
     const serverSessionId = this.opencodeSessionToRelayId.get(sessionID);
     if (!serverSessionId) return;
 
-    // Dedup by part ID
     const key = `part:${partID}`;
     if (this.deliveredMessageParts.has(key)) return;
 
-    // Only forward text parts and completed tool parts
     if (partType === 'text') {
       this.deliveredMessageParts.add(key);
       const text = (part.text as string) || (props.delta as string) || '';
@@ -442,8 +454,6 @@ export class OpenCodeSessionManager {
     return null;
   }
 }
-
-// ── Helpers ────────────────────────────────────────────────
 
 function permissionToCommand(permissionType: string, metadata: Record<string, unknown>): string {
   if (metadata.command) return metadata.command as string;
