@@ -9,7 +9,7 @@ import { getAgents } from '../agents/registry.js';
 import { BridgeStatusService } from '../services/bridge-status.js';
 import { SessionStore } from '../services/session-store.js';
 import { isOpenCodeCliInstalled } from '../hook/opencode-installer.js';
-import { startOpenCodeTerminal, hasOpenCodeTerminal } from '../commands/start-opencode.js';
+import { startOpenCodeTerminal } from '../commands/start-opencode.js';
 
 
 import {
@@ -497,13 +497,13 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       canDetach,
     }));
 
-    // Mark stored opencode sessions — sessionStore is the persistent source of truth
+    // Mark stored opencode sessions — sessionStore keeps history, bridge decides attached
     const ocStoredIds = new Set(ocStored.map(s => s.claudeSessionId));
     for (const s of mergedClaudeSessions) {
       if (ocStoredIds.has(s.sessionId)) {
         (s as any).isOpenCodeSession = true;
-        (s as any).attached = true;
-        (s as any).canDetach = true;
+        (s as any).attached = attachedSessions.includes(s.sessionId);
+        (s as any).canDetach = attachedSessions.includes(s.sessionId);
       }
     }
 
@@ -683,18 +683,16 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
               const body = await res.json().catch(() => ({} as Record<string, unknown>));
               vscode.window.showErrorMessage(`${msg.attached ? 'Detach' : 'Attach'} failed: ${(body as Record<string, unknown>).error || res.statusText}`);
             } else {
-          const creds = loadCredentials();
-          if (creds?.deviceId) {
-            if (msg.attached) {
-              await SessionStore.removeOpenCode(this._context, creds.deviceId, msg.sessionId);
-            } else {
-              await SessionStore.addOpenCode(this._context, creds.deviceId, msg.sessionId, { title: msg.title || '', cwd: '' });
-              // Auto-open terminal in tab area for this session
-              if (!hasOpenCodeTerminal(msg.sessionId)) {
-                startOpenCodeTerminal(msg.sessionId);
+              const creds = loadCredentials();
+              if (creds?.deviceId) {
+                if (!msg.attached) {
+                  await SessionStore.addOpenCode(this._context, creds.deviceId, msg.sessionId, { title: msg.title || '', cwd: '' });
+                  const termName = `opencode-${msg.sessionId.slice(0, 8)}`;
+                  if (!vscode.window.terminals.some(t => t.name === termName)) {
+                    startOpenCodeTerminal(msg.sessionId);
+                  }
+                }
               }
-            }
-          }
             }
             this._pushState();
           }).catch(() => {
