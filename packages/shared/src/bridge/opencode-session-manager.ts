@@ -557,10 +557,18 @@ export class OpenCodeSessionManager {
 
   async handleCommand(sessionId: string, text: string): Promise<void> {
     const opencodeSessionId = this.resolveLocalSessionId(sessionId);
-    if (!opencodeSessionId) return;
+    if (!opencodeSessionId) {
+      console.error('[opencode] handleCommand: no local session mapping for serverSessionId=%s, map=%s',
+        sessionId, JSON.stringify([...this.opencodeSessionToRelayId]));
+      this.bridge.sendErrorToRelay(sessionId, '会话映射未找到，请在侧边栏重新 Attach');
+      return;
+    }
+    console.error('[opencode] handleCommand: sending prompt to session %s', opencodeSessionId);
 
     try {
-      const resp = await fetch(`${this.opencodeBaseUrl}/session/${opencodeSessionId}/prompt_async`, {
+      const url = `${this.opencodeBaseUrl}/session/${encodeURIComponent(opencodeSessionId)}/prompt_async`;
+      console.error('[opencode] handleCommand: POST %s', url);
+      const resp = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -571,7 +579,9 @@ export class OpenCodeSessionManager {
       if (!resp.ok) {
         throw new Error(`OpenCode prompt_async returned ${resp.status}`);
       }
+      console.error('[opencode] handleCommand: prompt sent OK');
     } catch (err) {
+      console.error('[opencode] handleCommand: %s', (err as Error).message);
       this.bridge.sendErrorToRelay(sessionId, `命令发送失败: ${err}`);
     }
   }
