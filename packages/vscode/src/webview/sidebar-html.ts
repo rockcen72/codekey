@@ -293,7 +293,7 @@ function _sessionItemHtml(s: any, extraCls: string): string {
 
 function _displayTitle(s: any): string {
   var t = s.title || s.sessionId || '';
-  if (s.isOpenCodeSession) return 'OpenCode session';
+  if (s.isOpenCodeSession && !s.title) return 'OpenCode session';
   if (/^[0-9a-f]{8}/.test(t) && t.length >= 8) return 'Codex session';
   return t;
 }
