@@ -572,7 +572,6 @@ export class OpenCodeSessionManager {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          messageID: randomUUID(),
           parts: [{ type: 'text', text }],
         }),
       });
