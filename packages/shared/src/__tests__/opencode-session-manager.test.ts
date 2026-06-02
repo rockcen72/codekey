@@ -1,5 +1,8 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { EventEmitter } from 'node:events';
+import { existsSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import { ApprovalBridge } from '../bridge/handler.js';
 import { OpenCodeSessionManager } from '../bridge/opencode-session-manager.js';
 
@@ -27,8 +30,10 @@ describe('OpenCodeSessionManager event handling', () => {
   let relay: FakeRelay;
   let bridge: ApprovalBridge;
   let manager: OpenCodeSessionManager;
+  const attachedStoragePath = join(tmpdir(), 'codekey-opencode-attached.json');
 
   beforeEach(() => {
+    if (existsSync(attachedStoragePath)) rmSync(attachedStoragePath);
     relay = new FakeRelay();
     bridge = new ApprovalBridge(relay as any);
     bridge.listenRelayCommands();
@@ -50,6 +55,10 @@ describe('OpenCodeSessionManager event handling', () => {
         (manager as any).permissionMap.set(serverEventId, entry);
       }
     });
+  });
+
+  afterEach(() => {
+    if (existsSync(attachedStoragePath)) rmSync(attachedStoragePath);
   });
 
   describe('permission.updated', () => {
@@ -283,7 +292,7 @@ describe('OpenCodeSessionManager event handling', () => {
   });
 
   describe('session.created', () => {
-    it('pre-registers session on session.created event', async () => {
+    it('does not push a new local session to relay by itself', async () => {
       await (manager as any).handleSSEEvent({
         type: 'session.created',
         properties: {
@@ -298,20 +307,88 @@ describe('OpenCodeSessionManager event handling', () => {
         },
       });
 
-      // Should be registered via ensureSession
-      // The ensureSession call goes through relay which responds with server- prefixed ID
       await new Promise(r => setTimeout(r, 50));
-      expect(manager.ownsSession('server-oc-session-auto')).toBe(true);
+      expect(manager.ownsSession('server-oc-session-auto')).toBe(false);
+
+      const registrations = relay.sent
+        .map((raw) => JSON.parse(raw))
+        .filter((msg) => msg.type === 'register_session' && msg.payload.claudeSessionId === 'oc-session-auto');
+      expect(registrations.length).toBe(0);
+    });
+
+    it('deduplicates concurrent attach and session.created registration', async () => {
+      const attach = manager.attachSession('oc-session-attach', 'Attach title');
+      await (manager as any).handleSSEEvent({
+        type: 'session.created',
+        properties: {
+          info: {
+            id: 'oc-session-attach',
+            projectID: 'proj-1',
+            directory: '/home/user/project',
+            title: 'Attach title',
+            version: '1.0',
+            time: { created: Date.now(), updated: Date.now() },
+          },
+        },
+      });
+
+      await attach;
+      await new Promise(r => setTimeout(r, 50));
+
+      const registrations = relay.sent
+        .map((raw) => JSON.parse(raw))
+        .filter((msg) => msg.type === 'register_session' && msg.payload.claudeSessionId === 'oc-session-attach');
+      expect(registrations.length).toBe(1);
+      expect(manager.ownsSession('server-oc-session-attach')).toBe(true);
+      expect(bridge.getAttachedSessionIds()).toContain('oc-session-attach');
     });
   });
 
-  describe('syncSessions', () => {
-    it('pre-registers sessions returned from /session endpoint', async () => {
+  describe('attachSession persistence', () => {
+    it('uses a known remote server session id instead of registering again', async () => {
+      await manager.attachSession('oc-session-remote', 'Remote title', 'server-existing-remote');
+
+      expect(manager.ownsSession('server-existing-remote')).toBe(true);
+      expect(bridge.getAttachedSessionIds()).toContain('oc-session-remote');
+
+      const registrations = relay.sent
+        .map((raw) => JSON.parse(raw))
+        .filter((msg) => msg.type === 'register_session' && msg.payload.claudeSessionId === 'oc-session-remote');
+      expect(registrations.length).toBe(0);
+    });
+
+    it('restores the relay session mapping and does not re-register on attach', async () => {
+      await manager.attachSession('oc-session-persisted', 'Persisted title');
+      await new Promise(r => setTimeout(r, 50));
+
+      const restoredRelay = new FakeRelay();
+      const restoredBridge = new ApprovalBridge(restoredRelay as any);
+      const restoredManager = new OpenCodeSessionManager('http://127.0.0.1:4096', restoredBridge);
+      (restoredManager as any).connectSSE = vi.fn(async () => {});
+
+      await restoredManager.start();
+
+      expect(restoredManager.ownsSession('server-oc-session-persisted')).toBe(true);
+      expect(restoredBridge.getAttachedSessionIds()).toContain('oc-session-persisted');
+
+      await restoredManager.attachSession('oc-session-persisted', 'Persisted title');
+
+      const registrations = restoredRelay.sent
+        .map((raw) => JSON.parse(raw))
+        .filter((msg) => msg.type === 'register_session' && msg.payload.claudeSessionId === 'oc-session-persisted');
+      expect(registrations.length).toBe(0);
+    });
+  });
+
+  describe('server.connected', () => {
+    it('does not push existing OpenCode sessions to relay automatically', async () => {
       const originalFetch = globalThis.fetch;
       try {
+        const fetchSpy = vi.fn();
         globalThis.fetch = async (input: string | URL | Request) => {
           const url = typeof input === 'string' ? input : input.toString();
           if (url.endsWith('/session')) {
+            fetchSpy(url);
             return {
               ok: true,
               json: async () => [
@@ -323,11 +400,16 @@ describe('OpenCodeSessionManager event handling', () => {
           return originalFetch(input);
         };
 
-        await (manager as any).syncSessions();
+        await (manager as any).handleSSEEvent({ type: 'server.connected', properties: {} });
         await new Promise(r => setTimeout(r, 50));
 
-        expect(manager.ownsSession('server-existing-session-1')).toBe(true);
-        expect(manager.ownsSession('server-existing-session-2')).toBe(true);
+        expect(fetchSpy).not.toHaveBeenCalled();
+        expect(manager.ownsSession('server-existing-session-1')).toBe(false);
+        expect(manager.ownsSession('server-existing-session-2')).toBe(false);
+        const registrations = relay.sent
+          .map((raw) => JSON.parse(raw))
+          .filter((msg) => msg.type === 'register_session');
+        expect(registrations.length).toBe(0);
       } finally {
         globalThis.fetch = originalFetch;
       }

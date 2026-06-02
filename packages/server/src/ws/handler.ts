@@ -95,6 +95,12 @@ export function wsHandler(sql: postgres.Sql) {
           return;
         }
 
+        const pc = pcClients.get(deviceId!);
+        if (!pc || pc.socket.readyState !== pc.socket.OPEN) {
+          socket.send(JSON.stringify({ type: 'error', code: 'BRIDGE_NOT_CONNECTED' }));
+          return;
+        }
+
         sql`
           UPDATE events SET pending = false, decision = ${msg.payload.decision},
             responded_at = now() WHERE id = ${msg.payload.eventId} AND pending = true
@@ -111,20 +117,17 @@ export function wsHandler(sql: postgres.Sql) {
                     ${claimed.data?.command ?? null}, ${claimed.risk_level},
                     ${msg.payload.message ?? null})
           `.then(() => {
-            const pc = pcClients.get(deviceId!);
-            if (pc && pc.socket.readyState === pc.socket.OPEN) {
-              const clientEventId = claimed.data?.clientEventId ?? null;
-              pc.socket.send(JSON.stringify({
-                type: 'approval_forward',
-                payload: {
-                  sessionId: msg.payload.sessionId,
-                  eventId: msg.payload.eventId,
-                  decision: msg.payload.decision,
-                  message: msg.payload.message ?? '',
-                  clientEventId,
-                },
-              }));
-            }
+            const clientEventId = claimed.data?.clientEventId ?? null;
+            pc.socket.send(JSON.stringify({
+              type: 'approval_forward',
+              payload: {
+                sessionId: msg.payload.sessionId,
+                eventId: msg.payload.eventId,
+                decision: msg.payload.decision,
+                message: msg.payload.message ?? '',
+                clientEventId,
+              },
+            }));
 
             const mpList = clientClients.get(deviceId!);
             if (mpList) {

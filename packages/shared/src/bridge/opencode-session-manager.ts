@@ -4,6 +4,11 @@ import { createEventStreamParser } from './sse-parser.js';
 import { ApprovalBridge } from './handler.js';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 
+interface AttachedOpenCodeSession {
+  localSessionId: string;
+  serverSessionId?: string;
+}
+
 const INITIAL_RECONNECT_DELAY = 1000;
 const MAX_RECONNECT_DELAY = 30_000;
 const BACKOFF_MULTIPLIER = 2;
@@ -14,17 +19,38 @@ function getAttachedStoragePath(): string {
   return join(tmpdir(), 'codekey-opencode-attached.json');
 }
 
-function loadAttachedIds(): string[] {
+function loadAttachedSessions(): AttachedOpenCodeSession[] {
   try {
     const path = getAttachedStoragePath();
     if (!existsSync(path)) return [];
-    return JSON.parse(readFileSync(path, 'utf-8')) as string[];
+    const parsed = JSON.parse(readFileSync(path, 'utf-8')) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .map((entry) => {
+        if (typeof entry === 'string') return { localSessionId: entry };
+        if (entry && typeof entry === 'object') {
+          const obj = entry as Record<string, unknown>;
+          const localSessionId = typeof obj.localSessionId === 'string'
+            ? obj.localSessionId
+            : typeof obj.id === 'string'
+              ? obj.id
+              : '';
+          const serverSessionId = typeof obj.serverSessionId === 'string' ? obj.serverSessionId : undefined;
+          if (localSessionId) return { localSessionId, serverSessionId };
+        }
+        return null;
+      })
+      .filter((entry): entry is AttachedOpenCodeSession => !!entry);
   } catch { return []; }
 }
 
-function saveAttachedIds(ids: Set<string>): void {
+function saveAttachedSessions(sessions: AttachedOpenCodeSession[]): void {
   try {
-    writeFileSync(getAttachedStoragePath(), JSON.stringify([...ids]), 'utf-8');
+    const byLocal = new Map<string, AttachedOpenCodeSession>();
+    for (const s of sessions) {
+      byLocal.set(s.localSessionId, s);
+    }
+    writeFileSync(getAttachedStoragePath(), JSON.stringify([...byLocal.values()]), 'utf-8');
   } catch {}
 }
 
@@ -75,9 +101,13 @@ export class OpenCodeSessionManager {
     this._stopped = false;
     this._reconnectDelay = INITIAL_RECONNECT_DELAY;
 
-    // Restore previously attached opencode session IDs from disk
-    for (const id of loadAttachedIds()) {
-      this.bridge.addOpenCodeAttachedSession(id);
+    // Restore previously attached opencode session IDs from disk.
+    for (const session of loadAttachedSessions()) {
+      this.bridge.addOpenCodeAttachedSession(session.localSessionId);
+      if (session.serverSessionId) {
+        this.opencodeSessions.add(session.serverSessionId);
+        this.opencodeSessionToRelayId.set(session.localSessionId, session.serverSessionId);
+      }
     }
 
     await this.connectSSE();
@@ -100,10 +130,17 @@ export class OpenCodeSessionManager {
     this.deliveredMessageParts.clear();
   }
 
-  async attachSession(localSessionId: string, title?: string): Promise<string> {
+  async attachSession(localSessionId: string, title?: string, knownServerSessionId?: string): Promise<string> {
+    if (knownServerSessionId) {
+      this.opencodeSessions.add(knownServerSessionId);
+      this.opencodeSessionToRelayId.set(localSessionId, knownServerSessionId);
+    }
     const serverSessionId = await this.ensureRelaySession(localSessionId);
     this.bridge.addOpenCodeAttachedSession(localSessionId);
-    saveAttachedIds(new Set([...loadAttachedIds(), localSessionId]));
+    saveAttachedSessions([
+      ...loadAttachedSessions().filter(s => s.localSessionId !== localSessionId),
+      { localSessionId, serverSessionId },
+    ]);
     if (title) {
       this.bridge.relay.sendRaw(JSON.stringify({
         type: 'update_session_label',
@@ -114,10 +151,14 @@ export class OpenCodeSessionManager {
     return serverSessionId;
   }
 
-  async detachSession(localSessionId: string): Promise<boolean> {
+  async detachSession(localSessionId: string, knownServerSessionId?: string): Promise<boolean> {
+    if (knownServerSessionId) {
+      this.opencodeSessions.add(knownServerSessionId);
+      this.opencodeSessionToRelayId.set(localSessionId, knownServerSessionId);
+    }
     const serverSessionId = await this.ensureRelaySession(localSessionId);
     this.bridge.removeOpenCodeAttachedSession(localSessionId);
-    saveAttachedIds(new Set(loadAttachedIds().filter(id => id !== localSessionId)));
+    saveAttachedSessions(loadAttachedSessions().filter(s => s.localSessionId !== localSessionId));
     this.bridge.relay.sendRaw(JSON.stringify({
       type: 'deactivate_session',
       payload: { sessionId: serverSessionId },
@@ -277,33 +318,11 @@ export class OpenCodeSessionManager {
     });
   }
 
-  // ── Session list sync ───────────────────────────────────
-
-  /** Fetch existing OpenCode sessions and pre-register them with the relay. */
-  private async syncSessions(): Promise<void> {
-    try {
-      const resp = await fetch(`${this.opencodeBaseUrl}/session`);
-      if (!resp.ok) return;
-      const sessions = await resp.json() as Array<{ id: string }>;
-      if (!Array.isArray(sessions)) return;
-
-      // Register each existing session with relay
-      for (const s of sessions) {
-        if (s.id && !this.opencodeSessionToRelayId.has(s.id)) {
-          this.ensureRelaySession(s.id).catch(() => {});
-        }
-      }
-    } catch {
-      // best-effort
-    }
-  }
-
   // ── Event dispatch ──────────────────────────────────────
 
   private async handleSSEEvent(event: { type: string; properties: Record<string, unknown> }): Promise<void> {
     switch (event.type) {
       case 'server.connected':
-        await this.syncSessions();
         return;
       case 'permission.updated':
         return this.onPermissionUpdated(event.properties);
@@ -381,9 +400,7 @@ export class OpenCodeSessionManager {
     const sessionID = info.id as string;
     if (!sessionID) return;
 
-    if (type === 'session.created') {
-      this.ensureRelaySession(sessionID).catch(() => {});
-    } else if (type === 'session.deleted') {
+    if (type === 'session.deleted') {
       const serverSessionId = this.opencodeSessionToRelayId.get(sessionID);
       if (serverSessionId) {
         this.opencodeSessions.delete(serverSessionId);

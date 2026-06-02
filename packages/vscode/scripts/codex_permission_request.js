@@ -54,6 +54,10 @@ process.stdin.on('end', async () => {
     diag('bridge response: status=' + res.status + ' ' + res.statusText);
     if (!res.ok) { diag('bridge returned non-OK, exiting 0'); process.exit(0); }
     var result = await res.json();
+    if (result && result.bypass) {
+      diag('bridge requested bypass: ' + (result.reason || ''));
+      process.exit(0);
+    }
     var dec = result.hookSpecificOutput?.decision || result.decision || {};
     diag('bridge decision behavior=' + dec.behavior + ' msg=' + (dec.message || ''));
     console.log(JSON.stringify({

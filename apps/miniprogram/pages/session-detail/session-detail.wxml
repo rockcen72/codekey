@@ -39,7 +39,7 @@
       <view wx:else class="msg-row left">
         <view class="chat-stack agent-stack" id="msg-{{item.id}}">
           <text class="sender-name">{{item.senderName || 'agent'}}</text>
-          <view class="event-card accent-{{item.accent}}">
+          <view class="event-card accent-{{item.accent}} agent-{{item.agentClass}}">
             <view class="event-head">
               <view class="event-head-left">
                 <view class="event-glyph glyph-{{item.accent}}"></view>

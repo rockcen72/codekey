@@ -361,6 +361,27 @@ function handleRequest(req: IncomingMessage, res: ServerResponse, bridge: Approv
 
       try {
         const input = JSON.parse(body);
+        const codexSessionId = input.session_id || 'unknown';
+        const toolName = input.tool_name || 'unknown';
+        const toolInput = input.tool_input || {};
+        const cmd = toolInput.command || toolInput.description || JSON.stringify(toolInput);
+
+        // Step 1: Resolve Codex local session id → relay serverSessionId.
+        // If VS Code has a CodexResumeManager and this session is not resumed,
+        // CodeKey should not handle the hook. Returning bypass lets the hook
+        // script exit without output so Codex shows its own default approval UI.
+        let serverSessionId: string | null = null;
+        if (codexResumeManager) {
+          const active = codexResumeManager.getActiveSessions();
+          const found = active.find(a => a.localSession.sessionId === codexSessionId);
+          if (found) serverSessionId = found.serverSessionId;
+          if (!serverSessionId) {
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ ok: true, bypass: true, reason: 'codex_session_not_resumed' }));
+            return;
+          }
+        }
+
         dedupKey = codexHookDedupKey(input);
         const existing = dedupKey ? pendingCodexHookRequests?.get(dedupKey) : undefined;
         if (existing) {
@@ -374,19 +395,6 @@ function handleRequest(req: IncomingMessage, res: ServerResponse, bridge: Approv
             resolveDedup = resolve;
           });
           pendingCodexHookRequests.set(dedupKey, currentDedupPromise);
-        }
-
-        const codexSessionId = input.session_id || 'unknown';
-        const toolName = input.tool_name || 'unknown';
-        const toolInput = input.tool_input || {};
-        const cmd = toolInput.command || toolInput.description || JSON.stringify(toolInput);
-
-        // Step 1: Resolve Codex local session id → relay serverSessionId
-        let serverSessionId: string | null = null;
-        if (codexResumeManager) {
-          const active = codexResumeManager.getActiveSessions();
-          const found = active.find(a => a.localSession.sessionId === codexSessionId);
-          if (found) serverSessionId = found.serverSessionId;
         }
 
         // Step 2: Register on relay if not already active
@@ -568,10 +576,14 @@ function handleRequest(req: IncomingMessage, res: ServerResponse, bridge: Approv
     req.on('data', (chunk) => { body += chunk; });
     req.on('end', () => {
       try {
-        const { sessionId, title } = JSON.parse(body);
+        const { sessionId, title, serverSessionId } = JSON.parse(body);
         if (!sessionId) { res.writeHead(400); res.end('{}'); return; }
         const attach = opencodeManager
-          ? opencodeManager.attachSession(sessionId, typeof title === 'string' ? title : undefined)
+          ? opencodeManager.attachSession(
+              sessionId,
+              typeof title === 'string' ? title : undefined,
+              typeof serverSessionId === 'string' ? serverSessionId : undefined,
+            )
           : bridge.ensureSession(sessionId, undefined, 'opencode', { agentType: 'opencode', runtime: 'opencode' }).then((serverSessionId) => {
               bridge.addOpenCodeAttachedSession(sessionId);
               if (title && typeof title === 'string') {
@@ -604,10 +616,10 @@ function handleRequest(req: IncomingMessage, res: ServerResponse, bridge: Approv
     req.on('data', (chunk) => { body += chunk; });
     req.on('end', () => {
       try {
-        const { sessionId } = JSON.parse(body);
+        const { sessionId, serverSessionId } = JSON.parse(body);
         if (!sessionId) { res.writeHead(400); res.end('{}'); return; }
         const detach = opencodeManager
-          ? opencodeManager.detachSession(sessionId)
+          ? opencodeManager.detachSession(sessionId, typeof serverSessionId === 'string' ? serverSessionId : undefined)
           : bridge.ensureSession(sessionId, undefined, 'opencode', { agentType: 'opencode', runtime: 'opencode' }).then((serverSessionId) => {
               bridge.removeOpenCodeAttachedSession(sessionId);
               bridge.relay.sendRaw(JSON.stringify({ type: 'deactivate_session', payload: { sessionId: serverSessionId } }));

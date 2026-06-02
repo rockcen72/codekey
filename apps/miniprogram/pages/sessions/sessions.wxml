@@ -52,7 +52,7 @@
         <view class="session-card {{item.hasPending ? 'has-pending' : ''}} {{item.connected ? 'connected' : ''}}"
               data-id="{{item.id}}"
               bindtap="openSession">
-          <view class="conn-bar {{item.connected ? 'online' : 'offline'}} {{item.connected && item.agent_type === 'codex' ? 'codex' : ''}}"></view>
+          <view class="conn-bar {{item.connected ? 'online' : 'offline'}} agent-{{item.agentClass}}"></view>
           <view class="card-body">
             <view class="card-top">
               <view class="card-title-row">

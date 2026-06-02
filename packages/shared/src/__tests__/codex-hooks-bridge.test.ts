@@ -215,6 +215,145 @@ describe('CodexHooksBridge', () => {
       }
     });
 
+    it('local approval-response releases codex hook before relay event_ack', async () => {
+      const { relay, bridge } = createHookBridge();
+      const { close, port } = await startBridgeServer(bridge, 0);
+      try {
+        const respPromise = fetch(`http://127.0.0.1:${port}/v1/codex-hooks/permission-request`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            session_id: 'desktop-client-event-session',
+            tool_name: 'Bash',
+            tool_input: { command: 'echo approved-before-ack' },
+            cwd: '/test',
+          }),
+        });
+
+        const evtMsg = await waitForMessage(
+          relay,
+          m => (m as Record<string, unknown>).type === 'event'
+            && ((m as any).payload?.eventType === 'approval_required'),
+        );
+        const evtPayload = (evtMsg as any).payload as Record<string, unknown>;
+        const clientEventId = evtPayload.clientEventId as string;
+
+        const localResp = await fetch(`http://127.0.0.1:${port}/v1/approval-response`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            sessionId: evtPayload.sessionId,
+            eventId: clientEventId,
+            clientEventId,
+            decision: 'approve',
+            message: '',
+          }),
+        });
+        expect(localResp.status).toBe(200);
+
+        const resp = await respPromise;
+        const data = await resp.json() as Record<string, unknown>;
+        const hso = data.hookSpecificOutput as Record<string, unknown> | undefined;
+        const decision = hso?.decision as Record<string, unknown> | undefined;
+
+        expect(decision?.behavior).toBe('allow');
+      } finally {
+        await close();
+      }
+    });
+
+    it('phone approval by serverEventId also releases the codex hook request', async () => {
+      const { relay, bridge } = createHookBridge();
+      const { close, port } = await startBridgeServer(bridge, 0);
+      try {
+        const respPromise = fetch(`http://127.0.0.1:${port}/v1/codex-hooks/permission-request`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            session_id: 'server-event-session',
+            tool_name: 'Bash',
+            tool_input: { command: 'echo approved-by-server-event' },
+            cwd: '/test',
+          }),
+        });
+
+        const evtMsg = await waitForMessage(
+          relay,
+          m => (m as Record<string, unknown>).type === 'event'
+            && ((m as any).payload?.eventType === 'approval_required'),
+        );
+        const clientEventId = (evtMsg as any).payload.clientEventId as string;
+        relay.emit('event_ack', {
+          clientEventId,
+          serverEventId: 'server-event-from-phone',
+        });
+        relay.emit('approval_forward', {
+          eventId: 'server-event-from-phone',
+          decision: 'approve',
+        });
+
+        const resp = await respPromise;
+        const data = await resp.json() as Record<string, unknown>;
+        const hso = data.hookSpecificOutput as Record<string, unknown> | undefined;
+        const decision = hso?.decision as Record<string, unknown> | undefined;
+
+        expect(decision?.behavior).toBe('allow');
+      } finally {
+        await close();
+      }
+    });
+
+    it('deduplicates concurrent identical permission requests', async () => {
+      const { relay, bridge } = createHookBridge();
+      const { close, port } = await startBridgeServer(bridge, 0);
+      try {
+        const body = JSON.stringify({
+          session_id: 'duplicate-session',
+          turn_id: 'turn-duplicate',
+          tool_name: 'Bash',
+          tool_input: { command: 'echo duplicate' },
+          cwd: '/test',
+        });
+
+        const first = fetch(`http://127.0.0.1:${port}/v1/codex-hooks/permission-request`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body,
+        });
+        const second = fetch(`http://127.0.0.1:${port}/v1/codex-hooks/permission-request`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body,
+        });
+
+        const evtMsg = await waitForMessage(
+          relay,
+          m => (m as Record<string, unknown>).type === 'event'
+            && ((m as any).payload?.eventType === 'approval_required'),
+        );
+        await new Promise(r => setTimeout(r, 50));
+
+        const approvalEvents = relay.sent
+          .map(s => JSON.parse(s))
+          .filter(m => m.type === 'event' && m.payload?.eventType === 'approval_required');
+        expect(approvalEvents.length).toBe(1);
+
+        const clientEventId = (evtMsg as any).payload.clientEventId as string;
+        relay.simulateApproval(clientEventId, 'approve');
+
+        const responses = await Promise.all([first, second]);
+        const decisions = await Promise.all(responses.map(async (resp) => {
+          const data = await resp.json() as Record<string, unknown>;
+          const hso = data.hookSpecificOutput as Record<string, unknown> | undefined;
+          return (hso?.decision as Record<string, unknown> | undefined)?.behavior;
+        }));
+
+        expect(decisions).toEqual(['allow', 'allow']);
+      } finally {
+        await close();
+      }
+    });
+
     it('registration + phone deny → deny', async () => {
       const { relay, bridge } = createHookBridge();
       const { close, port } = await startBridgeServer(bridge, 0);
@@ -311,6 +450,40 @@ describe('CodexHooksBridge', () => {
         const hso = data.hookSpecificOutput as Record<string, unknown> | undefined;
         const decision = hso?.decision as Record<string, unknown> | undefined;
         expect(decision?.behavior).toBe('allow');
+      } finally {
+        await close();
+      }
+    });
+
+    it('bypasses CodeKey when codex session is not resumed', async () => {
+      const { relay, bridge } = createHookBridge();
+      const mockManager = {
+        getActiveSessions: () => [],
+        getResumedLocalIds: () => [],
+      };
+
+      const { close, port } = await startBridgeServer(
+        bridge, 0, 'cli', undefined, undefined, undefined, mockManager as any,
+      );
+      try {
+        const resp = await fetch(`http://127.0.0.1:${port}/v1/codex-hooks/permission-request`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            session_id: 'not-resumed-session',
+            tool_name: 'Bash',
+            tool_input: { command: 'echo local-default-ui' },
+          }),
+        });
+        const data = await resp.json() as Record<string, unknown>;
+
+        expect(resp.status).toBe(200);
+        expect(data.bypass).toBe(true);
+        expect(data.reason).toBe('codex_session_not_resumed');
+
+        const sentMsgs = relay.sent.map((s) => JSON.parse(s));
+        expect(sentMsgs.find((m) => m.type === 'register_session')).toBeUndefined();
+        expect(sentMsgs.find((m) => m.type === 'event')).toBeUndefined();
       } finally {
         await close();
       }

@@ -1,6 +1,8 @@
 import { createApi } from '../../services/api';
 import { saveAuth, getServerUrl } from '../../services/storage';
 
+const app = getApp<any>();
+
 Page({
   data: {
     code: '',
@@ -20,6 +22,8 @@ Page({
       const api = createApi(getServerUrl());
       const result = await api.confirmCode(code);
       saveAuth(result.clientToken, result.deviceId);
+      app.destroyWs();
+      app.initWs();
       this.setData({ status: 'success' });
       setTimeout(() => {
         wx.redirectTo({ url: '/pages/sessions/sessions' });

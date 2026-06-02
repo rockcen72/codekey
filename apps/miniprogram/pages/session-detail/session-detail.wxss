@@ -167,6 +167,20 @@
   background: #fdfaf4;
 }
 
+.event-card.accent-pending.agent-claude {
+  border-left-color: #ea580c;
+}
+
+.event-card.accent-pending.agent-codex {
+  border-left-color: #22c55e;
+  background: #f9fcf9;
+}
+
+.event-card.accent-pending.agent-opencode {
+  border-left-color: #8b5cf6;
+  background: #fbfaff;
+}
+
 .event-card.accent-approved,
 .event-card.accent-complete {
   border-left-color: var(--ck-success);
@@ -209,6 +223,18 @@
 .glyph-pending {
   background: var(--ck-warning);
   border-radius: 50%;
+}
+
+.agent-claude .glyph-pending {
+  background: #ea580c;
+}
+
+.agent-codex .glyph-pending {
+  background: #22c55e;
+}
+
+.agent-opencode .glyph-pending {
+  background: #8b5cf6;
 }
 
 .glyph-approved,

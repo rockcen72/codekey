@@ -279,6 +279,74 @@ describeDb('Core loop simulation', () => {
     pcWs.close();
   }, TEST_TIMEOUT);
 
+  it('does not consume approval when desktop bridge is offline', async () => {
+    const secret = randomBytes(32).toString('hex');
+    const hash = createHash('sha256').update(secret).digest('hex');
+    const pairRes = await fetch(`${baseUrl}/api/v1/devices/pair`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ deviceSecretHash: hash, deviceName: 'test-offline-approval' }),
+    });
+    const pair = await pairRes.json() as { code: string; deviceId: string };
+    cleanupIds.push(pair.deviceId);
+
+    const pws = await connectWs(`${wsBaseUrl}/ws?device_id=${pair.deviceId}&device_secret=${secret}`);
+    await waitForMessage(pws, 'pairing_ready');
+
+    const deviceTokenPromise = waitForMessage(pws, 'device_token', 20000);
+    const confirmRes = await fetch(`${baseUrl}/api/v1/devices/confirm`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ code: pair.code }),
+    });
+    const confirm = await confirmRes.json() as { clientToken: string };
+    const tokenMsg = await deviceTokenPromise;
+    pws.close();
+
+    const pcWs = await connectWs(`${wsBaseUrl}/ws?device_id=${pair.deviceId}&token=${tokenMsg.deviceToken}`);
+    pcWs.send(JSON.stringify({ type: 'register_session', payload: { agentType: 'claude-code', claudeSessionId: 'offline-test-session' } }));
+    const reg = await waitForMessage(pcWs, 'session_registered');
+
+    pcWs.send(JSON.stringify({
+      type: 'event',
+      payload: {
+        clientEventId: 'offline-evt-1',
+        sessionId: reg.sessionId,
+        agent: 'claude-code',
+        eventType: 'approval_required',
+        data: { type: 'approval_required', command: 'echo offline', risk: 'low', summary: 'Offline bridge test' },
+        ts: new Date().toISOString(),
+      },
+    }));
+    const ack = await waitForMessage(pcWs, 'event_ack');
+    pcWs.close();
+
+    const mpWs = await connectWs(`${wsBaseUrl}/ws?device_id=${pair.deviceId}&token=${confirm.clientToken}`);
+    mpWs.send(JSON.stringify({
+      type: 'approval_response',
+      payload: { sessionId: reg.sessionId, eventId: ack.serverEventId, decision: 'approve', message: '' },
+    }));
+
+    const mpError = await waitForMessage(mpWs, 'error');
+    expect(mpError.code).toBe('BRIDGE_NOT_CONNECTED');
+
+    const evtRes = await fetch(`${baseUrl}/api/v1/sessions/${reg.sessionId}/events`, {
+      headers: { Authorization: `Bearer ${tokenMsg.deviceToken}` },
+    });
+    const events = await evtRes.json() as any[];
+    const evt = events.find((e: any) => e.id === ack.serverEventId);
+    expect(evt.pending).toBe(true);
+    expect(evt.decision).toBe(null);
+
+    const auditRes = await fetch(`${baseUrl}/api/v1/audit`, {
+      headers: { Authorization: `Bearer ${tokenMsg.deviceToken}` },
+    });
+    const approvals = await auditRes.json() as any[];
+    expect(approvals.find((a: any) => a.event_id === ack.serverEventId)).toBeUndefined();
+
+    mpWs.close();
+  }, TEST_TIMEOUT);
+
   it('only one concurrent approval wins for same event', async () => {
     // Bootstrap device
     const secret = randomBytes(32).toString('hex');

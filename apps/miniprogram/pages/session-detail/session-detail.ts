@@ -29,6 +29,7 @@ interface ChatMessage {
   canApprove: boolean;
   eventId: string;
   accent: 'pending' | 'approved' | 'denied' | 'complete' | 'neutral';
+  agentClass: 'claude' | 'codex' | 'opencode' | 'unknown';
   kindBadge: string;
   toolName?: string;
   senderName?: string;
@@ -125,6 +126,18 @@ Page({
     this._onDeviceOnlineBound = () => {
       this.setData({ deviceOnline: true });
     };
+    this._onWsErrorBound = (payload: any) => {
+      const code = payload?.code || '';
+      const title = code === 'BRIDGE_NOT_CONNECTED'
+        ? '桌面端未连接'
+        : code === 'RISK_TOO_HIGH'
+          ? '风险过高，不能批准'
+          : code === 'ALREADY_RESPONDED'
+            ? '审批已处理'
+            : '操作失败';
+      wx.showToast({ title, icon: 'none', duration: 2000 });
+      this.fetchDetail();
+    };
 
     this._onSessionLabelUpdatedBound = (payload: any) => {
       if (payload.sessionId === this.data.sessionId) {
@@ -139,6 +152,7 @@ Page({
     app.onWsEvent('ws_disconnected', this._onWsDisconnectedBound);
     app.onWsEvent('device_offline', this._onDeviceOfflineBound);
     app.onWsEvent('device_online', this._onDeviceOnlineBound);
+    app.onWsEvent('error', this._onWsErrorBound);
     app.onWsEvent('session_label_updated', this._onSessionLabelUpdatedBound);
 
     // Sync current connection state
@@ -154,6 +168,7 @@ Page({
     if (this._onWsDisconnectedBound) app.offWsEvent('ws_disconnected', this._onWsDisconnectedBound);
     if (this._onDeviceOfflineBound) app.offWsEvent('device_offline', this._onDeviceOfflineBound);
     if (this._onDeviceOnlineBound) app.offWsEvent('device_online', this._onDeviceOnlineBound);
+    if (this._onWsErrorBound) app.offWsEvent('error', this._onWsErrorBound);
     if (this._onSessionLabelUpdatedBound) app.offWsEvent('session_label_updated', this._onSessionLabelUpdatedBound);
     this._onEventPushBound = undefined;
     this._onSessionDeactivatedBound = undefined;
@@ -161,6 +176,7 @@ Page({
     this._onWsDisconnectedBound = undefined;
     this._onDeviceOfflineBound = undefined;
     this._onDeviceOnlineBound = undefined;
+    this._onWsErrorBound = undefined;
     this._onSessionLabelUpdatedBound = undefined;
   },
 
@@ -222,7 +238,9 @@ Page({
       const command = e.data?.command || '';
       const summary = e.data?.summary || e.data?.command || '';
       const summaryShort = e.data?.summaryShort || '';
-      const agentName = this.chatAgentName(e.data?.agent || e.data?.agentType);
+      const eventAgentType = e.data?.agent || e.data?.agentType || e.agent || e.agent_type;
+      const agentName = this.chatAgentName(eventAgentType);
+      const agentClass = agentColorClass(eventAgentType || this.data.session?.agent_type || this.data.session?.metadata?.runtime);
 
       // Dedup consecutive user_prompt events with identical content
       if (e.type === 'user_prompt') {
@@ -250,6 +268,7 @@ Page({
           canApprove: false,
           eventId: e.id,
           accent: 'neutral',
+          agentClass: 'unknown',
           kindBadge: '',
           senderName: '',
         });
@@ -275,6 +294,7 @@ Page({
           canApprove: false,
           eventId: e.id,
           accent: 'complete',
+          agentClass,
           kindBadge: 'DONE',
           senderName: agentName,
         });
@@ -310,6 +330,7 @@ Page({
           canApprove,
           eventId: e.id,
           accent,
+          agentClass,
           kindBadge: e.pending ? 'REQUEST' : (this.getDecisionText(e.decision) || 'DONE'),
           toolName: e.data?.toolName || '',
           senderName: agentName,
@@ -335,6 +356,7 @@ Page({
             canApprove: false,
             eventId: e.id,
             accent: 'neutral',
+            agentClass: 'unknown',
             kindBadge: '',
             senderName: '你',
           });
@@ -366,6 +388,7 @@ Page({
           canApprove: false,
           eventId: e.id,
           accent: 'neutral',
+          agentClass: 'unknown',
           kindBadge: '',
           senderName: '你',
         });
@@ -495,6 +518,7 @@ Page({
       canApprove: false,
       eventId,
       accent: 'neutral',
+      agentClass: 'unknown',
       kindBadge: '',
       senderName: '你',
     });
@@ -557,6 +581,7 @@ Page({
         canApprove: false,
         eventId,
         accent: 'neutral',
+        agentClass: 'unknown',
         kindBadge: '',
         senderName: '你',
       });
@@ -616,6 +641,7 @@ Page({
       canApprove: false,
       eventId,
       accent: 'neutral',
+      agentClass: 'unknown',
       kindBadge: '',
       senderName: '你',
     });
@@ -707,4 +733,11 @@ function agentDisplayName(agentType?: string): string {
 function agentChatName(agentType?: string): string {
   if (!agentType) return 'agent';
   return AGENT_CHAT_NAMES[agentType] || agentType;
+}
+
+function agentColorClass(agentType?: string): 'claude' | 'codex' | 'opencode' | 'unknown' {
+  if (agentType === 'codex') return 'codex';
+  if (agentType === 'opencode') return 'opencode';
+  if (agentType === 'claude-code' || agentType === 'claude-code-hook') return 'claude';
+  return 'unknown';
 }

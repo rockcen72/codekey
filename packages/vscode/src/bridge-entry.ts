@@ -126,7 +126,7 @@ async function main(): Promise<void> {
     });
   };
 
-  const { close, port } = await startBridgeServer(bridge, 3001, 'vscode-bundled', shutdownCb, startedAt, { deviceId, relayUrl, deviceToken: token, deviceSecret: loadDeviceSecret(), adminDir, openCodeUrl: ocUrl }, codexResumeManager);
+  const { close, port } = await startBridgeServer(bridge, 3001, 'vscode-bundled', shutdownCb, startedAt, { deviceId, relayUrl, deviceToken: token, deviceSecret: loadDeviceSecret(), adminDir, openCodeUrl: ocUrl }, codexResumeManager, opencodeManager ?? undefined);
   console.error(`[bridge-entry] HTTP server listening on port ${port}`);
 
   // Periodic reconcile: sync in-memory attached-session state with the relay

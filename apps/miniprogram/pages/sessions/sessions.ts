@@ -1,4 +1,4 @@
-import { createApi, Session } from '../../services/api';
+import { type Session, createApi } from '../../services/api';
 import { getServerUrl } from '../../services/storage';
 
 const app = getApp<any>();
@@ -10,11 +10,13 @@ const AGENT_LABELS: Record<string, string> = {
   'opencode': 'OpenCode',
 };
 
+type DisplaySession = Session & { displayRuntime?: string; agentClass?: 'claude' | 'codex' | 'opencode' | 'unknown' };
+
 function agentLabel(agentType: string | undefined): string {
   return agentType ? (AGENT_LABELS[agentType] || agentType) : 'Agent';
 }
 
-function collectAgentTabs(sessions: any[]): { key: string; label: string }[] {
+function collectAgentTabs(sessions: DisplaySession[]): { key: string; label: string }[] {
   const seen = new Set<string>();
   const tabs: { key: string; label: string }[] = [{ key: 'all', label: 'All' }];
   for (const s of sessions) {
@@ -25,6 +27,12 @@ function collectAgentTabs(sessions: any[]): { key: string; label: string }[] {
     }
   }
   return tabs;
+}
+
+function filterSessionsByTab(sessions: DisplaySession[], tab: string): DisplaySession[] {
+  return tab === 'all'
+    ? sessions
+    : sessions.filter(s => (s.agent_type || s.displayRuntime || 'unknown') === tab);
 }
 
 Page({
@@ -110,21 +118,27 @@ Page({
     this._applyFilter(sessions);
   },
 
-  _applyFilter(sessions: any[]) {
+  _applyFilter(sessions: DisplaySession[]) {
     const tab = this.data.activeTab;
-    const filtered = tab === 'all' ? sessions : sessions.filter(s => (s.agent_type || s.displayRuntime || 'unknown') === tab);
+    const filtered = filterSessionsByTab(sessions, tab);
     this.setData({ filteredSessions: filtered });
   },
 
   onTabTap(e: any) {
-    this.setData({ activeTab: e.currentTarget.dataset.key });
-    this._applyFilter(this.data.sessions);
+    const activeTab = e.currentTarget.dataset.key;
+    this.setData({
+      activeTab,
+      filteredSessions: filterSessionsByTab(this.data.sessions, activeTab),
+    });
   },
 
   async fetchSessions() {
+    const requestSeq = (this._sessionFetchSeq || 0) + 1;
+    this._sessionFetchSeq = requestSeq;
     try {
       const api = createApi(getServerUrl());
       const raw = await api.getSessions();
+      if (requestSeq !== this._sessionFetchSeq) return;
       const deviceOnline = this.data.deviceOnline;
       const sessions = raw.map((s: Session) => {
         const pendingCount = Number((s as any).pendingCount || (s as any).pending_count || 0);
@@ -134,6 +148,7 @@ Page({
           displaySubtitle: sessionSubtitle(s),
           displayRuntime: s.metadata?.runtime || s.agent_type || 'agent',
           displayAgentLabel: agentLabel(s.agent_type),
+          agentClass: agentColorClass(s.agent_type || s.metadata?.runtime),
           displayClaudeId: (s.metadata?.claudeSessionId || '').slice(0, 8),
           displayTime: this.formatTime(s.last_active_at),
           pendingCount,
@@ -142,16 +157,19 @@ Page({
           swiped: false,
         };
       });
+      const agentTabs = collectAgentTabs(sessions);
+      const activeTab = agentTabs.some((tab) => tab.key === this.data.activeTab) ? this.data.activeTab : 'all';
 
       this.setData({
         sessions,
-        filteredSessions: sessions,
-        agentTabs: collectAgentTabs(sessions),
+        filteredSessions: filterSessionsByTab(sessions, activeTab),
+        agentTabs,
+        activeTab,
         pendingTotal: sessions.reduce((sum, item) => sum + item.pendingCount, 0),
         activeTotal: sessions.filter((item) => item.connected).length,
       });
-      this._applyFilter(sessions);
     } catch (err) {
+      if (requestSeq !== this._sessionFetchSeq) return;
       console.error('[sessions] fetch error:', err);
     }
   },
@@ -203,4 +221,11 @@ function sessionTitle(session: Session): string {
 }
 function sessionSubtitle(session: Session): string {
   return session.metadata?.cwd || session.metadata?.runtime || session.agent_type;
+}
+
+function agentColorClass(agentType?: string): 'claude' | 'codex' | 'opencode' | 'unknown' {
+  if (agentType === 'codex') return 'codex';
+  if (agentType === 'opencode') return 'opencode';
+  if (agentType === 'claude-code' || agentType === 'claude-code-hook') return 'claude';
+  return 'unknown';
 }

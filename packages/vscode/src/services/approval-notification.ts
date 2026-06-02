@@ -8,6 +8,7 @@ interface BridgePendingApproval {
   id: string;
   serverEventId?: string;
   serverSessionId: string;
+  claudeSessionId: string;
   agentType: string;
   command: string;
   summary: string;
@@ -49,11 +50,19 @@ export class ApprovalNotificationService implements vscode.Disposable {
 
     for (const approval of approvals) {
       if (approval.agentType !== 'codex') continue;
-      if (!approval.serverEventId) continue;
+      if (await this._isCodexResumed(approval.claudeSessionId)) continue;
       if (this._visible.has(approval.id) || this._handled.has(approval.id)) continue;
       this._visible.add(approval.id);
       this._showApproval(approval).catch((err) => log(`approval notification failed: ${err?.stack || err}`));
     }
+  }
+
+  private async _isCodexResumed(localSessionId: string): Promise<boolean> {
+    if (!localSessionId) return false;
+    const resp = await fetch(`${this._bridgeService.getBridgeUrl()}/v1/codex-sessions/resumed-ids`).catch(() => null);
+    if (!resp?.ok) return false;
+    const body = await resp.json().catch(() => ({})) as { ids?: string[] };
+    return (body.ids ?? []).includes(localSessionId);
   }
 
   private async _showApproval(approval: BridgePendingApproval): Promise<void> {
@@ -73,18 +82,18 @@ export class ApprovalNotificationService implements vscode.Disposable {
       return;
     }
     if (choice !== 'Approve' && choice !== 'Deny') {
-      this._visible.delete(approval.id);
       return;
     }
 
     this._handled.add(approval.id);
     const decision = choice === 'Approve' ? 'approve' : 'deny';
+    const eventId = approval.serverEventId || approval.id;
     const resp = await fetch(`${this._bridgeService.getBridgeUrl()}/v1/approval-response`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         sessionId: approval.serverSessionId,
-        eventId: approval.serverEventId,
+        eventId,
         clientEventId: approval.id,
         decision,
         message: '',
