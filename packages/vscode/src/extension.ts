@@ -6,6 +6,8 @@ import { pairDevice } from './commands/pair.js';
 import { startCodexSession } from './commands/start-codex.js';
 import { findExistingClaudeTerminal, classifyTerminal, startClaudeCode, ensureCcSessionSync } from './commands/start-claude.js';
 import { enableHook } from './commands/enable-hook.js';
+import { installCodexHook, isCodexHookInstalled, isCodexExtensionActive } from './hook/codex-installer.js';
+import { installOpenCodePlugin, isOpenCodePluginInstalled, isOpenCodeCliInstalled } from './hook/opencode-installer.js';
 import { SidebarProvider } from './webview/sidebar-provider.js';
 import { CommandRelayService } from './services/command-relay.js';
 import { ApprovalNotificationService } from './services/approval-notification.js';
@@ -65,6 +67,19 @@ export function activate(context: vscode.ExtensionContext) {
 
   // Bridge + hook + label sync (session created on Attach, not auto)
   ensureCcSessionSync(context);
+
+  // Auto-install Codex hooks (if Codex extension/detected and hooks not yet installed)
+  if (isCodexExtensionActive() && !isCodexHookInstalled()) {
+    const scriptsDir = vscode.Uri.joinPath(context.extensionUri, 'scripts').fsPath;
+    installCodexHook(scriptsDir);
+    log('Codex hooks auto-installed');
+  }
+
+  // Auto-install OpenCode telemetry plugin (if opencode CLI detected and plugin not yet installed)
+  if (isOpenCodeCliInstalled() && !isOpenCodePluginInstalled()) {
+    installOpenCodePlugin();
+    log('OpenCode telemetry plugin auto-installed');
+  }
 
   // Dynamic binding: detect new Claude Code terminals opened after activation
   context.subscriptions.push(

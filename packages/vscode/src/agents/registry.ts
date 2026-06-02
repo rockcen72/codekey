@@ -3,7 +3,7 @@ export interface AgentDef {
   name: string;
   description: string;
   status: 'available' | 'coming_soon';
-  mode: 'hook' | 'pty' | 'none';
+  mode: 'hook' | 'pty' | 'sdk' | 'none';
   sessionAgentTypes: string[];
 }
 
@@ -28,10 +28,10 @@ export function getAgents(): AgentDef[] {
     {
       id: 'opencode',
       name: 'OpenCode',
-      description: 'planned adapter',
-      status: 'coming_soon',
-      mode: 'none',
-      sessionAgentTypes: [],
+      description: 'plugin + sdk — remote approval',
+      status: 'available',
+      mode: 'sdk',
+      sessionAgentTypes: ['opencode'],
     },
   ];
 }

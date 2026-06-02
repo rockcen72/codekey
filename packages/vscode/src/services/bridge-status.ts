@@ -10,12 +10,15 @@ import { log, debug } from '../log.js';
 
 export type BridgeStatus = 'running' | 'stopped' | 'error' | 'connecting';
 export type HookConfigStatus = 'enabled' | 'installed_only' | 'not_found';
+export type AgentIntegrationStatus = 'enabled' | 'not_found';
 
 export interface BridgeState {
   bridge: BridgeStatus;
   relay: 'connected' | 'connecting' | 'disconnected';
   hookInstalled: boolean;
   hookConfig: HookConfigStatus;
+  codexHook: AgentIntegrationStatus;
+  opencodePlugin: AgentIntegrationStatus;
   mpOnline: boolean;
 }
 
@@ -34,7 +37,7 @@ export class BridgeStatusService {
   private _process: ChildProcess | null = null;
   private _myPid: number | null = null;
   private _port = 3001;
-  private _state: BridgeState = { bridge: 'stopped', relay: 'disconnected', hookInstalled: false, hookConfig: 'not_found', mpOnline: false };
+  private _state: BridgeState = { bridge: 'stopped', relay: 'disconnected', hookInstalled: false, hookConfig: 'not_found', codexHook: 'not_found', opencodePlugin: 'not_found', mpOnline: false };
   private _listeners = new Set<Listener>();
   private _healthTimer?: ReturnType<typeof setInterval>;
   private _startedAt = 0;
@@ -60,7 +63,9 @@ export class BridgeStatusService {
   get state(): BridgeState {
     const hookInstalled = isHookInstalledSafe();
     const hookConfig = readHookConfigStatus();
-    return { ...this._state, hookInstalled, hookConfig };
+    const codexHook: AgentIntegrationStatus = isCodexHookInstalledSafe() ? 'enabled' : 'not_found';
+    const opencodePlugin: AgentIntegrationStatus = isOpenCodePluginInstalledSafe() ? 'enabled' : 'not_found';
+    return { ...this._state, hookInstalled, hookConfig, codexHook, opencodePlugin };
   }
 
   /** Port the bridge is listening on (default 3001, auto-assigned if occupied). */
@@ -353,6 +358,26 @@ function isHookInstalledSafe(): boolean {
     if (!fs.existsSync(dir)) return false;
     const files = ['claude_code_permission_request.js', 'claude_code_stop.js', 'claude_code_notification.js'];
     return files.some(f => fs.existsSync(path.join(dir, f)));
+  } catch { return false; }
+}
+
+function isCodexHookInstalledSafe(): boolean {
+  try {
+    // Check if script file exists (the canonical indicator)
+    const scriptPath = path.join(os.homedir(), '.codex', 'codex_permission_request.js');
+    if (fs.existsSync(scriptPath)) return true;
+    // Fallback: check hooks.json config
+    const hooksPath = path.join(os.homedir(), '.codex', 'hooks.json');
+    if (!fs.existsSync(hooksPath)) return false;
+    const raw = fs.readFileSync(hooksPath, 'utf-8');
+    return raw.includes('codex_permission_request.js');
+  } catch { return false; }
+}
+
+function isOpenCodePluginInstalledSafe(): boolean {
+  try {
+    const pluginPath = path.join(os.homedir(), '.config', 'opencode', 'plugins', 'codekey-telemetry.js');
+    return fs.existsSync(pluginPath);
   } catch { return false; }
 }
 

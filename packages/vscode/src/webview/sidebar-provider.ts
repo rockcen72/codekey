@@ -9,6 +9,7 @@ import { getAgents } from '../agents/registry.js';
 import { BridgeStatusService } from '../services/bridge-status.js';
 import { SessionStore } from '../services/session-store.js';
 
+
 import {
   renderSidebar,
   renderDeviceContent,
@@ -336,19 +337,25 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     const codexAvailable = this._checkCodexAvailable();
 
     // Determine runtime agent status
+    const agentIntegrations: Record<string, 'enabled' | 'not_found'> = {
+      'claude-code': bridge.hookConfig !== 'not_found' ? 'enabled' : 'not_found',
+      'codex': bridge.codexHook,
+      'opencode': bridge.opencodePlugin,
+    };
     const agents = getAgents().map(a => {
-      if (a.status !== 'available') return { ...a, runtimeStatus: 'unavailable' as const };
+      if (a.status !== 'available') return { ...a, runtimeStatus: 'unavailable' as const, integrationStatus: 'not_found' as const };
       const agentSessions = sessions.filter(s => a.sessionAgentTypes.includes(s.agent_type));
+      const defaultInteg = agentIntegrations[a.id] || 'not_found';
       if (agentSessions.length === 0) {
         // No relay session — but for Claude Code, count it active if a local
         // terminal / official extension panel is open.
         if (a.id === 'claude-code' && ccLocallyRunning) {
-          return { ...a, runtimeStatus: 'active' as const, statusLine: 'Running locally' };
+          return { ...a, runtimeStatus: 'active' as const, integrationStatus: defaultInteg, statusLine: 'Running locally' };
         }
         if (a.id === 'codex' && codexAvailable) {
-          return { ...a, runtimeStatus: 'active' as const };
+          return { ...a, runtimeStatus: 'active' as const, integrationStatus: defaultInteg };
         }
-        return { ...a, runtimeStatus: 'idle' as const };
+        return { ...a, runtimeStatus: 'idle' as const, integrationStatus: defaultInteg };
       }
 
       // Collect all events, sort newest first, skip resolved and stale approvals
@@ -384,7 +391,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         statusLine = 'Idle';
       }
 
-      return { ...a, runtimeStatus: 'active' as const, statusLine, lastMessage };
+      return { ...a, runtimeStatus: 'active' as const, statusLine, lastMessage, integrationStatus: agentIntegrations[a.id] || 'not_found' };
     });
 
     // Check bridge capabilities + attached sessions
@@ -581,9 +588,6 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     switch (msg.action) {
       case 'pair':
         vscode.commands.executeCommand('codekey.pairDevice');
-        break;
-      case 'hook-settings':
-        vscode.commands.executeCommand('codekey.enableHook');
         break;
       case 'relayReconnect':
         fetch(`${this._bridgeService.getBridgeUrl()}/v1/relay-reconnect`, { method: 'POST' }).catch(() => {});

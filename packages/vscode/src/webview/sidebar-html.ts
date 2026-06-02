@@ -33,6 +33,7 @@ export interface SidebarState {
     runtimeStatus: 'active' | 'idle' | 'unavailable';
     statusLine?: string;
     lastMessage?: string;
+    integrationStatus?: 'enabled' | 'not_found';
   })[];
   pendingApprovals: PendingApprovalItem[];
   sessions: SessionResponse[];
@@ -115,17 +116,8 @@ export function renderDeviceContent(state: SidebarState): string {
   const mpOnline = state.deviceStatus === 'paired' && state.bridge.mpOnline;
   const mpDot = dot(mpOnline ? 'green' : 'gray');
   const mpLabel = mpOnline ? 'Phone Online' : hasPhone ? 'Phone Offline' : '';
-  const hookOk = state.bridge.hookConfig === 'enabled';
-  const hookDot = dot(hookOk ? 'green' : 'orange');
-  const hookLabel = hookOk ? 'Enabled' : 'Installed';
-  return `<div class="row"><span class="row-label">Server</span><span class="row-val">${serverDot}${serverLabel}</span></div>
-    <div class="row"><span class="row-label">Hook</span><span class="row-val">${hookDot}${hookLabel}</span></div>
-    ${mpLabel ? `<div class="row"><span class="row-label">Phone</span><span class="row-val">${mpDot}${mpLabel}</span></div>` : ''}
-    ${mpLabel ? '<div class="section-divider"></div>' : ''}
-    <div class="btn-group">
-      <button class="btn btn-sm" data-action="hook-settings">Hook</button>
-      <button class="btn btn-ghost btn-sm" data-action="relayReconnect">Reconnect</button>
-    </div>`;
+  return `<div class="row" style="cursor:pointer" data-action="relayReconnect" title="Click to reconnect"><span class="row-label">Server</span><span class="row-val">${serverDot}${serverLabel}</span></div>
+    ${mpLabel ? `<div class="row"><span class="row-label">Phone</span><span class="row-val">${mpDot}${mpLabel}</span></div>` : ''}`;
 }
 
 function renderDevice(state: SidebarState): string {
@@ -159,13 +151,20 @@ export function renderAgentsContent(state: SidebarState): string {
     const isActive = a.runtimeStatus === 'active';
     const activeColor = AGENT_DOT_CLASS[a.id] || 'green';
     const dotClass = isActive ? `${activeColor} pulse` : 'gray';
+    const integOk = a.integrationStatus === 'enabled';
+    let modeLabel = '';
+    if (!integOk) {
+      modeLabel = 'Reinstall CodeKey';
+    } else {
+      const modeMap: Record<string, string> = { 'claude-code': 'Hook', 'codex': 'Hook', 'opencode': 'Plugin + SDK' };
+      modeLabel = modeMap[a.id] || 'Ready';
+    }
     return `<div class="agent-item">
       <div class="agent-title-row">
         <span class="agent-name">${h(a.name)}</span>
         ${dot(dotClass)}
       </div>
-      <div class="agent-desc">${h(a.description)}</div>
-      ${a.statusLine ? `<div class="agent-status">${a.statusLine}</div>` : ''}
+      <div class="agent-mode">${modeLabel}</div>
       ${a.lastMessage ? `<div class="agent-last">${h(a.lastMessage)}</div>` : ''}
     </div>`;
   }).join('');
@@ -1206,8 +1205,7 @@ body{
 .agent-item:first-child{padding-top:0}
 .agent-title-row{display:flex;align-items:center;gap:6px}
 .agent-name{font-size:12px;font-weight:500;color:var(--vscode-editor-foreground);flex:1}
-.agent-desc{font-size:10px;color:var(--vscode-descriptionForeground,#50506e);margin-top:1px}
-.agent-status{font-size:10px;color:var(--vscode-textLink-foreground,#8888a8);margin-top:2px}
+.agent-mode{font-size:10px;color:var(--vscode-descriptionForeground,#50506e);margin-top:2px}
 .agent-last{
   font-size:10px;color:var(--vscode-descriptionForeground,#50506e);margin-top:2px;
   overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
