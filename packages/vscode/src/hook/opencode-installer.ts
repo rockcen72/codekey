@@ -10,42 +10,20 @@ function getPluginPath(): string {
   return path.join(OPENCODE_PLUGIN_DIR, PLUGIN_NAME);
 }
 
-function generatePluginCode(bridgeUrl: string): string {
-  return `// CodeKey telemetry plugin for OpenCode
-// Installed by CodeKey VS Code extension — copies events to CodeKey bridge
-// for sidebar status display. Does NOT participate in approval decisions.
-const BRIDGE_URL = ${JSON.stringify(bridgeUrl)};
-
-export const CodeKeyTelemetry = async () => {
-  return {
-    event: async ({ event }) => {
-      try {
-        await fetch(BRIDGE_URL + '/v1/opencode/telemetry', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            type: event.type,
-            properties: event.properties,
-            ts: new Date().toISOString(),
-          }),
-        });
-      } catch { /* bridge not available */ }
-    },
-  };
-};
-`;
-}
-
 export function isOpenCodePluginInstalled(): boolean {
   return fs.existsSync(getPluginPath());
 }
 
-export function installOpenCodePlugin(): void {
+/** Copy the bundled plugin file to the OpenCode plugins directory. */
+export function installOpenCodePlugin(extensionScriptsDir: string): void {
   const pluginPath = getPluginPath();
-  if (fs.existsSync(pluginPath)) return; // already installed
+  if (fs.existsSync(pluginPath)) return;
+
+  const srcPath = path.join(extensionScriptsDir, PLUGIN_NAME);
+  if (!fs.existsSync(srcPath)) return;
 
   fs.mkdirSync(OPENCODE_PLUGIN_DIR, { recursive: true });
-  fs.writeFileSync(pluginPath, generatePluginCode('http://127.0.0.1:3001'), 'utf-8');
+  fs.copyFileSync(srcPath, pluginPath);
 }
 
 export function uninstallOpenCodePlugin(): void {
@@ -64,7 +42,6 @@ export function isOpenCodeCliInstalled(): boolean {
     });
     return !!result.trim();
   } catch {
-    // Also check common install paths
     const commonPaths = [
       path.join(os.homedir(), '.opencode', 'bin', 'opencode'),
       path.join(os.homedir(), 'AppData', 'Roaming', 'npm', 'opencode'),

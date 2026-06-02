@@ -20,7 +20,8 @@
     "onCommand:codekey.startClaudeCode",
     "onCommand:codekey.startCodexSession",
     "onCommand:codekey.enableHook",
-    "onCommand:codekey.focusSidebar"
+    "onCommand:codekey.focusSidebar",
+    "onCommand:codekey.enableOpenCode"
   ],
   "main": "./dist/extension.cjs",
   "contributes": {
@@ -66,6 +67,10 @@
       {
         "command": "codekey.focusSidebar",
         "title": "CodeKey: Focus Sidebar"
+      },
+      {
+        "command": "codekey.enableOpenCode",
+        "title": "CodeKey: Enable OpenCode Integration"
       }
     ],
     "configuration": {

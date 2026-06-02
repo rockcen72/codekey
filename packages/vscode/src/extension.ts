@@ -7,7 +7,7 @@ import { startCodexSession } from './commands/start-codex.js';
 import { findExistingClaudeTerminal, classifyTerminal, startClaudeCode, ensureCcSessionSync } from './commands/start-claude.js';
 import { enableHook } from './commands/enable-hook.js';
 import { installCodexHook, isCodexHookInstalled, isCodexExtensionActive } from './hook/codex-installer.js';
-import { isOpenCodePluginInstalled } from './hook/opencode-installer.js';
+import { installOpenCodePlugin, isOpenCodePluginInstalled, isOpenCodeCliInstalled, uninstallOpenCodePlugin } from './hook/opencode-installer.js';
 import { SidebarProvider } from './webview/sidebar-provider.js';
 import { CommandRelayService } from './services/command-relay.js';
 import { ApprovalNotificationService } from './services/approval-notification.js';
@@ -143,6 +143,21 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand('codekey.toggleDebugLog', () => {
       setVerbose(!isVerbose());
       vscode.window.showInformationMessage(`CodeKey debug logging: ${isVerbose() ? 'ON' : 'OFF'}`);
+    }),
+    vscode.commands.registerCommand('codekey.enableOpenCode', () => {
+      log('cmd: enableOpenCode');
+      if (!isOpenCodeCliInstalled()) {
+        vscode.window.showErrorMessage('OpenCode CLI not found. Install opencode first: npm install -g opencode');
+        return;
+      }
+      if (isOpenCodePluginInstalled()) {
+        vscode.window.showInformationMessage('OpenCode integration already enabled');
+        return;
+      }
+      const scriptsDir = vscode.Uri.joinPath(context.extensionUri, 'scripts').fsPath;
+      installOpenCodePlugin(scriptsDir);
+      vscode.window.showInformationMessage('OpenCode integration enabled — restart OpenCode to load the telemetry plugin');
+      log('OpenCode telemetry plugin installed');
     }),
   );
 
