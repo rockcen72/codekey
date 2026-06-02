@@ -558,6 +558,19 @@ export class ApprovalBridge {
     }
   }
 
+  /** Push all cached window labels to relay. Called after reconciliation. */
+  flushPendingLabels(): void {
+    for (const [windowId, label] of this.windowLabels) {
+      const sessionId = this.windowSessions.get(windowId);
+      if (sessionId) {
+        this.relay.sendRaw(JSON.stringify({
+          type: 'update_session_label',
+          payload: { sessionId, label },
+        }));
+      }
+    }
+  }
+
   /** Get the most recently registered active windowId, or undefined. */
   _getActiveWindowId(): string | undefined {
     let best: string | undefined;

@@ -85,8 +85,7 @@ function startTabLabelSync(windowId: string): vscode.Disposable {
 
   const syncLabel = () => {
     const lbl = getClaudeTabLabel();
-    if (lbl && lbl !== 'Claude Code' && lbl !== lastLabel) {
-      lastLabel = lbl;
+    if (lbl && lbl !== 'Claude Code') {
       debug(`syncLabel: sending label "${lbl}" for window ${windowId}`);
       setSessionLabel(lbl);
     }
