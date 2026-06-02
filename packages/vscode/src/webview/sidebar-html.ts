@@ -4,6 +4,8 @@ import type { BridgeState } from '../services/bridge-status.js';
 
 export interface PendingApprovalItem {
   id: string;
+  serverEventId?: string;
+  agentType?: string;
   command: string;
   summary: string;
   toolName: string;
@@ -51,6 +53,10 @@ export interface ClaudeSessionItem {
   updatedAt: string;
   attached?: boolean;
   canDetach?: boolean;
+  /** Set to true for Codex resume sessions */
+  isCodexSession?: boolean;
+  /** True when this Codex session has been resumed */
+  resumed?: boolean;
 }
 
 // ── Helpers ──────────────────────────────────────────────
@@ -105,9 +111,10 @@ export function renderDeviceContent(state: SidebarState): string {
   const serverConnected = state.bridge.relay === 'connected';
   const serverDot = dot(serverConnected ? 'green' : 'red');
   const serverLabel = serverConnected ? 'Connected' : 'Disconnected';
+  const hasPhone = state.deviceStatus !== 'unpaired';
   const mpOnline = state.deviceStatus === 'paired' && state.bridge.mpOnline;
   const mpDot = dot(mpOnline ? 'green' : 'gray');
-  const mpLabel = mpOnline ? 'Phone Online' : state.deviceStatus === 'paired' ? 'Phone Offline' : '';
+  const mpLabel = mpOnline ? 'Phone Online' : hasPhone ? 'Phone Offline' : '';
   const hookOk = state.bridge.hookConfig === 'enabled';
   const hookDot = dot(hookOk ? 'green' : 'orange');
   const hookLabel = hookOk ? 'Enabled' : 'Installed';
@@ -239,20 +246,44 @@ export function renderSessionsContent(state: SidebarState): string {
     + agents.map(a => `<span class="agent-tab" data-tab="${h(a.id)}">${h(a.name)}</span>`).join('')
     + '</div>';
   if (items.length === 0) return tabsHtml + '<div class="empty-state">No local sessions</div>';
+  const maxVisible = 5;
+  const itemsHtml = items.map((s, i) => {
+    const hidden = i >= maxVisible;
+    const extraCls = hidden ? ' session-hidden' : '';
+    return _sessionItemHtml(s, extraCls);
+  }).join('');
+  const overflow = items.length - maxVisible;
+  const moreHtml = overflow > 0
+    ? '<div class="session-show-more" id="sessionShowMore"><button class="btn-ghost btn-sm" data-action="toggleShowMoreSessions">+ ' + overflow + ' more session' + (overflow > 1 ? 's' : '') + '</button></div>'
+    : '';
   return tabsHtml
     + '<div class="session-scroll">'
-    + items.map(s => {
+    + itemsHtml
+    + moreHtml
+    + '</div>';
+}
+
+/** Show a friendly title instead of raw ID-like strings. */
+function _displayTitle(s: any): string {
+  var t = s.title || s.sessionId || '';
+  // UUID-prefix fallback from resolver (sessionId.slice(0,8) = exactly 8 hex chars)
+  if (/^[0-9a-f]{8}/.test(t) && t.length >= 8) return 'Codex session';
+  return t;
+}
+
+function _sessionItemHtml(s: any, extraCls: string): string {
       const isAttached = s.attached;
       const sid = s.sessionId;
       const btnCls = isAttached ? 'btn-attached' : '';
       const btnText = isAttached ? 'Detach' : 'Attach';
-      return `<div class="session-item" data-sid="${h(sid)}" data-agent="claude-code">
+      const agent = s.isCodexSession ? 'codex' : 'claude-code';
+      return `<div class="session-item${extraCls}" data-sid="${h(sid)}" data-agent="${agent}">
         <div class="session-title-row">
-          <span class="session-title-click" data-action="togglePreview" data-session-id="${h(sid)}">
+          <span class="session-title-click" data-action="togglePreview" data-session-id="${h(sid)}" data-iscodex="${s.isCodexSession ? 'true' : ''}">
             <span class="chevron">&#9654;</span>
-            <span class="session-title" title="${h(s.title || sid.slice(0, 8))}">${h(truncate(s.title || sid.slice(0, 8), 60))}</span>
+            <span class="session-title" title="${h(_displayTitle(s))}">${h(truncate(_displayTitle(s), 60))}</span>
           </span>
-          <button class="btn btn-sm ${btnCls}" data-action="toggleAttachClaudeSession" data-session-id="${h(sid)}" data-attached="${isAttached ? 'true' : 'false'}">${btnText}</button>
+          <button class="btn btn-sm ${btnCls}" data-action="toggleAttachClaudeSession" data-session-id="${h(sid)}" data-attached="${isAttached ? 'true' : 'false'}"${s.isCodexSession ? ' data-iscodex="true"' : ''}>${btnText}</button>
         </div>
         <div class="session-meta">
           <span class="session-cwd">${h(truncate(s.cwd || '', 50))}</span>
@@ -260,8 +291,6 @@ export function renderSessionsContent(state: SidebarState): string {
         </div>
         <div class="preview" id="preview-${h(sid)}"></div>
       </div>`;
-    }).join('')
-    + '</div>';
 }
 
 function renderClaudeSessions(state: SidebarState): string {
@@ -758,14 +787,18 @@ ${renderSubscribe()}
       var el = document.getElementById('preview-' + sid);
       if (!el) return;
       if (e.data.entries && e.data.entries.length > 0) {
+        var agentLabel = e.data.agentLabel || 'Claude';
         var html = '';
         // Show newest first (entries are chronological, iterate backwards)
         for (var i = e.data.entries.length - 1; i >= 0; i--) {
           var entry = e.data.entries[i];
-          var side = entry.role === 'user' ? 'left' : 'right';
-          var label = entry.role === 'user' ? 'You' : 'Claude';
+          var isUser = entry.role === 'user';
+          // User on right (WeChat style), agent on left
+          var side = isUser ? 'right' : 'left';
+          var label = isUser ? 'You' : agentLabel;
+          var labelCls = isUser ? 'pv-label pv-label-right' : 'pv-label';
           html += '<div class="pv-msg">'
-            + '<div class="pv-label">' + label + '</div>'
+            + '<div class="' + labelCls + '">' + label + '</div>'
             + '<div class="pv-bubble pv-bubble-' + side + '">' + entry.text + '</div>'
             + '</div>';
         }
@@ -822,8 +855,17 @@ ${renderSubscribe()}
 
   // Apply current agent filter to session-items (data-agent attribute)
   function applyAgentFilter() {
-    var active = document.querySelector('.agent-tab.active');
-    var key = active ? active.dataset.tab : 'all';
+    // Read stored filter (survives HTML swaps that reset the DOM class)
+    var stored = 'all';
+    try { stored = sessionStorage.getItem('agentFilter') || 'all'; } catch(e) {}
+    var key = stored;
+    // Sync the tab bar's active class to match the stored filter
+    var tabs = document.querySelector('#agentTabs');
+    if (tabs) {
+      tabs.querySelectorAll('.agent-tab').forEach(function(t) {
+        t.classList.toggle('active', t.dataset.tab === key);
+      });
+    }
     var items = document.querySelectorAll('.session-item');
     var shown = 0;
     items.forEach(function(it) {
@@ -930,10 +972,10 @@ ${renderSubscribe()}
         el.style.display = 'none';
         if (chevron) chevron.textContent = '▶';
       } else {
-        el.innerHTML = '<div class="preview-empty">Loading...</div>';
         el.style.display = 'block';
         if (chevron) chevron.textContent = '▼';
-        api.postMessage({ action: 'getSessionPreview', sessionId: sid });
+        el.innerHTML = '<div class="preview-empty">Loading...</div>';
+        api.postMessage({ action: 'getSessionPreview', sessionId: sid, iscodex: target.dataset.iscodex === 'true' });
       }
       return;
     }
@@ -943,6 +985,24 @@ ${renderSubscribe()}
         action: action,
         sessionId: target.dataset.sessionId,
         attached: target.dataset.attached === 'true',
+        iscodex: target.dataset.iscodex === 'true',
+      });
+      return;
+    }
+
+    if (action === 'toggleShowMoreSessions') {
+      var hidden = document.querySelectorAll('.session-hidden');
+      var moreBtn = document.getElementById('sessionShowMore');
+      hidden.forEach(function(h) { h.classList.remove('session-hidden'); });
+      if (moreBtn) moreBtn.remove();
+      return;
+    }
+
+    // Codex resume/stop — pass sessionId from data-session-id
+    if (action === 'resumeCodexSession' || action === 'stopCodexResume') {
+      api.postMessage({
+        action: action,
+        sessionId: target.dataset.sessionId,
       });
       return;
     }
@@ -1087,6 +1147,8 @@ body{
 }
 .badge.green{background:rgba(46,204,113,.12);color:#2ecc71}
 .badge.orange{background:rgba(245,166,35,.12);color:#f5a623}
+.session-hidden{display:none !important}
+.session-show-more{padding:4px 12px;text-align:center}
 
 /* ═══════════════════════════════════════════════
    ROW
@@ -1211,11 +1273,12 @@ body{
    ═══════════════════════════════════════════════ */
 .preview{padding:6px 0 2px 18px;display:none}
 .preview-empty{font-size:10px;color:var(--vscode-descriptionForeground,#50506e);text-align:center;padding:8px 0}
-.pv-msg{margin-bottom:6px}
+.pv-msg{margin-bottom:6px;overflow:hidden}
 .pv-label{font-size:9px;font-weight:600;color:var(--vscode-descriptionForeground,#50506e);margin-bottom:1px}
-.pv-bubble{padding:5px 8px;border-radius:5px;font-size:10px;line-height:1.4;white-space:pre-wrap;word-break:break-word}
-.pv-bubble-left{background:var(--vscode-textBlockQuote-background,#181824);color:var(--vscode-descriptionForeground,#8888a8)}
-.pv-bubble-right{background:rgba(0,255,224,.08);color:var(--vscode-textLink-foreground,#00ffe0)}
+.pv-label-right{text-align:right}
+.pv-bubble{display:inline-block;padding:5px 8px;border-radius:5px;font-size:10px;line-height:1.4;white-space:pre-wrap;word-break:break-word;max-width:80%}
+.pv-bubble-left{background:var(--vscode-textBlockQuote-background,#181824);color:var(--vscode-descriptionForeground,#8888a8);float:left}
+.pv-bubble-right{background:rgba(0,255,224,.08);color:var(--vscode-textLink-foreground,#00ffe0);float:right}
 
 /* ═══════════════════════════════════════════════
    MISC

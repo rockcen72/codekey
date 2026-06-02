@@ -1,5 +1,5 @@
 import { EventEmitter } from 'node:events';
-import { existsSync, statSync, readFileSync, watch, type FSWatcher } from 'node:fs';
+import { existsSync, statSync, watch, openSync, readSync, closeSync, type FSWatcher } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
 
@@ -24,6 +24,7 @@ export interface TranscriptEvent {
   toolStatus?: 'pending' | 'in_progress' | 'completed' | 'failed';
   usage?: { inputTokens: number; outputTokens: number; totalTokens: number };
   timestamp?: string;
+  sourceKind?: 'response_item' | 'event_msg';
   raw: Record<string, unknown>;
 }
 
@@ -43,7 +44,8 @@ export class CodexTranscriptWatcher extends EventEmitter {
   private watcher: FSWatcher | null = null;
   private pollTimer: ReturnType<typeof setInterval> | null = null;
   private lastSize = 0;
-  private lastProcessedLine = 0;
+  /** Carry-over from a previous read when the chunk ended mid-line. */
+  private pendingLine = '';
   private running = false;
 
   constructor(options: CodexTranscriptWatcherOptions) {
@@ -71,8 +73,8 @@ export class CodexTranscriptWatcher extends EventEmitter {
 
       // Process existing content on first start
       if (this.lastSize > 0) {
-        const content = readFileSync(this.transcriptPath, 'utf8');
-        if (content.trim()) {
+        const content = this.readNewContent(0, this.lastSize);
+        if (content) {
           this.processNewContent(content);
         }
       }
@@ -140,8 +142,8 @@ export class CodexTranscriptWatcher extends EventEmitter {
 
       // On first check, process entire file if it has content
       if (this.lastSize === 0 && currentSize > 0) {
-        const content = readFileSync(this.transcriptPath, 'utf8');
-        if (content.trim()) {
+        const content = this.readNewContent(0, currentSize);
+        if (content) {
           this.processNewContent(content);
         }
         this.lastSize = currentSize;
@@ -167,13 +169,25 @@ export class CodexTranscriptWatcher extends EventEmitter {
    */
   private readNewContent(startByte: number, endByte: number): string {
     try {
-      const content = readFileSync(this.transcriptPath, 'utf8');
-      // Simple approach: read from start and process only new lines
-      // For large files, this could be optimized with fs.read with offset
-      const lines = content.split('\n');
-      const newLines = lines.slice(this.lastProcessedLine);
-      this.lastProcessedLine = lines.length;
-      return newLines.join('\n');
+      const fd = openSync(this.transcriptPath, 'r');
+      try {
+        const len = endByte - startByte;
+        if (len <= 0) return '';
+        const buf = Buffer.alloc(len);
+        const bytesRead = readSync(fd, buf, 0, len, startByte);
+        const text = buf.toString('utf8', 0, bytesRead);
+        // If the chunk ends mid-line, save the pending part
+        const lastNl = text.lastIndexOf('\n');
+        if (lastNl === -1) {
+          this.pendingLine += text;
+          return '';
+        }
+        const complete = this.pendingLine + text.slice(0, lastNl);
+        this.pendingLine = text.slice(lastNl + 1);
+        return complete;
+      } finally {
+        closeSync(fd);
+      }
     } catch {
       return '';
     }
@@ -204,6 +218,20 @@ export class CodexTranscriptWatcher extends EventEmitter {
   private normalizeEvent(obj: Record<string, unknown>): TranscriptEvent | null {
     const type = obj.type as string;
     const timestamp = obj.timestamp as string;
+    const payload = (obj.payload && typeof obj.payload === 'object')
+      ? (obj.payload as Record<string, unknown>)
+      : null;
+
+    // --- Real Codex transcript shapes ---
+    if (type === 'response_item' && payload) {
+      return this._normalizeResponseItem(payload, timestamp, obj);
+    }
+    if (type === 'event_msg' && payload) {
+      return this._normalizeEventMsg(payload, timestamp, obj);
+    }
+    if (type === 'session_meta' || type === 'turn_context') {
+      return { type: 'unknown', timestamp, raw: obj };
+    }
 
     // User message
     if (type === 'user' && obj.message) {
@@ -292,15 +320,6 @@ export class CodexTranscriptWatcher extends EventEmitter {
       };
     }
 
-    // Session metadata - emit but don't normalize
-    if (type === 'session_meta') {
-      return {
-        type: 'unknown',
-        timestamp,
-        raw: obj,
-      };
-    }
-
     // Unknown event type
     return {
       type: 'unknown',
@@ -312,6 +331,60 @@ export class CodexTranscriptWatcher extends EventEmitter {
   /**
    * Extract text content from various content formats.
    */
+  private _normalizeResponseItem(payload: Record<string, unknown>, ts: string | undefined, raw: Record<string, unknown>): TranscriptEvent | null {
+    const itemType = payload.type as string | undefined;
+    if (itemType === 'message') {
+      const role = payload.role as string | undefined;
+      if (role === 'user' || role === 'assistant') {
+        return { type: 'message', role, content: this._extract(payload.content), timestamp: ts, sourceKind: 'response_item', raw };
+      }
+    }
+    if (itemType === 'reasoning') {
+      const summary = payload.summary;
+      let text = ''; if (Array.isArray(summary)) text = this._extract(summary);
+      if (!text && payload.content) text = this._extract(payload.content);
+      return { type: 'reasoning', content: text, timestamp: ts, sourceKind: 'response_item', raw };
+    }
+    if (itemType === 'function_call') {
+      const name = (payload.name as string) || 'unknown';
+      const namespace = payload.namespace ? `${payload.namespace}/` : '';
+      return { type: 'tool', toolName: `${namespace}${name}`, toolStatus: 'in_progress', content: typeof payload.arguments === 'string' ? payload.arguments : JSON.stringify(payload.arguments ?? {}), timestamp: ts, sourceKind: 'response_item', raw };
+    }
+    if (itemType === 'function_call_output') {
+      return { type: 'tool', toolName: (payload.name as string) || 'unknown', toolStatus: 'completed', content: this._extract(payload.output ?? payload.content), timestamp: ts, sourceKind: 'response_item', raw };
+    }
+    return { type: 'unknown', timestamp: ts, raw };
+  }
+
+  private _normalizeEventMsg(payload: Record<string, unknown>, ts: string | undefined, raw: Record<string, unknown>): TranscriptEvent | null {
+    const evt = payload.type as string | undefined;
+    if (evt === 'user_message') {
+      return { type: 'message', role: 'user', content: (payload.message as string) || '', timestamp: ts, sourceKind: 'event_msg', raw };
+    }
+    if (evt === 'agent_message') {
+      return { type: 'message', role: 'assistant', content: (payload.message as string) || '', timestamp: ts, sourceKind: 'event_msg', raw };
+    }
+    if (evt === 'agent_reasoning' || evt === 'agent_reasoning_delta') {
+      return { type: 'reasoning', content: (payload.text as string) || (payload.message as string) || '', timestamp: ts, sourceKind: 'event_msg', raw };
+    }
+    if (evt === 'token_count' || evt === 'token_usage') {
+      const info = (payload.info && typeof payload.info === 'object') ? payload.info as Record<string, unknown> : payload;
+      return { type: 'usage', usage: { inputTokens: Number(info.input_tokens ?? 0), outputTokens: Number(info.output_tokens ?? 0), totalTokens: Number(info.total_tokens ?? 0) }, timestamp: ts, sourceKind: 'event_msg', raw };
+    }
+    if (evt === 'error' || evt === 'stream_error') {
+      return { type: 'error', content: (payload.message as string) || (payload.error as string) || 'Codex error', timestamp: ts, raw };
+    }
+    return { type: 'unknown', timestamp: ts, raw };
+  }
+
+  private _extract(content: unknown): string {
+    if (typeof content === 'string') return content;
+    if (Array.isArray(content)) {
+      return content.map(item => { if (typeof item === 'object' && item !== null) { if (item.type === 'text' && item.text) return item.text; if (item.text) return item.text; if (item.input_text) return item.input_text; } return ''; }).filter(Boolean).join(' ');
+    }
+    return '';
+  }
+
   private extractText(content: unknown): string {
     if (typeof content === 'string') return content;
     if (Array.isArray(content)) {

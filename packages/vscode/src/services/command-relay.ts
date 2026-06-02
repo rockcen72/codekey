@@ -143,11 +143,21 @@ export class CommandRelayService {
       const commands = await resp.json() as { id: string; sessionId?: string; claudeSessionId?: string; cwd?: string; text: string }[];
       if (commands.length === 0) return;
 
+      // Fetch resumed Codex session IDs so we can skip their commands
+      let codexSessionIds = new Set<string>();
+      try {
+        const codexResp = await fetch(`${BridgeStatusService.getInstance().getBridgeUrl()}/v1/codex-sessions/resumed-ids`);
+        if (codexResp.ok) {
+          const { ids } = await codexResp.json() as { ids: string[] };
+          codexSessionIds = new Set(ids ?? []);
+        }
+      } catch { /* bridge unreachable, skip filtering */ }
+
       const term = this._findManagedTerminal();
       const claudeBinary = term ? null : this._findClaudeBinary();
       debug('[command-relay] _poll: commands=%d term=%s claudeBinary=%s', commands.length, !!term, !!claudeBinary);
       debug('[command-relay] terminals:', vscode.window.terminals.map(t => ({ name: t.name, exitStatus: t.exitStatus })));
-      const deliverable = commands.filter(c => term || (claudeBinary && c.claudeSessionId));
+      const deliverable = commands.filter(c => term || (claudeBinary && c.claudeSessionId && !codexSessionIds.has(c.claudeSessionId)));
       if (deliverable.length === 0) {
         debug('[command-relay] no deliverable target, command_ids=%s', commands.map(c => c.id).join(','));
         return;

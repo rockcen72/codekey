@@ -7,6 +7,7 @@ vi.mock('node:fs', () => ({
   existsSync: vi.fn(),
   statSync: vi.fn(),
   openSync: vi.fn(),
+  readFileSync: vi.fn(),
   readSync: vi.fn(),
   closeSync: vi.fn(),
   watch: vi.fn(),
@@ -100,6 +101,7 @@ describe('CodexTranscriptWatcher', () => {
     function feed(content: string): void {
       const data = Buffer.from(content, 'utf8');
       vi.mocked(fs.statSync).mockReturnValue({ size: data.length } as any);
+      vi.mocked(fs.readFileSync).mockReturnValue(content);
       vi.mocked(fs.readSync).mockImplementation(((
         _fd: number,
         buffer: Buffer,

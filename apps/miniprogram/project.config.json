@@ -1,7 +1,9 @@
 {
   "description": "CodeKey - AI Agent Remote Control",
   "packOptions": {
-    "ignore": [],
+    "ignore": [
+      {"type": "folder", "value": "assets"}
+    ],
     "include": []
   },
   "setting": {
@@ -10,7 +12,7 @@
     "minified": true,
     "urlCheck": true,
     "scopeDataCheck": false,
-    "es6": false,
+    "es6": true,
     "postcss": false,
     "compileWorklet": false,
     "uglifyFileName": false,

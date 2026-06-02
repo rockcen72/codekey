@@ -8,6 +8,7 @@ import { findExistingClaudeTerminal, classifyTerminal, startClaudeCode, ensureCc
 import { enableHook } from './commands/enable-hook.js';
 import { SidebarProvider } from './webview/sidebar-provider.js';
 import { CommandRelayService } from './services/command-relay.js';
+import { ApprovalNotificationService } from './services/approval-notification.js';
 import { BridgeStatusService } from './services/bridge-status.js';
 import { SessionStore } from './services/session-store.js';
 import { log, setVerbose, isVerbose } from './log.js';
@@ -50,6 +51,10 @@ export function activate(context: vscode.ExtensionContext) {
   const commandRelay = new CommandRelayService();
   commandRelay.start();
   context.subscriptions.push(commandRelay);
+
+  const approvalNotifications = new ApprovalNotificationService();
+  approvalNotifications.start();
+  context.subscriptions.push(approvalNotifications);
 
   // Auto-bind: if VS Code already has a Claude Code terminal, attach to it
   const existingTerm = findExistingClaudeTerminal();

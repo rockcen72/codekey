@@ -14,7 +14,7 @@
 
     <view class="manual-input-area" wx:if="{{showManualInput}}">
       <input class="code-input" placeholder="例如 ABC12345" maxlength="8"
-             value="{{manualCode}}" bindinput="onCodeInput" />
+             model:value="{{manualCode}}" />
       <button class="confirm-btn" bindtap="confirmManualCode">绑定</button>
     </view>
   </view>

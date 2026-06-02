@@ -19,7 +19,7 @@ import {
   type SidebarState,
   type PairingState,
 } from './sidebar-html.js';
-import { loadConversation } from '@codekey/shared/bridge';
+import { loadConversation, loadCodexConversation } from '@codekey/shared/bridge';
 import { log } from '../log.js';
 
 const AGENT_DISPLAY_NAMES: Record<string, string> = {
@@ -34,8 +34,10 @@ const APPROVAL_POLL_MS = 1000;
 
 interface BridgePendingApproval {
   id: string;
+  serverEventId?: string;
   serverSessionId: string;
   claudeSessionId: string;
+  agentType: string;
   command: string;
   summary: string;
   toolName: string;
@@ -138,6 +140,12 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     if (ccExt?.isActive) return true;
 
     return false;
+  }
+
+  /** Check if Codex is available (official VS Code extension). */
+  private _checkCodexAvailable(): boolean {
+    const codexExt = vscode.extensions.getExtension('openai.chatgpt');
+    return codexExt?.isActive === true;
   }
 
   /** Auto-detach a session (called when user closes the CC terminal). */
@@ -289,6 +297,8 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         const session = sessions.find(s => s.id === a.serverSessionId);
         pendingApprovals.push({
           id: a.id,
+          serverEventId: a.serverEventId,
+          agentType: a.agentType,
           command: a.command || '(unknown)',
           summary: a.summary || a.command || '(unknown)',
           toolName: a.toolName || '',
@@ -307,6 +317,8 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
             if (age > STALE_APPROVAL_MS) continue;
             pendingApprovals.push({
               id: e.id,
+              serverEventId: e.id,
+              agentType: session?.agent_type || '',
               command: e.data?.command ?? '(unknown)',
               summary: e.data?.summary ?? e.data?.command ?? '(unknown)',
               toolName: e.data?.toolName ?? '',
@@ -319,8 +331,9 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       }
     }
 
-    // Local-running probes (currently only Claude Code has a local-presence signal)
+    // Local-running probes
     const ccLocallyRunning = this._checkCcRunning();
+    const codexAvailable = this._checkCodexAvailable();
 
     // Determine runtime agent status
     const agents = getAgents().map(a => {
@@ -331,6 +344,9 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         // terminal / official extension panel is open.
         if (a.id === 'claude-code' && ccLocallyRunning) {
           return { ...a, runtimeStatus: 'active' as const, statusLine: 'Running locally' };
+        }
+        if (a.id === 'codex' && codexAvailable) {
+          return { ...a, runtimeStatus: 'active' as const };
         }
         return { ...a, runtimeStatus: 'idle' as const };
       }
@@ -472,6 +488,32 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       }
     } catch { /* bridge unreachable — skip injection */ }
 
+    // ── Codex Resume sessions ───────────────────────────
+    try {
+      const wsPath = vscode.workspace.workspaceFolders?.[0]?.uri?.fsPath || '';
+      const codexResp = await fetch(`${this._bridgeService.getBridgeUrl()}/v1/codex-sessions${wsPath ? `?cwd=${encodeURIComponent(wsPath)}` : ''}`);
+      if (codexResp.ok) {
+        const codexBody = await codexResp.json() as { sessions?: any[] };
+        if (codexBody.sessions) {
+            const existingIds = new Set(mergedClaudeSessions.map(s => s.sessionId));
+            for (const cs of codexBody.sessions) {
+              if (existingIds.has(cs.sessionId)) continue;
+              existingIds.add(cs.sessionId);
+            mergedClaudeSessions.push({
+              sessionId: cs.sessionId,
+              title: cs.title || cs.sessionId.slice(0, 8),
+              cwd: cs.cwd || '',
+              updatedAt: cs.updatedAt || '',
+              attached: attachedSessions.includes(cs.sessionId),
+              canDetach: attachedSessions.includes(cs.sessionId),
+              isCodexSession: true,
+              resumed: attachedSessions.includes(cs.sessionId),
+            });
+          }
+        }
+      }
+    } catch { /* bridge unreachable */ }
+
     const state: SidebarState = {
       deviceStatus,
       phoneName: 'WeChat Mini Program',
@@ -554,10 +596,28 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         this.attachClaudeSession(msg.sessionId).then(() => this._pushState());
         break;
       case 'getSessionPreview':
-        this._handleSessionPreview(msg.sessionId);
+        this._handleSessionPreview(msg.sessionId, msg.iscodex === true);
         break;
       case 'toggleAttachClaudeSession':
-        if (msg.attached) {
+        if (msg.iscodex) {
+          // Codex session: Attach = start resume, Detach = stop resume
+          const url = msg.attached
+            ? `${this._bridgeService.getBridgeUrl()}/v1/codex-sessions/stop`
+            : `${this._bridgeService.getBridgeUrl()}/v1/codex-sessions/resume`;
+          fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ sessionId: msg.sessionId }),
+          }).then(async (res) => {
+            if (!res.ok) {
+              const body = await res.json().catch(() => ({} as Record<string, unknown>));
+              vscode.window.showErrorMessage(`${msg.attached ? 'Stop' : 'Resume'} failed: ${(body as Record<string, unknown>).error || res.statusText}`);
+            }
+            this._pushState();
+          }).catch(() => {
+            vscode.window.showErrorMessage(`${msg.attached ? 'Stop' : 'Resume'} failed: bridge not available`);
+          });
+        } else if (msg.attached) {
           // Already attached — detach from relay (stop pushing to phone).
           // Do NOT remove from SessionStore: the session stays visible in the
           // local list with the button flipped to "Attach". Only the bridge's
@@ -811,13 +871,24 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     this._pushState();
   }
 
-  private async _handleSessionPreview(sessionId: string): Promise<void> {
+  private async _handleSessionPreview(sessionId: string, isCodex = false): Promise<void> {
     try {
-      const entries = loadConversation(sessionId, 5);
+      let entries: { role: string; text: string; timestamp: string; index: number }[] = [];
+
+      if (isCodex) {
+        entries = loadCodexConversation(sessionId, 5).map((e, i) => ({
+          role: e.role, text: e.text, timestamp: e.timestamp || '', index: i,
+        }));
+      } else {
+        // Claude: loadConversation
+        entries = loadConversation(sessionId, 5).map((e, i) => ({ ...e, index: i }));
+      }
+
       this._view?.webview.postMessage({
         type: 'sessionPreview',
         sessionId,
         entries,
+        agentLabel: isCodex ? 'Codex' : 'Claude',
       });
     } catch (err) {
       log(`_handleSessionPreview failed for ${sessionId}: ${err}`);
@@ -826,6 +897,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         sessionId,
         entries: [],
         error: 'Failed to load conversation',
+        agentLabel: isCodex ? 'Codex' : 'Claude',
       });
     }
   }

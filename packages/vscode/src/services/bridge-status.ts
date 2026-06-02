@@ -3,6 +3,7 @@ import * as path from 'node:path';
 import * as os from 'node:os';
 import { spawn, execSync, type ChildProcess } from 'node:child_process';
 import * as vscode from 'vscode';
+import { resolveCodexBinaryForVSCode } from './codex-binary-resolver.js';
 import { loadCredentials } from '../auth/credentials.js';
 import { getHookPath } from '../hook/installer.js';
 import { log, debug } from '../log.js';
@@ -158,7 +159,8 @@ export class BridgeStatusService {
       '--device-id', creds.deviceId,
     ];
 
-    log(`[CodeKey] spawning bundled bridge: ${process.execPath} ${bridgeEntry} --device-id ${creds.deviceId}`);
+    const bridgeCodexPath = resolveCodexBinaryForVSCode(BridgeStatusService._extensionPath);
+		log(`[CodeKey] spawning bundled bridge: ${process.execPath} ${bridgeEntry} --device-id ${creds.deviceId}`);
 
     const proc = spawn(process.execPath, args, {
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -169,6 +171,7 @@ export class BridgeStatusService {
         CODEKEY_DEVICE_TOKEN: creds.deviceToken,
         CODEKEY_RELAY_URL: creds.relayUrl,
         NODE_TLS_REJECT_UNAUTHORIZED: '0',
+        ...(bridgeCodexPath ? { CODEX_BINARY_PATH: bridgeCodexPath } : {}),
       },
     });
 

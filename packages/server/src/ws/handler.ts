@@ -61,6 +61,94 @@ export function wsHandler(sql: postgres.Sql) {
       }
     }
 
+    function handleApprovalResponse(msg: any) {
+      sql`
+        SELECT e.*, s.device_id AS session_device_id
+        FROM events e
+        JOIN sessions s ON e.session_id = s.id
+        WHERE e.id = ${msg.payload.eventId}
+      `.then(([eventRec]: any[]) => {
+        if (!eventRec) {
+          socket.send(JSON.stringify({ type: 'error', code: 'EVENT_NOT_FOUND' }));
+          return;
+        }
+        if (!eventRec.pending) {
+          socket.send(JSON.stringify({ type: 'error', code: 'ALREADY_RESPONDED' }));
+          return;
+        }
+
+        if (eventRec.session_device_id !== deviceId) {
+          socket.send(JSON.stringify({ type: 'error', code: 'ACCESS_DENIED' }));
+          return;
+        }
+
+        const ALLOWED_DECISIONS: Record<string, string[]> = {
+          low: ['approve', 'deny', 'pause', 'reply'],
+          medium: ['approve', 'deny', 'pause', 'reply'],
+          high: ['deny', 'pause', 'reply'],
+          critical: ['deny', 'pause'],
+          unknown: ['deny', 'pause', 'reply'],
+        };
+        const allowed = (ALLOWED_DECISIONS[eventRec.risk_level as string] ?? ['deny', 'pause']);
+        if (!allowed.includes(msg.payload.decision)) {
+          socket.send(JSON.stringify({ type: 'error', code: 'RISK_TOO_HIGH' }));
+          return;
+        }
+
+        sql`
+          UPDATE events SET pending = false, decision = ${msg.payload.decision},
+            responded_at = now() WHERE id = ${msg.payload.eventId} AND pending = true
+          RETURNING *
+        `.then(([claimed]: any[]) => {
+          if (!claimed) {
+            socket.send(JSON.stringify({ type: 'error', code: 'ALREADY_RESPONDED' }));
+            return;
+          }
+
+          sql`
+            INSERT INTO approvals (event_id, session_id, decision, command, risk_level, message)
+            VALUES (${claimed.id}, ${claimed.session_id}, ${msg.payload.decision},
+                    ${claimed.data?.command ?? null}, ${claimed.risk_level},
+                    ${msg.payload.message ?? null})
+          `.then(() => {
+            const pc = pcClients.get(deviceId!);
+            if (pc && pc.socket.readyState === pc.socket.OPEN) {
+              const clientEventId = claimed.data?.clientEventId ?? null;
+              pc.socket.send(JSON.stringify({
+                type: 'approval_forward',
+                payload: {
+                  sessionId: msg.payload.sessionId,
+                  eventId: msg.payload.eventId,
+                  decision: msg.payload.decision,
+                  message: msg.payload.message ?? '',
+                  clientEventId,
+                },
+              }));
+            }
+
+            const mpList = clientClients.get(deviceId!);
+            if (mpList) {
+              for (const mp of mpList) {
+                if (mp.socket.readyState === mp.socket.OPEN) {
+                  mp.socket.send(JSON.stringify({
+                    type: 'event_resolved',
+                    payload: {
+                      sessionId: msg.payload.sessionId,
+                      eventId: msg.payload.eventId,
+                      decision: msg.payload.decision,
+                    },
+                  }));
+                }
+              }
+            }
+          });
+        });
+      }).catch((err) => {
+        console.error('approval error:', err);
+        socket.send(JSON.stringify({ type: 'error', code: 'SERVER_ERROR' }));
+      });
+    }
+
     /** Shared helper: expire pending events, mark session finished, broadcast to all WS clients.
      *  Used by detach_session (mini program), deactivate_session (bridge), and disconnect cleanup.
      *  Returns { ok: true } on success, { ok: false, code } on failure.
@@ -117,6 +205,11 @@ export function wsHandler(sql: postgres.Sql) {
     }
 
     function handleDeviceMessage(msg: any) {
+      if (msg.type === 'approval_response') {
+        handleApprovalResponse(msg);
+        return;
+      }
+
       if (msg.type === 'register_session') {
         const claudeSessionId = msg.payload?.claudeSessionId ?? null;
         const clientRequestId = msg.payload?.clientRequestId ?? null;
@@ -646,75 +739,7 @@ export function wsHandler(sql: postgres.Sql) {
 
     function handleClientMessage(msg: any) {
       if (msg.type === 'approval_response') {
-        sql`
-          SELECT e.*, s.device_id AS session_device_id
-          FROM events e
-          JOIN sessions s ON e.session_id = s.id
-          WHERE e.id = ${msg.payload.eventId}
-        `.then(([eventRec]: any[]) => {
-          if (!eventRec) {
-            socket.send(JSON.stringify({ type: 'error', code: 'EVENT_NOT_FOUND' }));
-            return;
-          }
-          if (!eventRec.pending) {
-            socket.send(JSON.stringify({ type: 'error', code: 'ALREADY_RESPONDED' }));
-            return;
-          }
-
-          if (eventRec.session_device_id !== deviceId) {
-            socket.send(JSON.stringify({ type: 'error', code: 'ACCESS_DENIED' }));
-            return;
-          }
-
-          const ALLOWED_DECISIONS: Record<string, string[]> = {
-            low: ['approve', 'deny', 'pause', 'reply'],
-            medium: ['approve', 'deny', 'pause', 'reply'],
-            high: ['deny', 'pause', 'reply'],
-            critical: ['deny', 'pause'],
-            unknown: ['deny', 'pause', 'reply'],
-          };
-          const allowed = (ALLOWED_DECISIONS[eventRec.risk_level as string] ?? ['deny', 'pause']);
-          if (!allowed.includes(msg.payload.decision)) {
-            socket.send(JSON.stringify({ type: 'error', code: 'RISK_TOO_HIGH' }));
-            return;
-          }
-
-          sql`
-            UPDATE events SET pending = false, decision = ${msg.payload.decision},
-              responded_at = now() WHERE id = ${msg.payload.eventId} AND pending = true
-            RETURNING *
-          `.then(([claimed]: any[]) => {
-            if (!claimed) {
-              socket.send(JSON.stringify({ type: 'error', code: 'ALREADY_RESPONDED' }));
-              return;
-            }
-
-            sql`
-              INSERT INTO approvals (event_id, session_id, decision, command, risk_level, message)
-              VALUES (${claimed.id}, ${claimed.session_id}, ${msg.payload.decision},
-                      ${claimed.data?.command ?? null}, ${claimed.risk_level},
-                      ${msg.payload.message ?? null})
-            `.then(() => {
-              const pc = pcClients.get(deviceId!);
-              if (pc && pc.socket.readyState === pc.socket.OPEN) {
-                const clientEventId = claimed.data?.clientEventId ?? null;
-                pc.socket.send(JSON.stringify({
-                  type: 'approval_forward',
-                  payload: {
-                    sessionId: msg.payload.sessionId,
-                    eventId: msg.payload.eventId,
-                    decision: msg.payload.decision,
-                    message: msg.payload.message ?? '',
-                    clientEventId,
-                  },
-                }));
-              }
-            });
-          });
-        }).catch((err) => {
-          console.error('approval error:', err);
-          socket.send(JSON.stringify({ type: 'error', code: 'SERVER_ERROR' }));
-        });
+        handleApprovalResponse(msg);
         return;
       }
 

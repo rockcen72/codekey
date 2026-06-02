@@ -17,6 +17,19 @@ function createTranscriptFixture(sessionId: string, title: string): string {
   return tmpDir;
 }
 
+function createCodexSessionFixture(sessionId: string): string {
+  const tmpDir = mkdtempSync(join(tmpdir(), 'ck-codex-test-'));
+  const sessionDir = join(tmpDir, 'sessions', '2026', '06', '01');
+  mkdirSync(sessionDir, { recursive: true });
+  writeFileSync(join(sessionDir, `rollout-2026-06-01T00-00-00-${sessionId}.jsonl`),
+    JSON.stringify({
+      type: 'session_meta',
+      payload: { id: sessionId, cwd: 'F:\\Work\\Codekey', source: 'vscode' },
+    }) + '\n',
+  );
+  return tmpDir;
+}
+
 class FakeRelay extends EventEmitter {
   sent: string[] = [];
   attachedSessions: { id: string; claudeSessionId: string | null }[] = [];
@@ -109,6 +122,57 @@ describe('ApprovalBridge canonical sessions', () => {
     ]);
   });
 
+  it('skips command queue for resumed Codex server sessions', async () => {
+    const relay = new FakeRelay();
+    const bridge = new ApprovalBridge(relay as any);
+
+    // Simulate CodexResumeManager registering a resumed session
+    const resumedServerSessionIds = new Set<string>();
+    bridge.registerResumedServerSessionIds(resumedServerSessionIds);
+
+    const serverSessionA = await bridge.ensureSession('claude-a');
+
+    // Mark session A as resumed (Codex-managed)
+    resumedServerSessionIds.add(serverSessionA);
+
+    bridge.listenRelayCommands();
+
+    // Command for resumed session should NOT enter command queue
+    relay.emit('command', { sessionId: serverSessionA, action: 'write_stdin', data: 'codex prompt' });
+    expect(bridge.commandQueue.peek()).toEqual([]);
+
+    // Command for non-resumed session should still enter command queue normally
+    const sessionB = await bridge.ensureSession('claude-b');
+    relay.emit('command', { sessionId: sessionB, action: 'write_stdin', data: 'claude prompt' });
+    expect(bridge.commandQueue.peek()).toEqual([
+      { id: expect.any(String), sessionId: sessionB, claudeSessionId: 'claude-b', text: 'claude prompt' },
+    ]);
+  });
+
+  it('does not queue commands for known Codex local sessions that are not resumed', async () => {
+    const previousCodexHome = process.env.CODEX_HOME;
+    process.env.CODEX_HOME = createCodexSessionFixture('codex-local-a');
+    try {
+      const relay = new FakeRelay();
+      const bridge = new ApprovalBridge(relay as any);
+      const serverSession = await bridge.ensureSession('codex-local-a');
+
+      bridge.listenRelayCommands();
+      relay.emit('command', { sessionId: serverSession, action: 'write_stdin', data: 'phone prompt' });
+
+      expect(bridge.commandQueue.peek()).toEqual([]);
+      const errorEvents = relay.sent
+        .map(m => JSON.parse(m))
+        .filter((m: any) => m.type === 'event' && m.payload.eventType === 'error');
+      expect(errorEvents).toHaveLength(1);
+      expect(errorEvents[0].payload.agent).toBe('codex');
+      expect(errorEvents[0].payload.data.message).toContain('Codex 会话尚未 Resume');
+    } finally {
+      if (previousCodexHome) process.env.CODEX_HOME = previousCodexHome;
+      else delete process.env.CODEX_HOME;
+    }
+  });
+
   it('ignores hook events without windowId when the session is unknown', async () => {
     const relay = new FakeRelay();
     const bridge = new ApprovalBridge(relay as any);
@@ -128,6 +192,7 @@ describe('ApprovalBridge canonical sessions', () => {
     const body = {
       claudeSessionId: 'claude-a',
       codekeyWindowId: 'window-1',
+      source: 'permission_request',
       rawEvent: {
         tool_name: 'Bash',
         tool_input: { command: 'npm test', cwd: 'F:\\Work\\Codekey' },
@@ -155,6 +220,27 @@ describe('ApprovalBridge canonical sessions', () => {
     await expect(second).resolves.toEqual({ approved: true });
   });
 
+  it('auto-rejects handleApproval without source (replay guard)', async () => {
+    const relay = new FakeRelay();
+    const bridge = new ApprovalBridge(relay as any);
+
+    const result = await bridge.handleApproval({
+      claudeSessionId: 'claude-a',
+      codekeyWindowId: 'window-1',
+      rawEvent: {
+        tool_name: 'Bash',
+        tool_input: { command: 'npm test' },
+      },
+    });
+
+    expect(result).toEqual({ approved: false });
+    // No approval_required event should be sent to relay
+    const eventMessages = relay.sent
+      .map(m => JSON.parse(m))
+      .filter((m: any) => m.type === 'event' && m.payload.eventType === 'approval_required');
+    expect(eventMessages).toHaveLength(0);
+  });
+
   it('includes readable approval text for non-Bash tool requests', async () => {
     const relay = new FakeRelay();
     const bridge = new ApprovalBridge(relay as any);
@@ -162,6 +248,7 @@ describe('ApprovalBridge canonical sessions', () => {
     const approval = bridge.handleApproval({
       claudeSessionId: 'claude-a',
       codekeyWindowId: 'window-1',
+      source: 'permission_request',
       rawEvent: {
         tool_name: 'Read',
         tool_input: { file_path: 'F:\\Work\\Codekey\\README.md' },
@@ -193,6 +280,7 @@ describe('ApprovalBridge canonical sessions', () => {
     const approval = bridge.handleApproval({
       claudeSessionId: 'claude-a',
       codekeyWindowId: 'window-1',
+      source: 'permission_request',
       rawEvent: {
         tool_name: 'WebSearch',
         input: { query: 'New York weather' },
@@ -439,6 +527,7 @@ describe('ApprovalBridge canonical sessions', () => {
         const approvalPromise = bridge.handleApproval({
           claudeSessionId: 'claude-a',
           codekeyWindowId: 'window-1',
+          source: 'permission_request',
           rawEvent: {
             tool_name: 'Bash',
             tool_input: { command: 'npm test', cwd: 'F:\\Work\\Codekey' },

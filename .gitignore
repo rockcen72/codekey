@@ -25,6 +25,7 @@ docs/superpowers/
 # Tooling caches
 .codegraph/
 .superpowers/
+.codex/
 
 # Images / screenshots
 *.png
@@ -37,6 +38,7 @@ data/
 
 # Temp / PoC
 tmp/
+.tmp/
 
 # Admin panel (WIP)
 packages/admin/

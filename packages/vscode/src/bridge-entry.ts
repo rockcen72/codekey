@@ -1,4 +1,4 @@
-import { RelayClient, ApprovalBridge, startBridgeServer } from '@codekey/shared/bridge';
+import { RelayClient, ApprovalBridge, startBridgeServer, CodexResumeManager } from '@codekey/shared/bridge';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -53,20 +53,29 @@ async function main(): Promise<void> {
 
   bridge.listenRelayCommands();
 
+  // ── Codex Resume Manager ──────────────────────────────────
+  const resumedServerSessionIds = new Set<string>();
+  bridge.registerResumedServerSessionIds(resumedServerSessionIds);
+  const resumeStoragePath = path.join(os.tmpdir(), 'codekey-resume-sessions.json');
+  const codexResumeManager = new CodexResumeManager(relay, resumedServerSessionIds, bridge, resumeStoragePath);
+  codexResumeManager.startListening();
+
   // Admin panel dir: resolved relative to the bundled bridge-entry.js in extension dist
   const adminDir = __dirname;
 
-  const { close, port } = await startBridgeServer(bridge, 3001, 'vscode-bundled', () => {
+  const shutdownCb = () => {
     clearInterval(parentTimer);
     clearInterval(reconcileTimer);
     clearInterval(pruneTimer);
     console.error('[bridge-entry] shutting down via /v1/shutdown');
-    bridge.deactivateAll().finally(() => {
+    Promise.allSettled([bridge.deactivateAll(), codexResumeManager.stopAll()]).finally(() => {
       close();
       relay.close();
       process.exit(0);
     });
-  }, startedAt, { deviceId, relayUrl, deviceToken: token, deviceSecret: loadDeviceSecret(), adminDir });
+  };
+
+  const { close, port } = await startBridgeServer(bridge, 3001, 'vscode-bundled', shutdownCb, startedAt, { deviceId, relayUrl, deviceToken: token, deviceSecret: loadDeviceSecret(), adminDir }, codexResumeManager);
   console.error(`[bridge-entry] HTTP server listening on port ${port}`);
 
   // Periodic reconcile: sync in-memory attached-session state with the relay

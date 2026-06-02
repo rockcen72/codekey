@@ -31,6 +31,7 @@ interface ChatMessage {
   accent: 'pending' | 'approved' | 'denied' | 'complete' | 'neutral';
   kindBadge: string;
   toolName?: string;
+  senderName?: string;
 }
 
 Page({
@@ -46,6 +47,8 @@ Page({
     deviceOnline: true,
     scrollToId: '',
     scrollTop: 0,
+    _userScrolledUp: false,
+    _viewportHeight: 0,
     approvalSheetOpen: false,
     approvalEvent: null as ChatMessage | null,
     sheetReplyText: '',
@@ -59,6 +62,7 @@ Page({
   },
 
   onShow() {
+    this.setData({ _userScrolledUp: false });
     this.fetchDetail();
     this._startPolling();
   },
@@ -70,6 +74,29 @@ Page({
   onUnload() {
     this.unsubscribeWs();
     this._stopPolling();
+  },
+
+  onScroll(e: any) {
+    const detail = e.detail || {};
+    const scrollTop = detail.scrollTop || 0;
+    const scrollHeight = detail.scrollHeight || 0;
+
+    // Capture viewport height from first scroll event
+    let vh = this.data._viewportHeight;
+    if (vh <= 0 && scrollHeight > 0) {
+      // Estimate viewport height from the element; fall back to 600px
+      vh = 600;
+      this.setData({ _viewportHeight: vh });
+    }
+
+    // User is "near bottom" if within 100px of the bottom
+    const nearBottom = (scrollTop + vh >= scrollHeight - 100);
+
+    // Only update if state changed to avoid unnecessary re-renders
+    const wasScrolledUp = this.data._userScrolledUp;
+    if (!nearBottom !== wasScrolledUp) {
+      this.setData({ _userScrolledUp: !nearBottom });
+    }
   },
 
   subscribeWs() {
@@ -188,12 +215,21 @@ Page({
       return (priority[a.type] ?? 2) - (priority[b.type] ?? 2);
     });
     const messages: ChatMessage[] = [];
+    let lastUserPrompt = '';
 
     for (const e of sorted) {
       const time = this.formatTime(e.created_at);
       const command = e.data?.command || '';
       const summary = e.data?.summary || e.data?.command || '';
       const summaryShort = e.data?.summaryShort || '';
+      const agentName = this.chatAgentName(e.data?.agent || e.data?.agentType);
+
+      // Dedup consecutive user_prompt events with identical content
+      if (e.type === 'user_prompt') {
+        const prompt = e.data?.prompt || e.data?.summary || '';
+        if (prompt === lastUserPrompt) continue;
+        lastUserPrompt = prompt;
+      }
 
       if (e.type === 'session_idle') {
         messages.push({
@@ -215,6 +251,7 @@ Page({
           eventId: e.id,
           accent: 'neutral',
           kindBadge: '',
+          senderName: '',
         });
         continue;
       }
@@ -239,7 +276,7 @@ Page({
           eventId: e.id,
           accent: 'complete',
           kindBadge: 'DONE',
-
+          senderName: agentName,
         });
         continue;
       }
@@ -275,7 +312,7 @@ Page({
           accent,
           kindBadge: e.pending ? 'REQUEST' : (this.getDecisionText(e.decision) || 'DONE'),
           toolName: e.data?.toolName || '',
-
+          senderName: agentName,
         });
 
         if (!e.pending && e.decision) {
@@ -299,7 +336,7 @@ Page({
             eventId: e.id,
             accent: 'neutral',
             kindBadge: '',
-  
+            senderName: '你',
           });
         }
         continue;
@@ -330,7 +367,7 @@ Page({
           eventId: e.id,
           accent: 'neutral',
           kindBadge: '',
-
+          senderName: '你',
         });
         continue;
       }
@@ -347,18 +384,30 @@ Page({
           break;
         }
       }
-      const targetIdx = pushedIdx !== -1
-        ? pushedIdx
-        : latestPendingIdx !== -1
-          ? latestPendingIdx
-          : messages.length - 1;
-      const targetId = 'msg-' + messages[targetIdx].id;
-      // Reset scrollToId first so scroll-into-view always detects the change
-      this.setData({ chatMessages: messages, scrollToId: '' }, () => {
-        wx.nextTick(() => {
-          this.setData({ scrollToId: targetId, scrollTop: Date.now() });
+      // Auto-scroll only when:
+      // 1. A specific scrollToEventId was requested (new event push)
+      // 2. There's a pending approval
+      // 3. User is near the bottom (not scrolled up reading history)
+      const shouldAutoScroll = pushedIdx !== -1
+        || latestPendingIdx !== -1
+        || !this.data._userScrolledUp;
+
+      if (shouldAutoScroll) {
+        const targetIdx = pushedIdx !== -1
+          ? pushedIdx
+          : latestPendingIdx !== -1
+            ? latestPendingIdx
+            : messages.length - 1;
+        const targetId = 'msg-' + messages[targetIdx].id;
+        // Reset scrollToId first so scroll-into-view always detects the change
+        this.setData({ chatMessages: messages, scrollToId: '' }, () => {
+          wx.nextTick(() => {
+            this.setData({ scrollToId: targetId, scrollTop: Date.now() });
+          });
         });
-      });
+      } else {
+        this.setData({ chatMessages: messages });
+      }
     } else {
       this.setData({ chatMessages: messages });
     }
@@ -447,7 +496,7 @@ Page({
       eventId,
       accent: 'neutral',
       kindBadge: '',
-
+      senderName: '你',
     });
 
     this.setData({ chatMessages: messages, sheetReplyText: '' });
@@ -509,7 +558,7 @@ Page({
         eventId,
         accent: 'neutral',
         kindBadge: '',
-  
+        senderName: '你',
       });
     }
     this.setData({ chatMessages: messages }, () => {
@@ -568,7 +617,7 @@ Page({
       eventId,
       accent: 'neutral',
       kindBadge: '',
-
+      senderName: '你',
     });
 
     const replyTexts = { ...this.data.replyTexts };
@@ -629,6 +678,11 @@ Page({
     const m = d.getMinutes().toString().padStart(2, '0');
     return h + ':' + m;
   },
+
+  chatAgentName(agentType?: string): string {
+    const session = this.data.session || {};
+    return agentChatName(agentType || session.agent_type || session.metadata?.runtime);
+  },
 });
 
 const AGENT_DISPLAY_NAMES: Record<string, string> = {
@@ -638,7 +692,19 @@ const AGENT_DISPLAY_NAMES: Record<string, string> = {
   'opencode': 'OpenCode',
 };
 
+const AGENT_CHAT_NAMES: Record<string, string> = {
+  'claude-code': 'claude code',
+  'claude-code-hook': 'claude code',
+  'codex': 'codex',
+  'opencode': 'opencode',
+};
+
 function agentDisplayName(agentType?: string): string {
   if (!agentType) return 'AI Agent';
   return AGENT_DISPLAY_NAMES[agentType] || agentType;
+}
+
+function agentChatName(agentType?: string): string {
+  if (!agentType) return 'agent';
+  return AGENT_CHAT_NAMES[agentType] || agentType;
 }

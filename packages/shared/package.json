@@ -29,6 +29,10 @@
     "./bridge/codex-transcript-watcher": {
       "types": "./dist/bridge/codex-transcript-watcher.d.ts",
       "import": "./dist/bridge/codex-transcript-watcher.js"
+    },
+    "./bridge/codex-resume-manager": {
+      "types": "./dist/bridge/codex-resume-manager.d.ts",
+      "import": "./dist/bridge/codex-resume-manager.js"
     }
   },
   "scripts": {

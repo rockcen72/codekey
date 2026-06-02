@@ -11,7 +11,9 @@ import {
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { discoverLocalSessions } from '../bridge/codex-local-session-resolver.js';
+import { EventEmitter } from 'node:events';
+import { discoverLocalSessions, loadCodexConversation } from '../bridge/codex-local-session-resolver.js';
+import { CodexResumeManager } from '../bridge/codex-resume-manager.js';
 import { CodexTranscriptWatcher, type TranscriptEvent } from '../bridge/codex-transcript-watcher.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -196,6 +198,53 @@ describe('Codex real transcript format', () => {
       const messages = events.filter(e => e.type === 'message');
       expect(messages).toHaveLength(1);
       expect(messages[0].content).toBe('Split across two writes.');
+    });
+  });
+
+  describe('loadCodexConversation', () => {
+    it('loads assistant history from Codex output_text messages', () => {
+      const dir = path.join(tmpHome, 'sessions', '2026', '06', '01');
+      mkdirSync(dir, { recursive: true });
+      const sessionId = '019e8231-a3f7-7c43-8dfb-f2107c803690';
+      const file = path.join(dir, `rollout-${sessionId}.jsonl`);
+      writeFileSync(file, fixture, 'utf8');
+
+      const entries = loadCodexConversation(sessionId, 5);
+
+      expect(entries).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          role: 'assistant',
+          text: expect.stringContaining('listing the repository tree'),
+        }),
+      ]));
+    });
+
+    it('forwards assistant history to relay for phone display', async () => {
+      const dir = path.join(tmpHome, 'sessions', '2026', '06', '01');
+      mkdirSync(dir, { recursive: true });
+      const file = path.join(dir, 'rollout-history.jsonl');
+      writeFileSync(file, fixture, 'utf8');
+
+      const sent: Record<string, any>[] = [];
+      const relay = Object.assign(new EventEmitter(), {
+        sendRaw(value: string) {
+          sent.push(JSON.parse(value));
+        },
+      });
+      const manager = new CodexResumeManager(relay as any, new Set());
+
+      await (manager as any)._forwardRecentHistory('server-session', file);
+
+      expect(sent).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          payload: expect.objectContaining({
+            eventType: 'task_complete',
+            data: expect.objectContaining({
+              summary: expect.stringContaining('listing the repository tree'),
+            }),
+          }),
+        }),
+      ]));
     });
   });
 });

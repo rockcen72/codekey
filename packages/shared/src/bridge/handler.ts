@@ -6,6 +6,7 @@ import {
   extractUserPrompts,
   resolveTranscriptCwd,
 } from './claude-transcripts.js';
+import { discoverLocalSessions } from './codex-local-session-resolver.js';
 import { MAX_PROMPT_LENGTH } from '../types.js';
 import type { AgentEventPayload, SessionEventMessage } from '../types.js';
 
@@ -32,8 +33,10 @@ export interface HookEventBody {
 interface PendingApproval {
   resolve: (value: { approved: boolean }) => void;
   timer: NodeJS.Timeout;
+  serverEventId?: string;
   serverSessionId: string;
   claudeSessionId: string;
+  agentType: string;
   command: string;
   summary: string;
   toolName: string;
@@ -44,13 +47,26 @@ interface PendingApproval {
 /** Public, serializable shape returned by getPendingApprovals(). */
 export interface PendingApprovalSnapshot {
   id: string;                // clientEventId (or migrated serverEventId)
+  serverEventId?: string;
   serverSessionId: string;
   claudeSessionId: string;
+  agentType: string;
   command: string;
   summary: string;
   toolName: string;
   risk: 'low' | 'medium' | 'high' | 'critical';
   createdAt: number;
+}
+
+export interface TrackPendingApprovalInput {
+  id: string;
+  serverSessionId: string;
+  claudeSessionId: string;
+  agentType: string;
+  command: string;
+  summary: string;
+  toolName: string;
+  risk: 'low' | 'medium' | 'high' | 'critical';
 }
 
 interface ApprovalHookBody {
@@ -106,6 +122,42 @@ export class ApprovalBridge {
 
   private recentPhoneCommandsBySession = new Map<string, PhoneCommandFingerprint[]>();
 
+  /** Shared Set of serverSessionIds handled by CodexResumeManager (command routing guard). */
+  private _resumedServerSessionIds: Set<string> | null = null;
+
+  /** Register the shared Set used to route commands away from the Claude command queue.
+   *  The Set is owned by CodexResumeManager; its values must be serverSessionIds. */
+  registerResumedServerSessionIds(set: Set<string>): void {
+    this._resumedServerSessionIds = set;
+  }
+
+  /** Codex resumed session IDs — stored separately so reconcileAttachedSessions doesn't touch them. */
+  private _codexAttachedIds = new Set<string>();
+  private codexLocalIdCache: { expiresAt: number; ids: Set<string> } = { expiresAt: 0, ids: new Set() };
+
+  /** Register a Codex resumed session ID so getAttachedSessionIds() includes it. */
+  addCodexAttachedSession(localSessionId: string): void {
+    this._codexAttachedIds.add(localSessionId);
+  }
+
+  /** Remove a Codex resumed session ID from attached tracking. */
+  removeCodexAttachedSession(localSessionId: string): void {
+    this._codexAttachedIds.delete(localSessionId);
+  }
+
+  private knownCodexLocalSessionIds(): Set<string> {
+    const now = Date.now();
+    if (now < this.codexLocalIdCache.expiresAt) return this.codexLocalIdCache.ids;
+    let ids = new Set<string>();
+    try {
+      ids = new Set(discoverLocalSessions(100).map((s) => s.sessionId));
+    } catch {
+      ids = new Set();
+    }
+    this.codexLocalIdCache = { expiresAt: now + 5000, ids };
+    return ids;
+  }
+
   constructor(readonly relay: RelayClient) {
     // Match session_registered by clientRequestId (NOT by once() — prevents race)
     this.relay.on('session_registered', (payload: unknown) => {
@@ -127,6 +179,7 @@ export class ApprovalBridge {
       if (ack.clientEventId) {
         const entry = this.pendingByServerEventId.get(ack.clientEventId);
         if (entry) {
+          entry.serverEventId = ack.serverEventId;
           this.pendingByServerEventId.set(ack.serverEventId, entry);
           // Keep clientEventId key — don't delete it
         }
@@ -776,6 +829,7 @@ export class ApprovalBridge {
         timer: null as any,
         serverSessionId,
         claudeSessionId,
+        agentType: 'claude-code-hook',
         command: approvalText.command,
         summary: approvalText.summary,
         toolName: approvalText.toolName,
@@ -818,8 +872,10 @@ export class ApprovalBridge {
       seen.add(entry);
       out.push({
         id,
+        serverEventId: entry.serverEventId,
         serverSessionId: entry.serverSessionId,
         claudeSessionId: entry.claudeSessionId,
+        agentType: entry.agentType,
         command: entry.command,
         summary: entry.summary,
         toolName: entry.toolName,
@@ -828,6 +884,38 @@ export class ApprovalBridge {
       });
     }
     return out;
+  }
+
+  trackPendingApproval(input: TrackPendingApprovalInput): () => void {
+    const existing = this.pendingByServerEventId.get(input.id);
+    if (existing) {
+      clearTimeout(existing.timer);
+      this.pendingByServerEventId.delete(input.id);
+    }
+
+    const entry: PendingApproval = {
+      resolve: () => {},
+      timer: setTimeout(() => {
+        this.pendingByServerEventId.delete(input.id);
+      }, 30 * 60_000),
+      serverEventId: undefined,
+      serverSessionId: input.serverSessionId,
+      claudeSessionId: input.claudeSessionId,
+      agentType: input.agentType,
+      command: input.command,
+      summary: input.summary,
+      toolName: input.toolName,
+      risk: input.risk,
+      createdAt: Date.now(),
+    };
+    this.pendingByServerEventId.set(input.id, entry);
+
+    return () => {
+      const current = this.pendingByServerEventId.get(input.id);
+      if (current !== entry) return;
+      clearTimeout(entry.timer);
+      this.pendingByServerEventId.delete(input.id);
+    };
   }
 
   /** Notify relay that an approval event has been resolved (approved/denied/timeout).
@@ -967,9 +1055,33 @@ export class ApprovalBridge {
       if (payload.action !== 'write_stdin') return;
       if (!payload.sessionId) return;
 
+      // Codex resume routing guard: if this serverSessionId is managed by
+      // CodexResumeManager, skip the Claude command queue.
+      if (this._resumedServerSessionIds?.has(payload.sessionId)) return;
+
       const claudeSessionId = payload.claudeSessionId
         ?? Array.from(this.sessions.entries())
             .find(([, serverSessionId]) => serverSessionId === payload.sessionId)?.[0];
+
+      if (claudeSessionId && this.knownCodexLocalSessionIds().has(claudeSessionId)) {
+        console.error('[bridge] command dropped: codex session is not resumed, sessionId=%s localSessionId=%s', payload.sessionId, claudeSessionId);
+        const errorMsg: SessionEventMessage = {
+          type: 'event',
+          payload: {
+            clientEventId: `codex-not-resumed:${payload.sessionId}:${Date.now()}`,
+            sessionId: payload.sessionId,
+            agent: 'codex',
+            eventType: 'error',
+            data: {
+              type: 'error',
+              message: '该 Codex 会话尚未 Resume，请先在 VS Code 侧边栏点击 Resume 后再从手机发送 prompt',
+            },
+            ts: new Date().toISOString(),
+          },
+        };
+        this.relay.sendEvent(payload.sessionId, errorMsg);
+        return;
+      }
 
       const hasWindowSession = Array.from(this.windowSessions.entries())
         .some(([, serverSessionId]) => serverSessionId === payload.sessionId);
@@ -1052,6 +1164,35 @@ export class ApprovalBridge {
     }
   }
 
+  /** Backfill assistant messages from CC transcript so phone shows conversation history. */
+  private async _backfillAssistantHistory(claudeSessionId: string, serverSessionId: string): Promise<void> {
+    try {
+      const { loadConversation } = await import('./claude-transcripts.js');
+      const entries = loadConversation(claudeSessionId, 5);
+      if (entries.length === 0) return;
+
+      for (let i = 0; i < entries.length; i++) {
+        const entry = entries[i];
+        if (entry.role !== 'assistant') continue;
+        this.relay.sendRaw(JSON.stringify({
+          type: 'event',
+          payload: {
+            clientEventId: `hist:${claudeSessionId}:${entry.index || i}`,
+            sessionId: serverSessionId,
+            agent: 'claude-code-hook',
+            eventType: 'task_complete',
+            data: {
+              type: 'task_complete',
+              summary: entry.text.slice(0, 200),
+              output: entry.text.slice(0, 500),
+            },
+            ts: entry.timestamp || new Date().toISOString(),
+          },
+        }));
+      }
+    } catch { /* best-effort */ }
+  }
+
   // ── Phone command dedup methods ──────────────────────────
 
   /** Record a claimed phone command fingerprint (called after /v1/pending-commands/claim succeeds). */
@@ -1129,8 +1270,9 @@ export class ApprovalBridge {
         },
       }));
     }
-    // Replay recent user prompts as events (best-effort)
+    // Replay recent conversation history to relay (so phone sees same as sidebar)
     this.replayUserPrompts(claudeSessionId, serverSessionId).catch(() => {});
+    this._backfillAssistantHistory(claudeSessionId, serverSessionId).catch(() => {});
     return serverSessionId;
   }
 
@@ -1169,9 +1311,12 @@ export class ApprovalBridge {
     return new Map(this.activeWindows);
   }
 
-  /** Return the set of claudeSessionIds that are currently attached (known to the bridge). */
+  /** Return the set of sessionIds that are currently attached (known to the bridge).
+   *  Includes both CC transcript-attached sessions and Codex resumed sessions. */
   getAttachedSessionIds(): string[] {
-    return Array.from(this.transcriptAttachedIds).filter((csid) => this.sessions.has(csid));
+    const cc = Array.from(this.transcriptAttachedIds).filter((csid) => this.sessions.has(csid));
+    const codex = Array.from(this._codexAttachedIds);
+    return [...cc, ...codex];
   }
 
   /** Return all claudeSessionIds currently tracked as active (have fired hook events). */
@@ -1198,8 +1343,9 @@ export class ApprovalBridge {
         // Build the new set of claudeSessionIds from relay
         const newAttached = new Set<string>();
         const newEntries = new Map<string, string>();
+        const codexLocalIds = this.knownCodexLocalSessionIds();
         for (const s of p.sessions) {
-          if (s.claudeSessionId) {
+          if (s.claudeSessionId && !codexLocalIds.has(s.claudeSessionId)) {
             newAttached.add(s.claudeSessionId);
             newEntries.set(s.claudeSessionId, s.id);
           }

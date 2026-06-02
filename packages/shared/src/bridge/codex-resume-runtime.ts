@@ -13,6 +13,10 @@ export interface CodexResumeRuntimeOptions {
   cwd: string;
   /** Maximum time to wait for a single resume command (ms) */
   timeoutMs?: number;
+  /** Sandbox mode for codex exec: 'read-only' | 'workspace-write' | 'none' */
+  sandbox?: string;
+  /** Approval policy: 'on-request' | 'never' | 'accept-all' */
+  approvalPolicy?: string;
 }
 
 /**
@@ -67,6 +71,8 @@ export class CodexResumeRuntime extends EventEmitter {
     super();
     this.options = {
       ...options,
+      sandbox: options.sandbox ?? 'workspace-write',
+      approvalPolicy: options.approvalPolicy ?? 'on-request',
       timeoutMs: options.timeoutMs ?? 120_000, // 2 minutes default
     };
   }
@@ -100,7 +106,12 @@ export class CodexResumeRuntime extends EventEmitter {
     let timedOut = false;
 
     try {
-      const args = ['exec', 'resume', sessionId, '--json', prompt];
+      // --sandbox, -c go before the resume subcommand — codex exec --sandbox ... resume
+      const sandbox = this.options.sandbox || 'workspace-write';
+      const approvalPolicy = this.options.approvalPolicy || 'on-request';
+      const args = ['exec'];
+      if (sandbox !== 'none') args.push('--sandbox', sandbox);
+      args.push('-c', `approval_policy="${approvalPolicy}"`, 'resume', sessionId, '--json', prompt);
       const proc = spawn(this.options.binaryPath, args, {
         cwd: this.options.cwd,
         stdio: ['ignore', 'pipe', 'pipe'],
@@ -325,6 +336,19 @@ export class CodexResumeRuntime extends EventEmitter {
         const cmd = (item.command as string) || this.extractText(item.arguments || item.args) || '(command)';
         const toolStatus = itemStatus === 'declined' ? 'failed' as const : itemStatus === 'in_progress' ? 'in_progress' as const : 'completed' as const;
         return { type: 'tool', toolName: 'command_execution', toolStatus, content: `[${itemStatus}] ${cmd}`, raw: obj };
+      }
+      // --- agent_message from item.completed: real assistant reply text ---
+      if (itemType === 'agent_message') {
+        const text = item.text as string || item.content as string || '';
+        return { type: 'message', role: 'assistant', content: text, raw: obj };
+      }
+      if (itemType === 'user_message') {
+        const text = item.text as string || item.content as string || '';
+        return { type: 'message', role: 'user', content: text, raw: obj };
+      }
+      if (itemType === 'turn') {
+        // turn.completed — surface usage stats
+        return { type: 'usage', usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 }, raw: obj };
       }
       if (itemType === 'file_change' || itemType === 'apply_patch') {
         const paths = item.path || item.paths;

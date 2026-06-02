@@ -126,6 +126,8 @@ function lastTranscriptTimestamp(filePath: string): string {
 /**
  * Extract the first user message as a title fallback.
  */
+/** Extract meaningful first user prompt from a Codex transcript.
+ *  Skips auto-injected environment context. */
 function extractFirstUserMessage(transcriptPath: string): string {
   if (!existsSync(transcriptPath)) return '';
   try {
@@ -139,17 +141,9 @@ function extractFirstUserMessage(transcriptPath: string): string {
         if (!line.trim()) continue;
         try {
           const obj = JSON.parse(line);
-          if (obj.type === 'user' && !obj.isMeta && obj.message?.role === 'user') {
-            const content = obj.message?.content;
-            if (typeof content === 'string') return content.slice(0, 100);
-            if (Array.isArray(content)) {
-              for (const part of content) {
-                if (typeof part === 'object' && part.type === 'text' && part.text) {
-                  return part.text.slice(0, 100);
-                }
-              }
-            }
-          }
+          const msg = extractUserMsgText(obj);
+          const visible = msg ? cleanCodexDisplayText(msg) : '';
+          if (visible) return visible.slice(0, 100);
         } catch { /* skip */ }
       }
     } finally {
@@ -157,6 +151,47 @@ function extractFirstUserMessage(transcriptPath: string): string {
     }
   } catch { /* ignore */ }
   return '';
+}
+
+/** Extract user message text from any known transcript envelope format. */
+function extractUserMsgText(obj: Record<string, unknown>): string | null {
+  const payload = (obj.payload && typeof obj.payload === 'object') ? obj.payload as Record<string, unknown> : null;
+  const message = (obj.message && typeof obj.message === 'object') ? obj.message as Record<string, unknown> : null;
+  // Real Codex: response_item with user message
+  if (obj.type === 'response_item' && payload?.type === 'message' && payload?.role === 'user') {
+    const content = payload.content;
+    if (Array.isArray(content)) {
+      for (const part of content) {
+        if (typeof part === 'object' && (part.type === 'input_text' || part.type === 'text') && part.text) {
+          return String(part.text);
+        }
+      }
+    }
+    if (typeof content === 'string') return content;
+  }
+  // Real Codex: event_msg with user_message
+  if (obj.type === 'event_msg' && payload?.type === 'user_message') {
+    const msg = payload.message;
+    if (typeof msg === 'string' && msg.trim()) return msg.trim();
+  }
+  // Legacy: type: 'user'
+  if (obj.type === 'user' && !obj.isMeta && message?.role === 'user') {
+    const content = message.content;
+    if (typeof content === 'string') return content;
+    if (Array.isArray(content)) {
+      for (const part of content) {
+        if (typeof part === 'object' && part.type === 'text' && part.text) {
+          return part.text;
+        }
+      }
+    }
+  }
+  return null;
+}
+
+/** Skip auto-injected environment context blocks. */
+function isAutoContext(text: string): boolean {
+  return cleanCodexDisplayText(text).length === 0;
 }
 
 /**
@@ -296,4 +331,160 @@ export function findMostRecentSession(cwd: string): CodexLocalSession | null {
   // Only return if cwd actually matches
   if (cwdMatch(sessions[0].cwd, cwd)) return sessions[0];
   return null;
+}
+
+/**
+ * Find a transcript file by sessionId by scanning filenames (which contain the UUID).
+ * More efficient than reading session_meta from every file.
+ */
+function findTranscriptBySessionId(dir: string, sessionId: string, depth: number): string | null {
+  if (depth < 0) return null;
+  try {
+    const entries = readdirSync(dir, { withFileTypes: true });
+    for (const entry of entries) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        const found = findTranscriptBySessionId(full, sessionId, depth - 1);
+        if (found) return found;
+      } else if (entry.isFile() && entry.name.includes(sessionId)) {
+        return full;
+      }
+    }
+  } catch { /* skip */ }
+  return null;
+}
+
+/** Check if text is system-injected context (IDE state, open tabs, etc.). */
+export function isSystemGeneratedContext(text: string): boolean {
+  const t = text.trim();
+  // Exact header patterns that mark system-injected context
+  if (/^#\s*Context from my IDE/i.test(t)) return true;
+  if (/^#\s*Setting up the workspace/i.test(t)) return true;
+  if (t.startsWith('<environment_context>')) return true;
+  if (t.startsWith('<permissions instructions>')) return true;
+  // Structured file listings with open tabs and file paths
+  if (t.indexOf('# Context') !== -1 && t.indexOf('Open tabs:') !== -1) return true;
+  if (t.indexOf('AGENTS.md') !== -1 && t.indexOf('Context from') !== -1) return true;
+  return false;
+}
+
+/**
+ * Return only the user-visible part of Codex transcript text.
+ *
+ * Codex records host-injected context blocks (IDE open tabs, AGENTS.md, env
+ * metadata) as normal user messages. Those are useful to the agent but noisy on
+ * the phone; if a real request follows an IDE context block, keep only that.
+ */
+export function cleanCodexDisplayText(text: string): string {
+  let t = text.replace(/\r\n/g, '\n').trim();
+  if (!t) return '';
+
+  const requestMatch = t.match(/##\s*My request for Codex:\s*([\s\S]*)$/i);
+  if (requestMatch) {
+    t = requestMatch[1].trim();
+  }
+
+  t = t
+    .replace(/<environment_context>[\s\S]*?<\/environment_context>/gi, '')
+    .replace(/<permissions instructions>[\s\S]*?<\/permissions instructions>/gi, '')
+    .trim();
+
+  if (!t) return '';
+  if (isSystemGeneratedContext(t)) return '';
+  if (/^#\s*AGENTS\.md instructions/i.test(t)) return '';
+  if (/^#\s*Context from my IDE/i.test(t)) return '';
+  if (/^<environment_context>/i.test(t)) return '';
+  if (/^<permissions instructions>/i.test(t)) return '';
+  return t;
+}
+
+export interface CodexConversationEntry {
+  role: 'user' | 'assistant';
+  text: string;
+  timestamp?: string;
+}
+
+/**
+ * Load recent conversation entries from a Codex transcript file.
+ * Returns newest-first, up to maxEntries.
+ * Efficient: searches transcripts directly by filename pattern rather than scanning all sessions.
+ */
+export function loadCodexConversation(sessionId: string, maxEntries = 10): CodexConversationEntry[] {
+  // Find transcript directly by scanning for the sessionId in filenames
+  const baseDir = path.join(codexConfigDir(), 'sessions');
+  const transcriptPath = findTranscriptBySessionId(baseDir, sessionId, 6);
+  if (!transcriptPath) return [];
+
+  try {
+    const text = readFileSync(transcriptPath, 'utf8');
+    const lines = text.split('\n');
+    const entries: CodexConversationEntry[] = [];
+    let lastUserText = '';
+
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      try {
+        const obj = JSON.parse(line);
+
+        // User message from response_item
+        if (obj.type === 'response_item' && obj.payload?.type === 'message' && obj.payload?.role === 'user') {
+          const content = obj.payload.content;
+          let text = '';
+          if (Array.isArray(content)) {
+            for (const part of content) {
+              if (typeof part === 'object' && (part.type === 'input_text' || part.type === 'text') && part.text) {
+                text += String(part.text) + ' ';
+              }
+            }
+          } else if (typeof content === 'string') {
+            text = content;
+          }
+          const trimmed = cleanCodexDisplayText(text);
+          if (trimmed) {
+            // Dedup consecutive user messages with same content
+            if (trimmed === lastUserText) continue;
+            lastUserText = trimmed;
+            entries.push({ role: 'user', text: trimmed.slice(0, 200), timestamp: obj.timestamp });
+          }
+        }
+
+        // Assistant message from response_item
+        if (obj.type === 'response_item' && obj.payload?.type === 'message' && obj.payload?.role === 'assistant') {
+          const content = obj.payload.content;
+          let text = '';
+          if (Array.isArray(content)) {
+            for (const part of content) {
+              if (typeof part === 'object' && (part.type === 'text' || part.type === 'output_text') && part.text) {
+                text += String(part.text) + ' ';
+              }
+            }
+          } else if (typeof content === 'string') {
+            text = content;
+          }
+          const trimmed = cleanCodexDisplayText(text);
+          if (trimmed) {
+            entries.push({ role: 'assistant', text: trimmed.slice(0, 200), timestamp: obj.timestamp });
+          }
+        }
+
+        // Event msg user/agent messages
+        if (obj.type === 'event_msg') {
+          if (obj.payload?.type === 'user_message' && typeof obj.payload.message === 'string') {
+            const text = cleanCodexDisplayText(obj.payload.message);
+            if (text) entries.push({ role: 'user', text: text.slice(0, 200), timestamp: obj.timestamp });
+          }
+          if (obj.payload?.type === 'agent_message' && typeof obj.payload.message === 'string') {
+            const text = cleanCodexDisplayText(obj.payload.message);
+            if (text) entries.push({ role: 'assistant', text: text.slice(0, 200), timestamp: obj.timestamp });
+          }
+        }
+      } catch { /* skip malformed */ }
+    }
+
+    // Return newest first, limited to maxEntries
+    entries.reverse();
+    return entries.slice(0, maxEntries);
+  } catch {
+    return [];
+  }
 }

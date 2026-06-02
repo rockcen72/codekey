@@ -70,6 +70,7 @@
 .session-card.connected { border-color: #fed7aa; }
 .conn-bar { width: 6rpx; flex-shrink: 0; background: var(--ck-border); transition: background 200ms ease; }
 .conn-bar.online { background: #ea580c; }
+.conn-bar.codex { background: #22c55e; }
 
 /* ── Card body ── */
 

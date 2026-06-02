@@ -1,9 +1,11 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { type AddressInfo } from 'node:net';
+import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { ApprovalBridge, type HookEventBody } from './handler.js';
 import { CodexRelay } from './codex-relay.js';
+import { CodexResumeManager } from './codex-resume-manager.js';
 import { listRecentClaudeTranscripts, loadConversation } from './claude-transcripts.js';
 
 export interface BridgeConfig {
@@ -16,12 +18,12 @@ export interface BridgeConfig {
   adminDir?: string;
 }
 
-export function startBridgeServer(bridge: ApprovalBridge, port = 3001, source = 'cli', onShutdown?: () => void, startedAt?: number, bridgeConfig?: BridgeConfig): Promise<{ close: () => Promise<void>; port: number }> {
+export function startBridgeServer(bridge: ApprovalBridge, port = 3001, source = 'cli', onShutdown?: () => void, startedAt?: number, bridgeConfig?: BridgeConfig, codexResumeManager?: CodexResumeManager): Promise<{ close: () => Promise<void>; port: number }> {
   let mpOnline = false;
   bridge.relay.on('mp_online', () => { mpOnline = true; });
   bridge.relay.on('mp_offline', () => { mpOnline = false; });
   const codexRelay = new CodexRelay(bridge.relay);
-  const server = createServer((req, res) => handleRequest(req, res, bridge, source, onShutdown, startedAt, bridgeConfig, codexRelay, () => mpOnline));
+  const server = createServer((req, res) => handleRequest(req, res, bridge, source, onShutdown, startedAt, bridgeConfig, codexRelay, codexResumeManager, () => mpOnline));
 
   return new Promise((resolve, reject) => {
     const onListen = () => {
@@ -47,7 +49,7 @@ export function startBridgeServer(bridge: ApprovalBridge, port = 3001, source = 
   });
 }
 
-function handleRequest(req: IncomingMessage, res: ServerResponse, bridge: ApprovalBridge, source: string, onShutdown?: () => void, startedAt?: number, bridgeConfig?: BridgeConfig, codexRelay?: CodexRelay, getMpOnline?: () => boolean): void {
+function handleRequest(req: IncomingMessage, res: ServerResponse, bridge: ApprovalBridge, source: string, onShutdown?: () => void, startedAt?: number, bridgeConfig?: BridgeConfig, codexRelay?: CodexRelay, codexResumeManager?: CodexResumeManager, getMpOnline?: () => boolean): void {
   const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
 
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -175,10 +177,313 @@ function handleRequest(req: IncomingMessage, res: ServerResponse, bridge: Approv
     return;
   }
 
+  // ── Codex Resume sessions (Phase 2) ───────────────────────
+  if (req.method === 'GET' && url.pathname === '/v1/codex-sessions' && codexResumeManager) {
+    const cwd = url.searchParams.get('cwd') || undefined;
+    const sessions = codexResumeManager.discoverSessions(10, cwd);
+    // Dedup by sessionId
+    const seen = new Set<string>();
+    const deduped = sessions.filter(s => {
+      if (seen.has(s.sessionId)) return false;
+      seen.add(s.sessionId);
+      return true;
+    });
+    const active = codexResumeManager.getActiveSessions();
+    const activeById = new Map(active.map(a => [a.localSession.sessionId, a.serverSessionId]));
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({
+      ok: true,
+      sessions: deduped.map(s => ({
+        ...s,
+        resumed: activeById.has(s.sessionId),
+      })),
+    }));
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/v1/codex-sessions/resume' && codexResumeManager) {
+    let body = '';
+    req.on('data', (chunk) => { body += chunk; });
+    req.on('end', () => {
+      try {
+        const { sessionId, cwd } = JSON.parse(body);
+        // Scan broadly to find the exact session by ID, regardless of sort order
+        const sessions = codexResumeManager.discoverSessions(50, cwd || undefined);
+        const session = sessions.find(s => s.sessionId === sessionId);
+        if (!session) {
+          res.writeHead(404, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: false, error: 'session not found' }));
+          return;
+        }
+        codexResumeManager.startResume(session).then((serverSessionId) => {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: true, serverSessionId }));
+        }).catch((err: Error) => {
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: false, error: err.message }));
+        });
+      } catch {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: false, error: 'invalid payload' }));
+      }
+    });
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/v1/codex-sessions/stop' && codexResumeManager) {
+    let body = '';
+    req.on('data', (chunk) => { body += chunk; });
+    req.on('end', () => {
+      try {
+        const { sessionId } = JSON.parse(body);
+        codexResumeManager.stopResume(sessionId).then(() => {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: true }));
+        }).catch((err: Error) => {
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: false, error: err.message }));
+        });
+      } catch {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: false, error: 'invalid payload' }));
+      }
+    });
+    return;
+  }
+
+  if (req.method === 'GET' && url.pathname === '/v1/codex-sessions/active' && codexResumeManager) {
+    const active = codexResumeManager.getActiveSessions();
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ ok: true, sessions: active }));
+    return;
+  }
+
+  if (req.method === 'GET' && url.pathname === '/v1/codex-sessions/resumed-ids' && codexResumeManager) {
+    const ids = codexResumeManager.getResumedLocalIds();
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ ok: true, ids }));
+    return;
+  }
+
+  if (req.method === 'GET' && url.pathname === '/v1/codex-sessions/server-id' && codexResumeManager) {
+    const localId = url.searchParams.get('localId');
+    if (!localId) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: false, error: 'localId required' }));
+      return;
+    }
+    const active = codexResumeManager.getActiveSessions();
+    const session = active.find(a => a.localSession.sessionId === localId);
+    if (!session) {
+      res.writeHead(404, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: false, error: 'session not active' }));
+      return;
+    }
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ ok: true, serverSessionId: session.serverSessionId }));
+    return;
+  }
+
+  // ── Codex Hooks endpoints (Phase H1) ──────────────────────
+  // POST /v1/codex-hooks/permission-request
+  // Hook script calls this to relay a PermissionRequest and wait for phone decision.
+  // Body: { session_id, cwd, tool_name, tool_input, ... } (from Codex hook stdin)
+  // Returns: { hookSpecificOutput: { hookEventName, decision: { behavior, message? } } }
+  if (req.method === 'POST' && url.pathname === '/v1/codex-hooks/permission-request') {
+    let body = '';
+    req.on('data', (chunk) => { body += chunk; });
+    req.on('end', async () => {
+      let timeout: ReturnType<typeof setTimeout> | null = null;
+      let regTimer: ReturnType<typeof setTimeout> | null = null;
+      let regHandler: ((p: unknown) => void) | null = null;
+      let handler: ((p: unknown) => void) | null = null;
+      let clearLocalPending: (() => void) | null = null;
+      let resolved = false;
+
+      function finish(behavior: string, message?: string) {
+        if (resolved) return;
+        resolved = true;
+        if (timeout) clearTimeout(timeout);
+        if (handler) { bridge.relay.off('approval_forward', handler as (...args: unknown[]) => void); handler = null; }
+        if (regTimer) { clearTimeout(regTimer); regTimer = null; }
+        if (regHandler) { bridge.relay.off('session_registered', regHandler); regHandler = null; }
+        if (clearLocalPending) { clearLocalPending(); clearLocalPending = null; }
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          hookSpecificOutput: {
+            hookEventName: 'PermissionRequest',
+            decision: { behavior, ...(message ? { message } : {}) },
+          },
+        }));
+      }
+
+      try {
+        const input = JSON.parse(body);
+        const codexSessionId = input.session_id || 'unknown';
+        const toolName = input.tool_name || 'unknown';
+        const toolInput = input.tool_input || {};
+        const cmd = toolInput.command || toolInput.description || JSON.stringify(toolInput);
+
+        // Step 1: Resolve Codex local session id → relay serverSessionId
+        let serverSessionId: string | null = null;
+        if (codexResumeManager) {
+          const active = codexResumeManager.getActiveSessions();
+          const found = active.find(a => a.localSession.sessionId === codexSessionId);
+          if (found) serverSessionId = found.serverSessionId;
+        }
+
+        // Step 2: Register on relay if not already active
+        if (!serverSessionId) {
+          const regClientRequestId = randomUUID();
+
+          // Wrap registration in a promise with timeout
+          const regResult = await new Promise<string | null>((resolve) => {
+            const regTimeoutMs = parseInt(process.env.CODEX_HOOK_REG_TIMEOUT_MS || '5000', 10);
+            regTimer = setTimeout(() => {
+              console.error('[codex-hooks] session registration timed out for %s', codexSessionId);
+              if (regHandler) bridge.relay.off('session_registered', regHandler);
+              regTimer = null;
+              resolve(null);
+            }, regTimeoutMs);
+
+            regHandler = (p: unknown) => {
+              const reg = p as { clientRequestId?: string; sessionId: string };
+              if (reg.clientRequestId === regClientRequestId) {
+                if (regTimer) clearTimeout(regTimer);
+                regTimer = null;
+                bridge.relay.off('session_registered', regHandler as (...args: unknown[]) => void);
+                regHandler = null;
+                resolve(reg.sessionId);
+              }
+            };
+            bridge.relay.on('session_registered', regHandler);
+
+            bridge.relay.sendRaw(JSON.stringify({
+              type: 'register_session',
+              payload: {
+                agentType: 'codex',
+                claudeSessionId: codexSessionId,
+                clientRequestId: regClientRequestId,
+                metadata: {
+                  claudeSessionId: codexSessionId,
+                  source: 'codex_hook',
+                  runtime: 'codex-hooks',
+                  cwd: input.cwd || '',
+                  hookEventName: 'PermissionRequest',
+                },
+              },
+            }));
+          });
+
+          if (!regResult) {
+            finish('deny', 'CodeKey session registration timed out');
+            return;
+          }
+          serverSessionId = regResult;
+        }
+
+        // Step 3: Register approval_forward handler BEFORE sending event (avoid race)
+        // Use randomUUID to avoid collision when concurrent hooks fire for the same session.
+        const clientEventId = `hook:${codexSessionId}:${randomUUID()}`;
+
+        const approvalTimeoutMs = parseInt(process.env.CODEX_HOOK_APPROVAL_TIMEOUT_MS || '300000', 10);
+        timeout = setTimeout(() => {
+          console.error('[codex-hooks] timeout: session=%s tool=%s', codexSessionId, toolName);
+          finish('deny', 'Phone approval timed out');
+        }, approvalTimeoutMs);
+
+        handler = (payload: unknown) => {
+          const fwd = payload as { clientEventId?: string; eventId?: string; decision?: string; message?: string };
+          if (fwd.clientEventId !== clientEventId && fwd.eventId !== clientEventId) return;
+          const approved = fwd.decision === 'approve';
+          console.error('[codex-hooks] decision: session=%s tool=%s decision=%s', codexSessionId, toolName, fwd.decision);
+          finish(approved ? 'allow' : 'deny', fwd.message);
+        };
+        bridge.relay.on('approval_forward', handler);
+
+        // Step 4: Send approval event to relay (phone shows approval card)
+        const command = typeof cmd === 'string' ? cmd.slice(0, 1000) : JSON.stringify(cmd).slice(0, 1000);
+        const summary = `Codex needs approval: ${toolName}`;
+        clearLocalPending = bridge.trackPendingApproval({
+          id: clientEventId,
+          serverSessionId,
+          claudeSessionId: codexSessionId,
+          agentType: 'codex',
+          command,
+          summary,
+          toolName,
+          risk: 'medium',
+        });
+        bridge.relay.sendRaw(JSON.stringify({
+          type: 'event',
+          payload: {
+            clientEventId,
+            sessionId: serverSessionId,
+            agent: 'codex',
+            eventType: 'approval_required',
+            data: {
+              type: 'approval_required',
+              tool_name: toolName,
+              command,
+              summary,
+              risk: 'medium',
+            },
+            ts: new Date().toISOString(),
+          },
+        }));
+
+      } catch (err) {
+        console.error('[codex-hooks] error:', err);
+        finish('deny', 'Bridge error');
+      }
+    });
+    return;
+  }
+
   if (req.method === 'GET' && url.pathname === '/v1/pending-approvals') {
     const approvals = bridge.getPendingApprovals();
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ approvals }));
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/v1/approval-response') {
+    let body = '';
+    req.on('data', (chunk) => { body += chunk; });
+    req.on('end', () => {
+      try {
+        const input = JSON.parse(body);
+        const sessionId = typeof input.sessionId === 'string' ? input.sessionId : '';
+        const eventId = typeof input.eventId === 'string' ? input.eventId : '';
+        const clientEventId = typeof input.clientEventId === 'string' ? input.clientEventId : '';
+        const decision = typeof input.decision === 'string' ? input.decision : '';
+        const message = typeof input.message === 'string' ? input.message : '';
+        if (!sessionId || !eventId || !['approve', 'deny', 'pause', 'reply'].includes(decision)) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: false, error: 'invalid approval response' }));
+          return;
+        }
+        bridge.relay.sendRaw(JSON.stringify({
+          type: 'approval_response',
+          payload: { sessionId, eventId, decision, message },
+        }));
+        // Local VS Code approval notifications should release an in-flight Codex
+        // hook immediately. The relay will usually echo approval_forward back,
+        // but waiting for that round trip makes desktop approvals fragile.
+        bridge.relay.emit('approval_forward', {
+          sessionId,
+          eventId,
+          decision,
+          message,
+          ...(clientEventId ? { clientEventId } : {}),
+        });
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: true }));
+      } catch {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: false, error: 'invalid payload' }));
+      }
+    });
     return;
   }
 
@@ -496,7 +801,7 @@ function handleRequest(req: IncomingMessage, res: ServerResponse, bridge: Approv
   }
 
   if (url.pathname === '/v1/health') {
-    const supports = ['mp-status', 'register-window', 'window-id', 'session-label', 'approval_forward', 'activate-session', 'deactivate-session', 'claude-sessions/recent', 'claude-sessions/attach', 'detach-session', 'attached-sessions', 'relay-reconnect', 'admin-config', 'pending-approvals'];
+    const supports = ['mp-status', 'register-window', 'window-id', 'session-label', 'approval_forward', 'activate-session', 'deactivate-session', 'claude-sessions/recent', 'claude-sessions/attach', 'detach-session', 'attached-sessions', 'relay-reconnect', 'admin-config', 'pending-approvals', 'approval-response', 'codex-hooks/permission-request'];
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({
       ok: true,

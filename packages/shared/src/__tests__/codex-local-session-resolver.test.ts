@@ -8,6 +8,7 @@ import {
   readSessionMeta,
   discoverLocalSessions,
   findMostRecentSession,
+  cleanCodexDisplayText,
   type CodexLocalSession,
 } from '../bridge/codex-local-session-resolver.js';
 
@@ -196,6 +197,27 @@ describe('codex-local-session-resolver', () => {
       process.env.CODEX_HOME = '/nonexistent/.codex';
       expect(findMostRecentSession('/workspace')).toBeNull();
       process.env.CODEX_HOME = original;
+    });
+  });
+
+  describe('cleanCodexDisplayText', () => {
+    it('keeps only the real user request from IDE context blocks', () => {
+      const text = [
+        '# Context from my IDE setup:',
+        '',
+        '## Open tabs:',
+        '- server-deployment.md: docs/server-deployment.md',
+        '',
+        '## My request for Codex:',
+        '请排查 Codex 手机端消息上下文太多的问题',
+      ].join('\n');
+
+      expect(cleanCodexDisplayText(text)).toBe('请排查 Codex 手机端消息上下文太多的问题');
+    });
+
+    it('drops pure host-injected context blocks', () => {
+      expect(cleanCodexDisplayText('<environment_context>\n  <cwd>f:\\Work\\Codekey</cwd>\n</environment_context>')).toBe('');
+      expect(cleanCodexDisplayText('# AGENTS.md instructions for f:\\Work\\Codekey\n\n<INSTRUCTIONS>\n...\n</INSTRUCTIONS>')).toBe('');
     });
   });
 });
