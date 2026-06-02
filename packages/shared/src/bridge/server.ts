@@ -141,8 +141,52 @@ function handleRequest(req: IncomingMessage, res: ServerResponse, bridge: Approv
       } catch {
         res.writeHead(400, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: 'invalid payload' }));
-        return;
+    return;
+  }
+
+  // ── OpenCode session attach/detach ─────────────────────────
+  if (req.method === 'POST' && url.pathname === '/v1/opencode-sessions/attach') {
+    let body = '';
+    req.on('data', (chunk) => { body += chunk; });
+    req.on('end', () => {
+      try {
+        const { sessionId } = JSON.parse(body);
+        if (!sessionId) { res.writeHead(400); res.end('{}'); return; }
+        bridge.ensureSession(sessionId, undefined, 'opencode', { agentType: 'opencode', runtime: 'opencode' })
+          .then((serverSessionId) => {
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ ok: true, serverSessionId }));
+          })
+          .catch((err: Error) => {
+            res.writeHead(500, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ ok: false, error: err.message }));
+          });
+      } catch {
+        res.writeHead(400);
+        res.end('{}');
       }
+    });
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/v1/opencode-sessions/detach') {
+    let body = '';
+    req.on('data', (chunk) => { body += chunk; });
+    req.on('end', () => {
+      try {
+        const { sessionId } = JSON.parse(body);
+        if (!sessionId) { res.writeHead(400); res.end('{}'); return; }
+        bridge.detachClaudeSession(sessionId).then((r) => {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify(r));
+        });
+      } catch {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: true }));
+      }
+    });
+    return;
+  }
       const p = codexRelay ? codexRelay.ensureSession(metadata) : Promise.resolve();
       p.then(() => {
         res.writeHead(200, { 'Content-Type': 'application/json' });

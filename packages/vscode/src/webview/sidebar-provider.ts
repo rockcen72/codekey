@@ -646,7 +646,22 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         break;
       case 'toggleAttachClaudeSession':
         if (msg.isopencode) {
-          vscode.window.showInformationMessage('OpenCode sessions auto-register via the bridge — no manual attach needed.');
+          const ocUrl = msg.attached
+            ? `${this._bridgeService.getBridgeUrl()}/v1/opencode-sessions/detach`
+            : `${this._bridgeService.getBridgeUrl()}/v1/opencode-sessions/attach`;
+          fetch(ocUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ sessionId: msg.sessionId }),
+          }).then(async (res) => {
+            if (!res.ok) {
+              const body = await res.json().catch(() => ({} as Record<string, unknown>));
+              vscode.window.showErrorMessage(`${msg.attached ? 'Detach' : 'Attach'} failed: ${(body as Record<string, unknown>).error || res.statusText}`);
+            }
+            this._pushState();
+          }).catch(() => {
+            vscode.window.showErrorMessage(`${msg.attached ? 'Detach' : 'Attach'} failed: bridge not available`);
+          });
           break;
         }
         if (msg.iscodex) {
