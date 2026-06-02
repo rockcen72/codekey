@@ -1,4 +1,4 @@
-import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
+import { createServer, get as httpGet, type IncomingMessage, type ServerResponse } from 'node:http';
 import { type AddressInfo } from 'node:net';
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
@@ -465,18 +465,37 @@ function handleRequest(req: IncomingMessage, res: ServerResponse, bridge: Approv
   // Proxies /session from the local OpenCode server (127.0.0.1:4096).
   // Falls back to an empty list when OpenCode is not running.
   if (req.method === 'GET' && url.pathname === '/v1/opencode-sessions') {
-    const ocUrl = 'http://127.0.0.1:4096/session';
-    fetch(ocUrl, { signal: AbortSignal.timeout(3000) })
-      .then(async (ocRes) => {
-        if (!ocRes.ok) throw new Error(`OpenCode returned ${ocRes.status}`);
-        const sessions = await ocRes.json() as any[];
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ ok: true, sessions }));
-      })
-      .catch(() => {
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ ok: true, sessions: [] }));
-      });
+    const ocUrl = new URL('http://127.0.0.1:4096/session');
+    console.error('[bridge] opencode-sessions: proxying to %s', ocUrl.href);
+    const proxy = httpGet(
+      { hostname: ocUrl.hostname, port: ocUrl.port, path: ocUrl.pathname, timeout: 3000 },
+      (ocRes) => {
+        let body = '';
+        ocRes.on('data', (chunk: Buffer) => { body += chunk; });
+        ocRes.on('end', () => {
+          try {
+            const sessions = ocRes.statusCode && ocRes.statusCode < 300 ? JSON.parse(body) as any[] : [];
+            console.error('[bridge] opencode-sessions: got %d sessions', sessions.length);
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ ok: true, sessions }));
+          } catch {
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ ok: true, sessions: [] }));
+          }
+        });
+      },
+    );
+    proxy.on('error', (err) => {
+      console.error('[bridge] opencode-sessions: proxy failed — %s', err.message);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: true, sessions: [] }));
+    });
+    proxy.on('timeout', () => {
+      console.error('[bridge] opencode-sessions: proxy timed out');
+      proxy.destroy();
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: true, sessions: [] }));
+    });
     return;
   }
 
