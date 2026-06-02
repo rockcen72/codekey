@@ -6,7 +6,7 @@ import * as vscode from 'vscode';
 import { resolveCodexBinaryForVSCode } from './codex-binary-resolver.js';
 import { loadCredentials } from '../auth/credentials.js';
 import { getHookPath } from '../hook/installer.js';
-import { log } from '../log.js';
+import { log, debug } from '../log.js';
 
 export type BridgeStatus = 'running' | 'stopped' | 'error' | 'connecting';
 export type HookConfigStatus = 'enabled' | 'installed_only' | 'not_found';
@@ -191,7 +191,7 @@ export class BridgeStatusService {
         this._port = Number(portMatch[1]);
         log(`[CodeKey] bridge port: ${this._port}`);
       }
-      log(`[CodeKey] bridge: ${text}`);
+      debug(`[CodeKey] bridge: ${text}`);
     });
 
     proc.on('exit', (code) => {
