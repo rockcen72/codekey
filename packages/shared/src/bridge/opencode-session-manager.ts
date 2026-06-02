@@ -86,6 +86,7 @@ export class OpenCodeSessionManager {
     );
     console.error('[opencode] SSE reconnecting in %dms', delay);
     this._reconnectTimer = setTimeout(() => {
+      this._reconnectTimer = null;
       if (!this._stopped) this.connectSSE().catch(() => {});
     }, delay);
   }
