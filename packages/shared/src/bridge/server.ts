@@ -450,8 +450,6 @@ function handleRequest(req: IncomingMessage, res: ServerResponse, bridge: Approv
     req.on('end', () => {
       try {
         const input = JSON.parse(body);
-        // Only store in memory for sidebar polling — no persistence
-        // TODO: store last N events in a ring buffer for sidebar display
         console.error('[bridge] opencode telemetry: type=%s', input.type || 'unknown');
       } catch {
         // best-effort, don't fail
@@ -459,6 +457,26 @@ function handleRequest(req: IncomingMessage, res: ServerResponse, bridge: Approv
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ ok: true }));
     });
+    return;
+  }
+
+  // ── OpenCode Sessions ──────────────────────────────────────
+  // GET /v1/opencode-sessions
+  // Proxies /session from the local OpenCode server (127.0.0.1:4096).
+  // Falls back to an empty list when OpenCode is not running.
+  if (req.method === 'GET' && url.pathname === '/v1/opencode-sessions') {
+    const ocUrl = 'http://127.0.0.1:4096/session';
+    fetch(ocUrl, { signal: AbortSignal.timeout(3000) })
+      .then(async (ocRes) => {
+        if (!ocRes.ok) throw new Error(`OpenCode returned ${ocRes.status}`);
+        const sessions = await ocRes.json() as any[];
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: true, sessions }));
+      })
+      .catch(() => {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: true, sessions: [] }));
+      });
     return;
   }
 

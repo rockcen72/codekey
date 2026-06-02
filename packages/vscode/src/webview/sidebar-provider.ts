@@ -531,6 +531,30 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       }
     } catch { /* bridge unreachable */ }
 
+    // ── OpenCode sessions ───────────────────────────────
+    try {
+      const ocResp = await fetch(`${this._bridgeService.getBridgeUrl()}/v1/opencode-sessions`);
+      if (ocResp.ok) {
+        const ocBody = await ocResp.json() as { sessions?: any[] };
+        if (ocBody.sessions) {
+          const existingIds = new Set(mergedClaudeSessions.map(s => s.sessionId));
+          for (const s of ocBody.sessions) {
+            if (!s.id || existingIds.has(s.id)) continue;
+            existingIds.add(s.id);
+            mergedClaudeSessions.push({
+              sessionId: s.id,
+              title: s.title || 'OpenCode session',
+              cwd: s.directory || '',
+              updatedAt: s.time?.updated ? new Date(s.time.updated).toISOString() : '',
+              attached: false,
+              canDetach: false,
+              isOpenCodeSession: true,
+            });
+          }
+        }
+      }
+    } catch { /* bridge unreachable */ }
+
     const state: SidebarState = {
       deviceStatus,
       phoneName: 'WeChat Mini Program',
@@ -613,9 +637,18 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         this.attachClaudeSession(msg.sessionId).then(() => this._pushState());
         break;
       case 'getSessionPreview':
+        if (msg.isopencode) {
+          const previewHtml = '<div class="preview-content">OpenCode session — preview not yet supported.</div>';
+          this._view?.webview.postMessage({ type: 'previewUpdate', sessionId: msg.sessionId, html: previewHtml });
+          break;
+        }
         this._handleSessionPreview(msg.sessionId, msg.iscodex === true);
         break;
       case 'toggleAttachClaudeSession':
+        if (msg.isopencode) {
+          vscode.window.showInformationMessage('OpenCode sessions auto-register via the bridge — no manual attach needed.');
+          break;
+        }
         if (msg.iscodex) {
           // Codex session: Attach = start resume, Detach = stop resume
           const url = msg.attached

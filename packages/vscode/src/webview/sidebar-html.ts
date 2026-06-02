@@ -57,6 +57,8 @@ export interface ClaudeSessionItem {
   canDetach?: boolean;
   /** Set to true for Codex resume sessions */
   isCodexSession?: boolean;
+  /** Set to true for OpenCode sessions */
+  isOpenCodeSession?: boolean;
   /** True when this Codex session has been resumed */
   resumed?: boolean;
 }
@@ -265,27 +267,21 @@ export function renderSessionsContent(state: SidebarState): string {
     + '</div>';
 }
 
-/** Show a friendly title instead of raw ID-like strings. */
-function _displayTitle(s: any): string {
-  var t = s.title || s.sessionId || '';
-  // UUID-prefix fallback from resolver (sessionId.slice(0,8) = exactly 8 hex chars)
-  if (/^[0-9a-f]{8}/.test(t) && t.length >= 8) return 'Codex session';
-  return t;
-}
-
 function _sessionItemHtml(s: any, extraCls: string): string {
       const isAttached = s.attached;
       const sid = s.sessionId;
       const btnCls = isAttached ? 'btn-attached' : '';
       const btnText = isAttached ? 'Detach' : 'Attach';
-      const agent = s.isCodexSession ? 'codex' : 'claude-code';
+      const agent = s.isOpenCodeSession ? 'opencode' : s.isCodexSession ? 'codex' : 'claude-code';
+      const isCodex = s.isCodexSession ? 'true' : 'false';
+      const isOpenCode = s.isOpenCodeSession ? 'true' : '';
       return `<div class="session-item${extraCls}" data-sid="${h(sid)}" data-agent="${agent}">
         <div class="session-title-row">
-          <span class="session-title-click" data-action="togglePreview" data-session-id="${h(sid)}" data-iscodex="${s.isCodexSession ? 'true' : ''}">
+          <span class="session-title-click" data-action="togglePreview" data-session-id="${h(sid)}" data-iscodex="${isCodex}" data-isopencode="${isOpenCode}">
             <span class="chevron">&#9654;</span>
             <span class="session-title" title="${h(_displayTitle(s))}">${h(truncate(_displayTitle(s), 60))}</span>
           </span>
-          <button class="btn btn-sm ${btnCls}" data-action="toggleAttachClaudeSession" data-session-id="${h(sid)}" data-attached="${isAttached ? 'true' : 'false'}"${s.isCodexSession ? ' data-iscodex="true"' : ''}>${btnText}</button>
+          <button class="btn btn-sm ${btnCls}" data-action="toggleAttachClaudeSession" data-session-id="${h(sid)}" data-attached="${isAttached ? 'true' : 'false'}"${s.isCodexSession ? ' data-iscodex="true"' : ''}${s.isOpenCodeSession ? ' data-isopencode="true"' : ''}>${btnText}</button>
         </div>
         <div class="session-meta">
           <span class="session-cwd">${h(truncate(s.cwd || '', 50))}</span>
@@ -293,6 +289,13 @@ function _sessionItemHtml(s: any, extraCls: string): string {
         </div>
         <div class="preview" id="preview-${h(sid)}"></div>
       </div>`;
+}
+
+function _displayTitle(s: any): string {
+  var t = s.title || s.sessionId || '';
+  if (s.isOpenCodeSession) return 'OpenCode session';
+  if (/^[0-9a-f]{8}/.test(t) && t.length >= 8) return 'Codex session';
+  return t;
 }
 
 function renderClaudeSessions(state: SidebarState): string {
@@ -977,7 +980,7 @@ ${renderSubscribe()}
         el.style.display = 'block';
         if (chevron) chevron.textContent = '▼';
         el.innerHTML = '<div class="preview-empty">Loading...</div>';
-        api.postMessage({ action: 'getSessionPreview', sessionId: sid, iscodex: target.dataset.iscodex === 'true' });
+        api.postMessage({ action: 'getSessionPreview', sessionId: sid, iscodex: target.dataset.iscodex === 'true', isopencode: target.dataset.isopencode === 'true' });
       }
       return;
     }
@@ -988,6 +991,7 @@ ${renderSubscribe()}
         sessionId: target.dataset.sessionId,
         attached: target.dataset.attached === 'true',
         iscodex: target.dataset.iscodex === 'true',
+        isopencode: target.dataset.isopencode === 'true',
       });
       return;
     }
