@@ -30,6 +30,35 @@ function isParentAlive(): boolean {
   }
 }
 
+/** Discover the port of a running opencode process by parsing its --port argument. */
+function discoverOpenCodePort(): number {
+  try {
+    if (process.platform === 'win32') {
+      // Try both the opencode binary and node.exe running opencode
+      for (const query of ['opencode', 'node']) {
+        try {
+          const out = cp.execSync(
+            `wmic process where "name like '%${query}%'" get CommandLine /format:list`,
+            { encoding: 'utf-8', timeout: 5000 },
+          );
+          if (/--port\s+(\d+)/.test(out)) {
+            const all = [...out.matchAll(/--port\s+(\d+)/g)];
+            // Return the latest port found (if multiple opencode instances)
+            if (all.length > 0) return Number(all[all.length - 1][1]);
+          }
+        } catch { /* try next query */ }
+      }
+    } else {
+      const out = cp.execSync('ps aux | grep -v grep | grep -E "opencode|node.*opencode"', {
+        encoding: 'utf-8', timeout: 5000,
+      });
+      const m = out.match(/--port\s+(\d+)/);
+      if (m) return Number(m[1]);
+    }
+  } catch { /* fall through */ }
+  return 4096;
+}
+
 async function main(): Promise<void> {
   const startedAt = Date.now();
   const args = process.argv.slice(2);
@@ -63,14 +92,17 @@ async function main(): Promise<void> {
 
   // ── OpenCode Session Manager ─────────────────────────────
   let opencodeManager: OpenCodeSessionManager | null = null;
+  let ocUrl: string | undefined;
   try {
     const whichCmd = process.platform === 'win32' ? 'where' : 'which';
     cp.execSync(`${whichCmd} opencode`, { stdio: 'ignore', timeout: 3000 });
-    opencodeManager = new OpenCodeSessionManager('http://127.0.0.1:4096', bridge);
+    const ocPort = discoverOpenCodePort();
+    ocUrl = `http://127.0.0.1:${ocPort}`;
+    opencodeManager = new OpenCodeSessionManager(ocUrl, bridge);
     opencodeManager.start().catch((err: Error) => {
       console.error('[bridge-entry] OpenCode SSE connect failed:', err);
     });
-    console.error('[bridge-entry] OpenCode integration started');
+    console.error('[bridge-entry] OpenCode integration started on port %d', ocPort);
   } catch {
     console.error('[bridge-entry] opencode CLI not found, skipping OpenCode integration');
   }
@@ -94,7 +126,7 @@ async function main(): Promise<void> {
     });
   };
 
-  const { close, port } = await startBridgeServer(bridge, 3001, 'vscode-bundled', shutdownCb, startedAt, { deviceId, relayUrl, deviceToken: token, deviceSecret: loadDeviceSecret(), adminDir }, codexResumeManager);
+  const { close, port } = await startBridgeServer(bridge, 3001, 'vscode-bundled', shutdownCb, startedAt, { deviceId, relayUrl, deviceToken: token, deviceSecret: loadDeviceSecret(), adminDir, openCodeUrl: ocUrl }, codexResumeManager);
   console.error(`[bridge-entry] HTTP server listening on port ${port}`);
 
   // Periodic reconcile: sync in-memory attached-session state with the relay

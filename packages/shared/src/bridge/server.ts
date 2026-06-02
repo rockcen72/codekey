@@ -16,6 +16,8 @@ export interface BridgeConfig {
   relayUrl: string;
   /** Path to admin panel directory (serves index.html at /) */
   adminDir?: string;
+  /** OpenCode local server URL (default http://127.0.0.1:4096) */
+  openCodeUrl?: string;
 }
 
 export function startBridgeServer(bridge: ApprovalBridge, port = 3001, source = 'cli', onShutdown?: () => void, startedAt?: number, bridgeConfig?: BridgeConfig, codexResumeManager?: CodexResumeManager): Promise<{ close: () => Promise<void>; port: number }> {
@@ -465,7 +467,7 @@ function handleRequest(req: IncomingMessage, res: ServerResponse, bridge: Approv
   // Proxies /session from the local OpenCode server (127.0.0.1:4096).
   // Falls back to an empty list when OpenCode is not running.
   if (req.method === 'GET' && url.pathname === '/v1/opencode-sessions') {
-    const ocUrl = new URL('http://127.0.0.1:4096/session');
+    const ocUrl = new URL('/session', bridgeConfig?.openCodeUrl || 'http://127.0.0.1:4096');
     console.error('[bridge] opencode-sessions: proxying to %s', ocUrl.href);
     const proxy = httpGet(
       { hostname: ocUrl.hostname, port: ocUrl.port, path: ocUrl.pathname, timeout: 3000 },
