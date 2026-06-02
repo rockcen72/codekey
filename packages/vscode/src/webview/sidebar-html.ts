@@ -256,14 +256,10 @@ export function renderSessionsContent(state: SidebarState): string {
     const extraCls = hidden ? ' session-hidden' : '';
     return _sessionItemHtml(s, extraCls);
   }).join('');
-  const overflow = items.length - maxVisible;
-  const moreHtml = overflow > 0
-    ? '<div class="session-show-more" id="sessionShowMore"><button class="btn-ghost btn-sm" data-action="toggleShowMoreSessions">+ ' + overflow + ' more session' + (overflow > 1 ? 's' : '') + '</button></div>'
-    : '';
   return tabsHtml
     + '<div class="session-scroll">'
     + itemsHtml
-    + moreHtml
+    + '<div class="session-show-more" id="sessionShowMore"><button class="btn-ghost btn-sm" data-action="toggleShowMoreSessions">+ ' + Math.max(0, items.length - maxVisible) + ' more</button></div>'
     + '</div>';
 }
 
@@ -858,13 +854,11 @@ ${renderSubscribe()}
     }
   });
 
-  // Apply current agent filter to session-items (data-agent attribute)
+  // Apply current agent filter and per-tab folding
   function applyAgentFilter() {
-    // Read stored filter (survives HTML swaps that reset the DOM class)
     var stored = 'all';
     try { stored = sessionStorage.getItem('agentFilter') || 'all'; } catch(e) {}
     var key = stored;
-    // Sync the tab bar's active class to match the stored filter
     var tabs = document.querySelector('#agentTabs');
     if (tabs) {
       tabs.querySelectorAll('.agent-tab').forEach(function(t) {
@@ -872,22 +866,44 @@ ${renderSubscribe()}
       });
     }
     var items = document.querySelectorAll('.session-item');
-    var shown = 0;
+    var matching: HTMLElement[] = [];
     items.forEach(function(it) {
-      var ag = it.dataset.agent || 'claude-code';
+      var ag = (it as HTMLElement).dataset.agent || 'claude-code';
       var match = (key === 'all') || (ag === key);
-      it.style.display = match ? '' : 'none';
-      if (match) shown++;
+      (it as HTMLElement).style.display = match ? '' : 'none';
+      if (match) matching.push(it as HTMLElement);
     });
+
+    // Per-tab folding: show first 5, hide rest
+    var maxVisible = 5;
+    var moreBtn = document.getElementById('sessionShowMore');
+    var overflow = matching.length - maxVisible;
+    for (var i = 0; i < matching.length; i++) {
+      var hidden = i >= maxVisible && !(moreBtn && moreBtn.dataset.expanded === '1');
+      matching[i].classList.toggle('session-hidden', hidden);
+    }
+    if (moreBtn) {
+      if (overflow > 0) {
+        moreBtn.style.display = '';
+        var b = moreBtn.querySelector('button');
+        if (b) b.textContent = '+ ' + overflow + ' more session' + (overflow > 1 ? 's' : '');
+      } else {
+        moreBtn.style.display = 'none';
+      }
+    }
+
+    // Show empty state if no matches
     var emptyMsg = document.getElementById('sessionsEmpty');
-    var scroll = document.querySelector('#sessionsContent .session-scroll');
-    if (shown === 0 && scroll && !emptyMsg) {
-      var div = document.createElement('div');
-      div.id = 'sessionsEmpty';
-      div.className = 'empty-state';
-      div.textContent = 'No sessions for this agent';
-      scroll.appendChild(div);
-    } else if (shown > 0 && emptyMsg) {
+    if (matching.length === 0 && !emptyMsg) {
+      var scroll = document.querySelector('#sessionsContent .session-scroll');
+      if (scroll) {
+        var div = document.createElement('div');
+        div.id = 'sessionsEmpty';
+        div.className = 'empty-state';
+        div.textContent = 'No sessions for this agent';
+        scroll.appendChild(div);
+      }
+    } else if (matching.length > 0 && emptyMsg) {
       emptyMsg.remove();
     }
   }
@@ -997,10 +1013,13 @@ ${renderSubscribe()}
     }
 
     if (action === 'toggleShowMoreSessions') {
-      var hidden = document.querySelectorAll('.session-hidden');
       var moreBtn = document.getElementById('sessionShowMore');
+      if (moreBtn) {
+        moreBtn.dataset.expanded = '1';
+      }
+      var hidden = document.querySelectorAll('.session-hidden');
       hidden.forEach(function(h) { h.classList.remove('session-hidden'); });
-      if (moreBtn) moreBtn.remove();
+      if (moreBtn) moreBtn.style.display = 'none';
       return;
     }
 
