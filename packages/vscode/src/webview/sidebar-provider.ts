@@ -503,8 +503,8 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     const mergedClaudeSessions = filteredSessions.map(s => ({
       ...s,
       title: relayTitleByClaudeSessionId.get(s.sessionId) || s.title,
-      attached: attachedSessions.includes(s.sessionId),
-      canDetach,
+      attached: attachedSessions.includes(s.sessionId) || relayTitleByClaudeSessionId.has(s.sessionId),
+      canDetach: canDetach || relayTitleByClaudeSessionId.has(s.sessionId),
     }));
 
     // Mark stored opencode sessions — sessionStore keeps history, bridge decides attached
