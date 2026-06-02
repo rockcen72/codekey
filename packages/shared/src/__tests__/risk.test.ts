@@ -42,4 +42,27 @@ describe('RiskEngine', () => {
     expect(result.level).toBe('low');
     expect(result.label).toBe('Safe tool');
   });
+
+  describe('evaluateOpenCodePermission', () => {
+    it('extracts command from metadata.command', () => {
+      const result = engine.evaluateOpenCodePermission('Bash', { command: 'rm -rf /' });
+      expect(result.level).toBe('high');
+    });
+
+    it('constructs command from filePath', () => {
+      const result = engine.evaluateOpenCodePermission('Write', { filePath: '.env' });
+      expect(result.level).toBe('high');
+    });
+
+    it('constructs command from patch metadata', () => {
+      // The constructed command contains "patch:" prefix, falling through to unknown
+      const result = engine.evaluateOpenCodePermission('Edit', { patch: '--- a/foo\n+++ b/foo\n' });
+      expect(result.level).toBe('unknown');
+    });
+
+    it('falls back to permission name', () => {
+      const result = engine.evaluateOpenCodePermission('Bash', {});
+      expect(result.level).toBe('unknown');
+    });
+  });
 });

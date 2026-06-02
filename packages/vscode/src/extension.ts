@@ -7,7 +7,7 @@ import { startCodexSession } from './commands/start-codex.js';
 import { findExistingClaudeTerminal, classifyTerminal, startClaudeCode, ensureCcSessionSync } from './commands/start-claude.js';
 import { enableHook } from './commands/enable-hook.js';
 import { installCodexHook, isCodexHookInstalled, isCodexExtensionActive } from './hook/codex-installer.js';
-import { installOpenCodePlugin, isOpenCodePluginInstalled, isOpenCodeCliInstalled } from './hook/opencode-installer.js';
+import { isOpenCodePluginInstalled } from './hook/opencode-installer.js';
 import { SidebarProvider } from './webview/sidebar-provider.js';
 import { CommandRelayService } from './services/command-relay.js';
 import { ApprovalNotificationService } from './services/approval-notification.js';
@@ -75,11 +75,8 @@ export function activate(context: vscode.ExtensionContext) {
     log('Codex hooks auto-installed');
   }
 
-  // Auto-install OpenCode telemetry plugin (if opencode CLI detected and plugin not yet installed)
-  if (isOpenCodeCliInstalled() && !isOpenCodePluginInstalled()) {
-    installOpenCodePlugin();
-    log('OpenCode telemetry plugin auto-installed');
-  }
+  // OpenCode telemetry plugin is installed via explicit command (CodeKey: Enable OpenCode Integration)
+  // — do NOT auto-install on activation (see approved plan).
 
   // Dynamic binding: detect new Claude Code terminals opened after activation
   context.subscriptions.push(

@@ -1,4 +1,5 @@
-import { RelayClient, ApprovalBridge, startBridgeServer, CodexResumeManager } from '@codekey/shared/bridge';
+import { RelayClient, ApprovalBridge, startBridgeServer, CodexResumeManager, OpenCodeSessionManager } from '@codekey/shared/bridge';
+import * as cp from 'node:child_process';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -60,6 +61,19 @@ async function main(): Promise<void> {
   const codexResumeManager = new CodexResumeManager(relay, resumedServerSessionIds, bridge, resumeStoragePath);
   codexResumeManager.startListening();
 
+  // ── OpenCode Session Manager ─────────────────────────────
+  let opencodeManager: OpenCodeSessionManager | null = null;
+  try {
+    cp.execSync('where opencode', { stdio: 'ignore', timeout: 3000 });
+    opencodeManager = new OpenCodeSessionManager('http://127.0.0.1:4096', bridge);
+    opencodeManager.start().catch((err: Error) => {
+      console.error('[bridge-entry] OpenCode SSE connect failed:', err);
+    });
+    console.error('[bridge-entry] OpenCode integration started');
+  } catch {
+    console.error('[bridge-entry] opencode CLI not found, skipping OpenCode integration');
+  }
+
   // Admin panel dir: resolved relative to the bundled bridge-entry.js in extension dist
   const adminDir = __dirname;
 
@@ -68,7 +82,11 @@ async function main(): Promise<void> {
     clearInterval(reconcileTimer);
     clearInterval(pruneTimer);
     console.error('[bridge-entry] shutting down via /v1/shutdown');
-    Promise.allSettled([bridge.deactivateAll(), codexResumeManager.stopAll()]).finally(() => {
+    const tasks = [];
+    if (opencodeManager) { opencodeManager.stop(); }
+    tasks.push(bridge.deactivateAll());
+    tasks.push(codexResumeManager.stopAll());
+    Promise.allSettled(tasks).finally(() => {
       close();
       relay.close();
       process.exit(0);

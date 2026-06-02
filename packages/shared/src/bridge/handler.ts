@@ -9,6 +9,7 @@ import {
 import { discoverLocalSessions } from './codex-local-session-resolver.js';
 import { MAX_PROMPT_LENGTH } from '../types.js';
 import type { AgentEventPayload, SessionEventMessage } from '../types.js';
+import { RiskEngine } from '../risk.js';
 
 interface PhoneCommandFingerprint {
   fingerprint: string;
@@ -149,6 +150,9 @@ export class ApprovalBridge {
   /** External agent command handlers (OpenCode, etc.). Tried before the default command path. */
   private _agentCommandHandlers: CommandHandler[] = [];
 
+  /** Event ack handlers (OpenCodeSessionManager etc.). Called when relay confirms event persistence. */
+  private _eventAckHandlers: Array<(clientEventId: string, serverEventId: string) => void> = [];
+
   /** Register an external approval responder. */
   registerExternalApprovalResponder(responder: ApprovalResponder): void {
     this._approvalResponders.push(responder);
@@ -157,6 +161,11 @@ export class ApprovalBridge {
   /** Register an external agent command handler (ownsSession + handleCommand). */
   registerAgentCommandHandler(handler: CommandHandler): void {
     this._agentCommandHandlers.push(handler);
+  }
+
+  /** Register an event ack handler for clientEventId → serverEventId migration. */
+  onEventAck(handler: (clientEventId: string, serverEventId: string) => void): void {
+    this._eventAckHandlers.push(handler);
   }
 
   /** Public wrapper: send event to relay via sendEvent(). */
@@ -180,11 +189,10 @@ export class ApprovalBridge {
   }
 
   /** Public wrapper: evaluate command risk via RiskEngine. */
+  private _riskEngine = new RiskEngine();
   evaluateRisk(command: string): 'low' | 'medium' | 'high' | 'critical' | 'unknown' {
     try {
-      const { RiskEngine } = require('./risk.js');
-      const engine = new RiskEngine();
-      return engine.evaluate(command).level;
+      return this._riskEngine.evaluate(command).level;
     } catch {
       return 'medium';
     }
@@ -242,6 +250,10 @@ export class ApprovalBridge {
           this.pendingByServerEventId.set(ack.serverEventId, entry);
           // Keep clientEventId key — don't delete it
         }
+        // Notify external handlers (OpenCodeSessionManager etc.)
+        for (const h of this._eventAckHandlers) {
+          try { h(ack.clientEventId, ack.serverEventId); } catch {}
+        }
       }
     });
 
@@ -250,10 +262,16 @@ export class ApprovalBridge {
     this.relay.on('approval_forward', async (payload: unknown) => {
       const fwd = payload as { eventId: string; decision: string; clientEventId?: string | null };
 
-      // Try external approval responders first (OpenCode, etc.)
+      // Try external approval responders first (OpenCode, etc.).
+      // Each responder is wrapped in try/catch so one agent's failure
+      // doesn't break the default approval path for unrelated sessions.
       for (const responder of this._approvalResponders) {
-        const handled = await responder.onApprovalForward(fwd.eventId, fwd.decision, fwd.clientEventId ?? undefined);
-        if (handled) return;
+        try {
+          const handled = await responder.onApprovalForward(fwd.eventId, fwd.decision, fwd.clientEventId ?? undefined);
+          if (handled) return;
+        } catch (err) {
+          console.error('[bridge] approval responder %s error: %s', responder.agentType, err);
+        }
       }
 
       // Default path: look up pending entry by serverEventId or clientEventId

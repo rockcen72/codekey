@@ -52,6 +52,14 @@ export class OpenCodeSessionManager {
       handleCommand: (payload) => this.handleCommand(payload.sessionId, payload.data),
     });
 
+    // Migrate permissionMap keys on event_ack
+    this.bridge.onEventAck((clientEventId, serverEventId) => {
+      const entry = this.permissionMap.get(clientEventId);
+      if (entry) {
+        this.permissionMap.set(serverEventId, entry);
+      }
+    });
+
     this._abortController = new AbortController();
     this._stopped = false;
     await this.connectSSE();
@@ -170,10 +178,7 @@ export class OpenCodeSessionManager {
     const command = permissionToCommand(permission, metadata);
     const risk = this.bridge.evaluateRisk(command);
 
-    // 3. Desensitize
-    const safeData = desensitize(metadata);
-
-    // 4. Fixed clientEventId
+    // 3. Fixed clientEventId
     const clientEventId = `oc-perm:${requestID}`;
 
     // 5. Send approval event to relay
@@ -317,13 +322,20 @@ export class OpenCodeSessionManager {
     const opencodeSessionId = this.resolveLocalSessionId(sessionId);
     if (!opencodeSessionId) return;
 
-    await fetch(`${this.opencodeBaseUrl}/session/${opencodeSessionId}/prompt`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        parts: [{ type: 'text', text }],
-      }),
-    });
+    try {
+      const resp = await fetch(`${this.opencodeBaseUrl}/session/${opencodeSessionId}/prompt`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          parts: [{ type: 'text', text }],
+        }),
+      });
+      if (!resp.ok) {
+        throw new Error(`OpenCode prompt returned ${resp.status}`);
+      }
+    } catch (err) {
+      this.bridge.sendErrorToRelay(sessionId, `命令发送失败: ${err}`);
+    }
   }
 
   private resolveLocalSessionId(serverSessionId: string): string | null {
@@ -343,20 +355,4 @@ function permissionToCommand(permission: string, metadata: Record<string, unknow
   return permission;
 }
 
-function desensitize(input: Record<string, unknown>): Record<string, unknown> {
-  const out: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(input)) {
-    if (typeof value === 'string') {
-      out[key] = value
-        .replace(/-----BEGIN[\s\S]*?PRIVATE KEY-----[\s\S]*?-----END[\s\S]*?PRIVATE KEY-----/g, '[REDACTED PRIVATE KEY]')
-        .replace(/\bsk-[A-Za-z0-9_-]{12,}/g, 'sk-****')
-        .replace(/\bgh[pousr]_[A-Za-z0-9]{16,}/g, 'gh_****')
-        .replace(/\bAKIA[0-9A-Z]{16}\b/g, 'AKIA****');
-    } else if (value && typeof value === 'object') {
-      out[key] = desensitize(value as Record<string, unknown>);
-    } else {
-      out[key] = value;
-    }
-  }
-  return out;
-}
+
