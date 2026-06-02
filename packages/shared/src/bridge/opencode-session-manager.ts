@@ -7,9 +7,10 @@ import type { ApprovalResponder, CommandHandler } from './handler.js';
 /**
  * OpenCodeSessionManager manages the OpenCode integration via SSE + REST.
  *
- * SSE event source: /api/events  (streams permission.asked, message.updated, etc.)
- * REST permission API: POST /permission/:requestID/reply
- * REST prompt API: POST /session/<id>/prompt
+ * API docs: https://opencode.ai/docs/server/
+ * SSE event source: GET /event
+ * Permission reply: POST /session/:id/permissions/:permissionID { response }
+ * Async prompt:      POST /session/:id/prompt_async
  */
 export class OpenCodeSessionManager {
   private bridge: ApprovalBridge;
@@ -21,8 +22,8 @@ export class OpenCodeSessionManager {
   // OpenCode local session ID → relay serverSessionId
   private opencodeSessionToRelayId: Map<string, string> = new Map();
 
-  // clientEventId/eventId → { requestID, serverSessionId }
-  private permissionMap: Map<string, { requestID: string; serverSessionId: string }> = new Map();
+  // clientEventId/eventId → { requestID, serverSessionId, localSessionID }
+  private permissionMap: Map<string, { requestID: string; serverSessionId: string; localSessionID: string }> = new Map();
 
   // message.updated dedup
   private deliveredMessageParts: Set<string> = new Set();
@@ -81,7 +82,7 @@ export class OpenCodeSessionManager {
 
   private connectSSE(): Promise<void> {
     return new Promise((resolve, reject) => {
-      const url = `${this.opencodeBaseUrl}/api/events`;
+      const url = `${this.opencodeBaseUrl}/event`;
       const parts = new URL(url);
 
       const req = httpGet(
@@ -176,7 +177,9 @@ export class OpenCodeSessionManager {
 
     // 2. Risk evaluation
     const command = permissionToCommand(permission, metadata);
-    const risk = this.bridge.evaluateRisk(command);
+    const rawRisk = this.bridge.evaluateRisk(command);
+    // Normalize unknown → medium for type compatibility with TrackPendingApprovalInput
+    const risk = rawRisk === 'unknown' ? 'medium' : rawRisk;
 
     // 3. Fixed clientEventId
     const clientEventId = `oc-perm:${requestID}`;
@@ -205,11 +208,11 @@ export class OpenCodeSessionManager {
       command,
       summary: `${permission}: ${command.slice(0, 200)}`,
       toolName: permission,
-      risk: risk as 'low' | 'medium' | 'high' | 'critical',
+      risk,
     });
 
-    // 7. Record mapping
-    this.permissionMap.set(clientEventId, { requestID, serverSessionId });
+    // 7. Record mapping with local session ID for permission reply URL
+    this.permissionMap.set(clientEventId, { requestID, serverSessionId, localSessionID: sessionID });
   }
 
   private onPermissionReplied(_props: Record<string, unknown>): void {
@@ -292,12 +295,13 @@ export class OpenCodeSessionManager {
     if (!entry) return false;
 
     // Step 1: POST reply to OpenCode first (fail = keep pending)
+    // Docs: POST /session/:id/permissions/:permissionID { response, remember? }
     try {
-      const reply = decision === 'approve' ? 'once' : 'reject';
-      const resp = await fetch(`${this.opencodeBaseUrl}/permission/${entry.requestID}/reply`, {
+      const response = decision === 'approve' ? 'once' : 'reject';
+      const resp = await fetch(`${this.opencodeBaseUrl}/session/${entry.localSessionID}/permissions/${entry.requestID}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ reply }),
+        body: JSON.stringify({ response }),
       });
       if (!resp.ok) throw new Error(`OpenCode reply returned ${resp.status}`);
     } catch (err) {
@@ -323,15 +327,17 @@ export class OpenCodeSessionManager {
     if (!opencodeSessionId) return;
 
     try {
-      const resp = await fetch(`${this.opencodeBaseUrl}/session/${opencodeSessionId}/prompt`, {
+      // Docs: POST /session/:id/prompt_async { parts } → 204 No Content
+      const resp = await fetch(`${this.opencodeBaseUrl}/session/${opencodeSessionId}/prompt_async`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          messageID: randomUUID(),
           parts: [{ type: 'text', text }],
         }),
       });
       if (!resp.ok) {
-        throw new Error(`OpenCode prompt returned ${resp.status}`);
+        throw new Error(`OpenCode prompt_async returned ${resp.status}`);
       }
     } catch (err) {
       this.bridge.sendErrorToRelay(sessionId, `命令发送失败: ${err}`);

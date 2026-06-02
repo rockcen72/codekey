@@ -64,7 +64,8 @@ async function main(): Promise<void> {
   // ── OpenCode Session Manager ─────────────────────────────
   let opencodeManager: OpenCodeSessionManager | null = null;
   try {
-    cp.execSync('where opencode', { stdio: 'ignore', timeout: 3000 });
+    const whichCmd = process.platform === 'win32' ? 'where' : 'which';
+    cp.execSync(`${whichCmd} opencode`, { stdio: 'ignore', timeout: 3000 });
     opencodeManager = new OpenCodeSessionManager('http://127.0.0.1:4096', bridge);
     opencodeManager.start().catch((err: Error) => {
       console.error('[bridge-entry] OpenCode SSE connect failed:', err);
