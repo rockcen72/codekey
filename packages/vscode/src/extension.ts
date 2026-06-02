@@ -8,6 +8,7 @@ import { findExistingClaudeTerminal, classifyTerminal, startClaudeCode, ensureCc
 import { enableHook } from './commands/enable-hook.js';
 import { installCodexHook, isCodexHookInstalled, isCodexExtensionActive } from './hook/codex-installer.js';
 import { installOpenCodePlugin, isOpenCodePluginInstalled, isOpenCodeCliInstalled, uninstallOpenCodePlugin } from './hook/opencode-installer.js';
+import { startOpenCodeTerminal } from './commands/start-opencode.js';
 import { SidebarProvider } from './webview/sidebar-provider.js';
 import { CommandRelayService } from './services/command-relay.js';
 import { ApprovalNotificationService } from './services/approval-notification.js';
@@ -162,6 +163,10 @@ export function activate(context: vscode.ExtensionContext) {
       } catch (err) {
         vscode.window.showErrorMessage(`Failed to enable OpenCode integration: ${err}`);
       }
+    }),
+    vscode.commands.registerCommand('codekey.startOpenCode', () => {
+      log('cmd: startOpenCode');
+      startOpenCodeTerminal();
     }),
   );
 
