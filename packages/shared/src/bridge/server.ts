@@ -595,12 +595,16 @@ function handleRequest(req: IncomingMessage, res: ServerResponse, bridge: Approv
             }).on('error', () => resolve([])).on('timeout', function(this: any) { this.destroy(); resolve([]); });
           });
         };
-        bridge.attachOpenCodeSession(sessionId, fetchMessages, typeof title === 'string' ? title : undefined)
-          .then((serverSessionId) => {
-            if (typeof serverSessionId === 'string' && opencodeManager) {
-              opencodeManager.registerSession(sessionId, serverSessionId);
-            }
-          })
+        bridge.attachOpenCodeSession(
+          sessionId,
+          fetchMessages,
+          typeof title === 'string' ? title : undefined,
+          (localId, serverId) => {
+            if (opencodeManager) opencodeManager.registerSession(localId, serverId);
+          },
+        ).catch((err: Error) => {
+            console.error('[bridge] opencode-attach failed: %s', err.message);
+          });
       } catch {
         res.writeHead(400);
         res.end('{}');

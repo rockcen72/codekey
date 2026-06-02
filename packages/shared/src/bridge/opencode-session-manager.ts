@@ -103,6 +103,11 @@ export class OpenCodeSessionManager {
       }
     });
 
+    // Register session mapping callback — fires on reconcile + attach
+    this.bridge._onOpenCodeRegistered = (localId, serverId) => {
+      this.registerSession(localId, serverId);
+    };
+
     this._abortController = new AbortController();
     this._stopped = false;
     this._reconnectDelay = INITIAL_RECONNECT_DELAY;

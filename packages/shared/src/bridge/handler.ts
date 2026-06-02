@@ -226,12 +226,18 @@ export class ApprovalBridge {
     this._opencodeAttachedIds.delete(localSessionId);
   }
 
+  /** Callback invoked when an OpenCode session is registered on relay.
+   *  OpenCodeSessionManager sets this to update command routing maps. */
+  _onOpenCodeRegistered: ((localId: string, serverId: string) => void) | null = null;
+
   /** Attach an OpenCode session — registers on relay and replays recent history.
-   *  Same pattern as attachClaudeSession, but reads messages from OpenCode API. */
+   *  Same pattern as attachClaudeSession, but reads messages from OpenCode API.
+   *  @param onRegistered — called with (localSessionId, serverSessionId) after relay registration. */
   async attachOpenCodeSession(
     localSessionId: string,
     fetchMessages: (sessionId: string) => Promise<any[]>,
     title?: string,
+    onRegistered?: (localId: string, serverId: string) => void,
   ): Promise<string> {
     this.addOpenCodeAttachedSession(localSessionId);
     const existingServerSessionId = this.sessions.get(localSessionId);
@@ -252,6 +258,9 @@ export class ApprovalBridge {
         type: 'update_session_label',
         payload: { sessionId: serverSessionId, label: title },
       }));
+    }
+    if (onRegistered) {
+      try { onRegistered(localSessionId, serverSessionId); } catch {}
     }
     // Replay history in background
     this._replayOpenCodeHistory(localSessionId, serverSessionId, fetchMessages).catch(() => {});
@@ -1564,7 +1573,9 @@ export class ApprovalBridge {
         for (const csid of this._opencodeAttachedIds) {
           if (!this.sessions.has(csid)) {
             console.error('[bridge] reconcile: re-registering opencode session %s', csid);
-            this.ensureSession(csid, undefined, 'opencode', { agentType: 'opencode', runtime: 'opencode' }).catch((err) => {
+            this.ensureSession(csid, undefined, 'opencode', { agentType: 'opencode', runtime: 'opencode' }).then((ssid) => {
+              this._onOpenCodeRegistered?.(csid, ssid);
+            }).catch((err) => {
               console.error('[bridge] reconcile: opencode re-register failed for %s: %s', csid, err);
             });
           }
