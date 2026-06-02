@@ -198,18 +198,24 @@ export function renderApprovalsContent(state: SidebarState): string {
   const pending = state.pendingApprovals;
   if (pending.length === 0) return '<div class="empty-state">No pending approvals</div>';
 
-  const groups: Record<string, { agent: string; items: typeof pending; ts: string }> = {};
+  const groups: Record<string, { agent: string; agentType: string; items: typeof pending; ts: string }> = {};
   for (const a of pending) {
     if (!groups[a.serverSessionId]) {
       const s = state.sessions.find(s => s.id === a.serverSessionId);
-      groups[a.serverSessionId] = { agent: a.agent, items: [], ts: s?.last_active_at || s?.created_at || '' };
+      groups[a.serverSessionId] = { agent: a.agent, agentType: a.agentType || '', items: [], ts: s?.last_active_at || s?.created_at || '' };
     }
     groups[a.serverSessionId].items.push(a);
   }
 
+  const agentColors: Record<string, string> = {
+    'claude-code': '#orange', 'claude-code-hook': 'orange',
+    'codex': '#4fc1ff', 'opencode': '#c084fc',
+  };
+
   return Object.entries(groups).map(([sid, g]) => `
     <div class="approval-session">
       <div class="approval-header">
+        <span class="approval-dot" style="color:${agentColors[g.agentType] || '#888'}">●</span>
         <span class="approval-agent">${h(g.agent)}</span>
         <span class="tag orange">${g.items.length} pending</span>
       </div>
@@ -1262,6 +1268,7 @@ body{
 .approval-session:last-child{margin-bottom:0}
 .approval-header{display:flex;align-items:center;gap:6px;padding:3px 0;font-size:11px}
 .approval-agent{color:var(--vscode-editor-foreground);font-weight:500}
+.approval-dot{font-size:8px;margin-right:2px}
 .approval-item{
   display:flex;align-items:center;justify-content:space-between;gap:6px;
   padding:4px 8px;margin-left:4px;
