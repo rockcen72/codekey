@@ -656,6 +656,12 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
             if (!res.ok) {
               const body = await res.json().catch(() => ({} as Record<string, unknown>));
               vscode.window.showErrorMessage(`${msg.attached ? 'Detach' : 'Attach'} failed: ${(body as Record<string, unknown>).error || res.statusText}`);
+            } else if (!msg.attached) {
+              // Auto-open opencode terminal with this session
+              const hasOcTerm = vscode.window.terminals.some(t => t.name.startsWith('opencode'));
+              if (!hasOcTerm) {
+                vscode.commands.executeCommand('codekey.startOpenCode', msg.sessionId);
+              }
             }
             this._pushState();
           }).catch(() => {

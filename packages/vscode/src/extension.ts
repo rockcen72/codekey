@@ -164,9 +164,9 @@ export function activate(context: vscode.ExtensionContext) {
         vscode.window.showErrorMessage(`Failed to enable OpenCode integration: ${err}`);
       }
     }),
-    vscode.commands.registerCommand('codekey.startOpenCode', () => {
-      log('cmd: startOpenCode');
-      startOpenCodeTerminal();
+    vscode.commands.registerCommand('codekey.startOpenCode', (sessionId?: string) => {
+      log('cmd: startOpenCode' + (sessionId ? ` session=${sessionId}` : ''));
+      startOpenCodeTerminal(sessionId);
     }),
   );
 

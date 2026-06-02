@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import { randomInt } from 'node:crypto';
 
-export function startOpenCodeTerminal(): void {
+export function startOpenCodeTerminal(sessionId?: string): void {
   const port = randomInt(16384, 65536);
   const term = vscode.window.createTerminal({
     name: 'opencode',
@@ -12,5 +12,8 @@ export function startOpenCodeTerminal(): void {
     },
   });
   term.show();
-  term.sendText(`opencode --port ${port}`);
+  const cmd = sessionId
+    ? `opencode --session ${sessionId} --port ${port}`
+    : `opencode --port ${port}`;
+  term.sendText(cmd);
 }
