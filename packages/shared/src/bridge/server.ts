@@ -143,61 +143,17 @@ function handleRequest(req: IncomingMessage, res: ServerResponse, bridge: Approv
         res.end(JSON.stringify({ error: 'invalid payload' }));
     return;
   }
-
-  // ── OpenCode session attach/detach ─────────────────────────
-  if (req.method === 'POST' && url.pathname === '/v1/opencode-sessions/attach') {
-    let body = '';
-    req.on('data', (chunk) => { body += chunk; });
-    req.on('end', () => {
-      try {
-        const { sessionId } = JSON.parse(body);
-        if (!sessionId) { res.writeHead(400); res.end('{}'); return; }
-        bridge.ensureSession(sessionId, undefined, 'opencode', { agentType: 'opencode', runtime: 'opencode' })
-          .then((serverSessionId) => {
-            res.writeHead(200, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ ok: true, serverSessionId }));
-          })
-          .catch((err: Error) => {
-            res.writeHead(500, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ ok: false, error: err.message }));
-          });
-      } catch {
-        res.writeHead(400);
-        res.end('{}');
-      }
-    });
-    return;
-  }
-
-  if (req.method === 'POST' && url.pathname === '/v1/opencode-sessions/detach') {
-    let body = '';
-    req.on('data', (chunk) => { body += chunk; });
-    req.on('end', () => {
-      try {
-        const { sessionId } = JSON.parse(body);
-        if (!sessionId) { res.writeHead(400); res.end('{}'); return; }
-        bridge.detachClaudeSession(sessionId).then((r) => {
-          res.writeHead(200, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify(r));
-        });
-      } catch {
+      const p = codexRelay ? codexRelay.ensureSession(metadata) : Promise.resolve();
+      p.then(() => {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ ok: true }));
-      }
+      }).catch(() => {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'session_register_failed' }));
+      });
     });
     return;
   }
-    const p = codexRelay ? codexRelay.ensureSession(metadata) : Promise.resolve();
-    p.then(() => {
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ ok: true }));
-    }).catch(() => {
-      res.writeHead(500, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: 'session_register_failed' }));
-    });
-  });
-  return;
-}
 
   if (req.method === 'POST' && url.pathname === '/v1/codex/event') {
     let body = '';
@@ -551,10 +507,16 @@ function handleRequest(req: IncomingMessage, res: ServerResponse, bridge: Approv
     req.on('data', (chunk) => { body += chunk; });
     req.on('end', () => {
       try {
-        const { sessionId } = JSON.parse(body);
+        const { sessionId, title } = JSON.parse(body);
         if (!sessionId) { res.writeHead(400); res.end('{}'); return; }
         bridge.ensureSession(sessionId, undefined, 'opencode', { agentType: 'opencode', runtime: 'opencode' })
           .then((serverSessionId) => {
+            if (title && typeof title === 'string') {
+              bridge.relay.sendRaw(JSON.stringify({
+                type: 'update_session_label',
+                payload: { sessionId: serverSessionId, label: title },
+              }));
+            }
             res.writeHead(200, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({ ok: true, serverSessionId }));
           })
@@ -585,6 +547,56 @@ function handleRequest(req: IncomingMessage, res: ServerResponse, bridge: Approv
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ ok: true }));
       }
+    });
+    return;
+  }
+
+  // ── OpenCode session preview ────────────────────────────────
+  if (req.method === 'GET' && url.pathname === '/v1/opencode-sessions/preview') {
+    const sid = url.searchParams.get('id') || '';
+    if (!sid) { res.writeHead(400); res.end('{}'); return; }
+    const ocUrl = new URL(`/session/${encodeURIComponent(sid)}/message?limit=5`, bridgeConfig?.openCodeUrl || 'http://127.0.0.1:4096');
+    console.error('[bridge] opencode-preview: proxying to %s', ocUrl.href);
+    const proxy = httpGet(
+      { hostname: ocUrl.hostname, port: ocUrl.port, path: ocUrl.pathname + ocUrl.search, timeout: 5000 },
+      (ocRes) => {
+        let body = '';
+        ocRes.on('data', (chunk: Buffer) => { body += chunk; });
+        ocRes.on('end', () => {
+          try {
+            const msgs = ocRes.statusCode && ocRes.statusCode < 300 ? JSON.parse(body) : [];
+            // Transform OpenCode messages to { role, text, timestamp } format
+            const entries = (Array.isArray(msgs) ? msgs : []).map((m: any, i: number) => {
+              const info = m.info || {};
+              const role = info.role === 'assistant' ? 'assistant' : 'user';
+              // Extract text from parts
+              let text = '';
+              if (Array.isArray(m.parts)) {
+                text = m.parts
+                  .filter((p: any) => p.type === 'text' && p.text)
+                  .map((p: any) => p.text)
+                  .join('\n');
+              }
+              return { role, text: text.slice(0, 1000), timestamp: info.time?.created ? new Date(info.time.created).toISOString() : '', index: i };
+            });
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ ok: true, entries }));
+          } catch {
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ ok: true, entries: [] }));
+          }
+        });
+      },
+    );
+    proxy.on('error', (err) => {
+      console.error('[bridge] opencode-preview: proxy failed — %s', err.message);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: true, entries: [] }));
+    });
+    proxy.on('timeout', () => {
+      proxy.destroy();
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: true, entries: [] }));
     });
     return;
   }

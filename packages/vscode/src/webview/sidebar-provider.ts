@@ -638,8 +638,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         break;
       case 'getSessionPreview':
         if (msg.isopencode) {
-          const previewHtml = '<div class="preview-content">OpenCode session — preview not yet supported.</div>';
-          this._view?.webview.postMessage({ type: 'previewUpdate', sessionId: msg.sessionId, html: previewHtml });
+          this._handleOpenCodePreview(msg.sessionId);
           break;
         }
         this._handleSessionPreview(msg.sessionId, msg.iscodex === true);
@@ -652,7 +651,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
           fetch(ocUrl, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ sessionId: msg.sessionId }),
+            body: JSON.stringify({ sessionId: msg.sessionId, title: msg.title || '' }),
           }).then(async (res) => {
             if (!res.ok) {
               const body = await res.json().catch(() => ({} as Record<string, unknown>));
@@ -963,6 +962,29 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         entries: [],
         error: 'Failed to load conversation',
         agentLabel: isCodex ? 'Codex' : 'Claude',
+      });
+    }
+  }
+
+  private async _handleOpenCodePreview(sessionId: string): Promise<void> {
+    try {
+      const resp = await fetch(`${this._bridgeService.getBridgeUrl()}/v1/opencode-sessions/preview?id=${encodeURIComponent(sessionId)}`);
+      if (!resp.ok) throw new Error(`Bridge returned ${resp.status}`);
+      const body = await resp.json() as { entries?: { role: string; text: string; timestamp: string; index: number }[] };
+      this._view?.webview.postMessage({
+        type: 'sessionPreview',
+        sessionId,
+        entries: body.entries || [],
+        agentLabel: 'OpenCode',
+      });
+    } catch (err) {
+      log(`_handleOpenCodePreview failed for ${sessionId}: ${err}`);
+      this._view?.webview.postMessage({
+        type: 'sessionPreview',
+        sessionId,
+        entries: [],
+        error: 'Failed to load messages',
+        agentLabel: 'OpenCode',
       });
     }
   }

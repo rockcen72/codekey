@@ -271,13 +271,14 @@ function _sessionItemHtml(s: any, extraCls: string): string {
       const agent = s.isOpenCodeSession ? 'opencode' : s.isCodexSession ? 'codex' : 'claude-code';
       const isCodex = s.isCodexSession ? 'true' : 'false';
       const isOpenCode = s.isOpenCodeSession ? 'true' : '';
+      const title = _displayTitle(s);
       return `<div class="session-item${extraCls}" data-sid="${h(sid)}" data-agent="${agent}">
         <div class="session-title-row">
           <span class="session-title-click" data-action="togglePreview" data-session-id="${h(sid)}" data-iscodex="${isCodex}" data-isopencode="${isOpenCode}">
             <span class="chevron">&#9654;</span>
-            <span class="session-title" title="${h(_displayTitle(s))}">${h(truncate(_displayTitle(s), 60))}</span>
+            <span class="session-title" title="${h(title)}">${h(truncate(title, 60))}</span>
           </span>
-          <button class="btn btn-sm ${btnCls}" data-action="toggleAttachClaudeSession" data-session-id="${h(sid)}" data-attached="${isAttached ? 'true' : 'false'}"${s.isCodexSession ? ' data-iscodex="true"' : ''}${s.isOpenCodeSession ? ' data-isopencode="true"' : ''}>${btnText}</button>
+          <button class="btn btn-sm ${btnCls}" data-action="toggleAttachClaudeSession" data-session-id="${h(sid)}" data-title="${h(title)}" data-attached="${isAttached ? 'true' : 'false'}"${s.isCodexSession ? ' data-iscodex="true"' : ''}${s.isOpenCodeSession ? ' data-isopencode="true"' : ''}>${btnText}</button>
         </div>
         <div class="session-meta">
           <span class="session-cwd">${h(truncate(s.cwd || '', 50))}</span>
@@ -1014,6 +1015,7 @@ ${renderSubscribe()}
         action: action,
         sessionId: target.dataset.sessionId,
         attached: target.dataset.attached === 'true',
+        title: target.dataset.title || '',
         iscodex: target.dataset.iscodex === 'true',
         isopencode: target.dataset.isopencode === 'true',
       });
