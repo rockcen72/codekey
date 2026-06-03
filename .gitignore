@@ -52,3 +52,12 @@ docs/plans/subscription-plan.md
 # OS
 .DS_Store
 Thumbs.db
+
+# Documentation (not for VCS)
+# All docs/ and *.md files are working notes / release records; they
+# stay out of git from now on. Already-tracked docs (CLAUDE.md, audit,
+# release reference, B1 impact matrix, deployment guide, etc.) are
+# left in history — per the same "tracked docs unaffected" policy that
+# the original docs/superpowers/ exclude used.
+docs/
+*.md
