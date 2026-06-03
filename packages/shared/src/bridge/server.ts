@@ -28,6 +28,45 @@ interface CodexHookResponse {
   };
 }
 
+const DEFAULT_MAX_BODY_BYTES = 1_048_576; // 1 MB
+
+/**
+ * Read and parse a JSON request body, rejecting if the payload exceeds
+ * `maxBytes` (default 1 MB). On overflow, writes a 413 response and destroys
+ * the request socket. Resolves with the parsed JSON; rejects on overflow,
+ * invalid JSON, or stream error. Caller is responsible for handling the
+ * 400 response on non-overlow rejections.
+ */
+function readJsonBody(
+  req: IncomingMessage,
+  res: ServerResponse,
+  maxBytes = DEFAULT_MAX_BODY_BYTES,
+): Promise<unknown> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    let received = 0;
+    req.on('data', (chunk: Buffer) => {
+      received += chunk.length;
+      if (received > maxBytes) {
+        res.writeHead(413, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: false, error: 'payload too large' }));
+        req.destroy();
+        reject(new Error('payload too large'));
+        return;
+      }
+      chunks.push(chunk);
+    });
+    req.on('end', () => {
+      try {
+        resolve(JSON.parse(Buffer.concat(chunks).toString('utf-8')));
+      } catch (err) {
+        reject(err);
+      }
+    });
+    req.on('error', reject);
+  });
+}
+
 export function startBridgeServer(bridge: ApprovalBridge, port = 3001, source = 'cli', onShutdown?: () => void, startedAt?: number, bridgeConfig?: BridgeConfig, codexResumeManager?: CodexResumeManager, opencodeManager?: OpenCodeSessionManager): Promise<{ close: () => Promise<void>; port: number }> {
   let mpOnline = false;
   bridge.relay.on('mp_online', () => { mpOnline = true; });
@@ -86,11 +125,10 @@ function handleRequest(req: IncomingMessage, res: ServerResponse, bridge: Approv
   res.setHeader('Access-Control-Allow-Origin', '*');
 
   if (req.method === 'POST' && url.pathname === '/v1/hook/approval') {
-    let body = '';
-    req.on('data', (chunk) => { body += chunk; });
-    req.on('end', () => {
+    readJsonBody(req, res).then((rawBody) => {
+      const body = rawBody as any;
       try {
-        const input = JSON.parse(body);
+        const input = body;
         bridge.handleApproval(input).then((result) => {
           res.writeHead(200, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify(result));
@@ -99,16 +137,19 @@ function handleRequest(req: IncomingMessage, res: ServerResponse, bridge: Approv
         res.writeHead(400, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ ok: false, error: 'invalid payload' }));
       }
+    }).catch((err: Error) => {
+      if (err?.message === 'payload too large') return;
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: false, error: 'invalid payload' }));
     });
     return;
   }
 
   if (req.method === 'POST' && url.pathname === '/v1/hook-event') {
-    let body = '';
-    req.on('data', (chunk) => { body += chunk; });
-    req.on('end', () => {
+    readJsonBody(req, res).then((rawBody) => {
+      const body = rawBody as any;
       try {
-        const input: HookEventBody = JSON.parse(body);
+        const input: HookEventBody = body;
         bridge.handleHookEvent(input).catch((err: unknown) => {
           console.error('[bridge] hook event error:', err);
         });
@@ -118,6 +159,10 @@ function handleRequest(req: IncomingMessage, res: ServerResponse, bridge: Approv
         res.writeHead(400, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ ok: false, error: 'invalid payload' }));
       }
+    }).catch((err: Error) => {
+      if (err?.message === 'payload too large') return;
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: false, error: 'invalid payload' }));
     });
     return;
   }
@@ -130,11 +175,10 @@ function handleRequest(req: IncomingMessage, res: ServerResponse, bridge: Approv
   }
 
   if (req.method === 'POST' && url.pathname === '/v1/codex/approval') {
-    let body = '';
-    req.on('data', (chunk) => { body += chunk; });
-    req.on('end', () => {
+    readJsonBody(req, res).then((rawBody) => {
+      const body = rawBody as any;
       try {
-        const { correlationId, command, risk } = JSON.parse(body);
+        const { correlationId, command, risk } = body;
         if (correlationId && codexRelay) codexRelay.registerApproval(correlationId, command || '', risk || 'medium');
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ ok: true }));
@@ -142,6 +186,10 @@ function handleRequest(req: IncomingMessage, res: ServerResponse, bridge: Approv
         res.writeHead(400, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: 'invalid payload' }));
       }
+    }).catch((err: Error) => {
+      if (err?.message === 'payload too large') return;
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: false, error: 'invalid payload' }));
     });
     return;
   }
@@ -154,13 +202,12 @@ function handleRequest(req: IncomingMessage, res: ServerResponse, bridge: Approv
   }
 
   if (req.method === 'POST' && url.pathname === '/v1/codex/session/ensure') {
-    let body = '';
-    req.on('data', (chunk) => { body += chunk; });
-    req.on('end', () => {
+    readJsonBody(req, res).then((rawBody) => {
+      const body = rawBody as any;
       let metadata: Record<string, string> = {};
       try {
         if (body.trim()) {
-          const input = JSON.parse(body);
+          const input = body;
           metadata = {
             ...(typeof input.windowId === 'string' && input.windowId ? { windowId: input.windowId } : {}),
             ...(typeof input.title === 'string' && input.title ? { title: input.title } : {}),
@@ -180,16 +227,19 @@ function handleRequest(req: IncomingMessage, res: ServerResponse, bridge: Approv
         res.writeHead(500, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: 'session_register_failed' }));
       });
+    }).catch((err: Error) => {
+      if (err?.message === 'payload too large') return;
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: false, error: 'invalid payload' }));
     });
     return;
   }
 
   if (req.method === 'POST' && url.pathname === '/v1/codex/event') {
-    let body = '';
-    req.on('data', (chunk) => { body += chunk; });
-    req.on('end', () => {
+    readJsonBody(req, res).then((rawBody) => {
+      const body = rawBody as any;
       try {
-        const { eventType, data } = JSON.parse(body);
+        const { eventType, data } = body;
         if (eventType && codexRelay) codexRelay.pushEvent(eventType, data || {});
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ ok: true }));
@@ -197,6 +247,10 @@ function handleRequest(req: IncomingMessage, res: ServerResponse, bridge: Approv
         res.writeHead(400, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: 'invalid payload' }));
       }
+    }).catch((err: Error) => {
+      if (err?.message === 'payload too large') return;
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: false, error: 'invalid payload' }));
     });
     return;
   }
@@ -233,11 +287,10 @@ function handleRequest(req: IncomingMessage, res: ServerResponse, bridge: Approv
   }
 
   if (req.method === 'POST' && url.pathname === '/v1/codex-sessions/resume' && codexResumeManager) {
-    let body = '';
-    req.on('data', (chunk) => { body += chunk; });
-    req.on('end', () => {
+    readJsonBody(req, res).then((rawBody) => {
+      const body = rawBody as any;
       try {
-        const { sessionId, cwd } = JSON.parse(body);
+        const { sessionId, cwd } = body;
         // Scan broadly to find the exact session by ID, regardless of sort order
         const sessions = codexResumeManager.discoverSessions(50, cwd || undefined);
         const session = sessions.find(s => s.sessionId === sessionId);
@@ -257,16 +310,19 @@ function handleRequest(req: IncomingMessage, res: ServerResponse, bridge: Approv
         res.writeHead(400, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ ok: false, error: 'invalid payload' }));
       }
+    }).catch((err: Error) => {
+      if (err?.message === 'payload too large') return;
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: false, error: 'invalid payload' }));
     });
     return;
   }
 
   if (req.method === 'POST' && url.pathname === '/v1/codex-sessions/stop' && codexResumeManager) {
-    let body = '';
-    req.on('data', (chunk) => { body += chunk; });
-    req.on('end', () => {
+    readJsonBody(req, res).then((rawBody) => {
+      const body = rawBody as any;
       try {
-        const { sessionId } = JSON.parse(body);
+        const { sessionId } = body;
         codexResumeManager.stopResume(sessionId).then(() => {
           res.writeHead(200, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ ok: true }));
@@ -278,6 +334,10 @@ function handleRequest(req: IncomingMessage, res: ServerResponse, bridge: Approv
         res.writeHead(400, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ ok: false, error: 'invalid payload' }));
       }
+    }).catch((err: Error) => {
+      if (err?.message === 'payload too large') return;
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: false, error: 'invalid payload' }));
     });
     return;
   }
@@ -321,9 +381,8 @@ function handleRequest(req: IncomingMessage, res: ServerResponse, bridge: Approv
   // Body: { session_id, cwd, tool_name, tool_input, ... } (from Codex hook stdin)
   // Returns: { hookSpecificOutput: { hookEventName, decision: { behavior, message? } } }
   if (req.method === 'POST' && url.pathname === '/v1/codex-hooks/permission-request') {
-    let body = '';
-    req.on('data', (chunk) => { body += chunk; });
-    req.on('end', async () => {
+    readJsonBody(req, res).then(async (rawBody) => {
+      const body = rawBody as any;
       let timeout: ReturnType<typeof setTimeout> | null = null;
       let regTimer: ReturnType<typeof setTimeout> | null = null;
       let regHandler: ((p: unknown) => void) | null = null;
@@ -360,7 +419,7 @@ function handleRequest(req: IncomingMessage, res: ServerResponse, bridge: Approv
       }
 
       try {
-        const input = JSON.parse(body);
+        const input = body;
         const codexSessionId = input.session_id || 'unknown';
         const toolName = input.tool_name || 'unknown';
         const toolInput = input.tool_input || {};
@@ -507,6 +566,10 @@ function handleRequest(req: IncomingMessage, res: ServerResponse, bridge: Approv
         console.error('[codex-hooks] error:', err);
         finish('deny', 'Bridge error');
       }
+    }).catch((err: Error) => {
+      if (err?.message === 'payload too large') return;
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: false, error: 'invalid payload' }));
     });
     return;
   }
@@ -516,11 +579,10 @@ function handleRequest(req: IncomingMessage, res: ServerResponse, bridge: Approv
   // OpenCode plugin sends events here for sidebar state display only.
   // No decision logic is derived from this data.
   if (req.method === 'POST' && url.pathname === '/v1/opencode/telemetry') {
-    let body = '';
-    req.on('data', (chunk) => { body += chunk; });
-    req.on('end', () => {
+    readJsonBody(req, res).then((rawBody) => {
+      const body = rawBody as any;
       try {
-        const input = JSON.parse(body);
+        const input = body;
         // Route telemetry events through the SSE handler to forward to relay
         if (opencodeManager && input.type && input.properties) {
           opencodeManager.handleSSEEvent(input).catch(() => {});
@@ -530,6 +592,10 @@ function handleRequest(req: IncomingMessage, res: ServerResponse, bridge: Approv
       }
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ ok: true }));
+    }).catch((err: Error) => {
+      if (err?.message === 'payload too large') return;
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: false, error: 'invalid payload' }));
     });
     return;
   }
@@ -575,11 +641,10 @@ function handleRequest(req: IncomingMessage, res: ServerResponse, bridge: Approv
 
   // ── OpenCode session attach/detach ─────────────────────────
   if (req.method === 'POST' && url.pathname === '/v1/opencode-sessions/attach') {
-    let body = '';
-    req.on('data', (chunk) => { body += chunk; });
-    req.on('end', () => {
+    readJsonBody(req, res).then((rawBody) => {
+      const body = rawBody as any;
       try {
-        const { sessionId, title } = JSON.parse(body);
+        const { sessionId, title } = body;
         if (!sessionId) { res.writeHead(400); res.end('{}'); return; }
         // Respond immediately — relay registration + history push runs async
         res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -612,16 +677,19 @@ function handleRequest(req: IncomingMessage, res: ServerResponse, bridge: Approv
         res.writeHead(400);
         res.end('{}');
       }
+    }).catch((err: Error) => {
+      if (err?.message === 'payload too large') return;
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: false, error: 'invalid payload' }));
     });
     return;
   }
 
   if (req.method === 'POST' && url.pathname === '/v1/opencode-sessions/detach') {
-    let body = '';
-    req.on('data', (chunk) => { body += chunk; });
-    req.on('end', () => {
+    readJsonBody(req, res).then((rawBody) => {
+      const body = rawBody as any;
       try {
-        const { sessionId, serverSessionId } = JSON.parse(body);
+        const { sessionId, serverSessionId } = body;
         if (!sessionId) { res.writeHead(400); res.end('{}'); return; }
         const detach = opencodeManager
           ? opencodeManager.detachSession(sessionId, typeof serverSessionId === 'string' ? serverSessionId : undefined)
@@ -641,6 +709,10 @@ function handleRequest(req: IncomingMessage, res: ServerResponse, bridge: Approv
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ ok: true }));
       }
+    }).catch((err: Error) => {
+      if (err?.message === 'payload too large') return;
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: false, error: 'invalid payload' }));
     });
     return;
   }
@@ -703,11 +775,10 @@ function handleRequest(req: IncomingMessage, res: ServerResponse, bridge: Approv
   }
 
   if (req.method === 'POST' && url.pathname === '/v1/approval-response') {
-    let body = '';
-    req.on('data', (chunk) => { body += chunk; });
-    req.on('end', () => {
+    readJsonBody(req, res).then((rawBody) => {
+      const body = rawBody as any;
       try {
-        const input = JSON.parse(body);
+        const input = body;
         const sessionId = typeof input.sessionId === 'string' ? input.sessionId : '';
         const eventId = typeof input.eventId === 'string' ? input.eventId : '';
         const clientEventId = typeof input.clientEventId === 'string' ? input.clientEventId : '';
@@ -738,16 +809,19 @@ function handleRequest(req: IncomingMessage, res: ServerResponse, bridge: Approv
         res.writeHead(400, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ ok: false, error: 'invalid payload' }));
       }
+    }).catch((err: Error) => {
+      if (err?.message === 'payload too large') return;
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: false, error: 'invalid payload' }));
     });
     return;
   }
 
   if (req.method === 'POST' && url.pathname === '/v1/pending-commands/claim') {
-    let body = '';
-    req.on('data', (chunk) => { body += chunk; });
-    req.on('end', () => {
+    readJsonBody(req, res).then((rawBody) => {
+      const body = rawBody as any;
       try {
-        const { ids } = JSON.parse(body);
+        const { ids } = body;
         if (!Array.isArray(ids)) throw new Error('ids must be an array');
         const claimed = bridge.commandQueue.claim(ids);
         // Record phone command fingerprints for transcript prompt dedup
@@ -760,16 +834,19 @@ function handleRequest(req: IncomingMessage, res: ServerResponse, bridge: Approv
         res.writeHead(400, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: 'invalid payload' }));
       }
+    }).catch((err: Error) => {
+      if (err?.message === 'payload too large') return;
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: false, error: 'invalid payload' }));
     });
     return;
   }
 
   if (req.method === 'POST' && url.pathname === '/v1/register-window') {
-    let body = '';
-    req.on('data', (chunk) => { body += chunk; });
-    req.on('end', () => {
+    readJsonBody(req, res).then((rawBody) => {
+      const body = rawBody as any;
       try {
-        const { windowId } = JSON.parse(body);
+        const { windowId } = body;
         if (windowId) bridge.registerWindow(windowId);
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ ok: true }));
@@ -777,16 +854,19 @@ function handleRequest(req: IncomingMessage, res: ServerResponse, bridge: Approv
         res.writeHead(400, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ ok: false }));
       }
+    }).catch((err: Error) => {
+      if (err?.message === 'payload too large') return;
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: false, error: 'invalid payload' }));
     });
     return;
   }
 
   if (req.method === 'POST' && url.pathname === '/v1/session-label') {
-    let body = '';
-    req.on('data', (chunk) => { body += chunk; });
-    req.on('end', () => {
+    readJsonBody(req, res).then((rawBody) => {
+      const body = rawBody as any;
       try {
-        const { windowId, label } = JSON.parse(body);
+        const { windowId, label } = body;
         if (windowId && label && typeof label === 'string') {
           bridge.setPendingLabel(windowId, label);
         }
@@ -796,17 +876,20 @@ function handleRequest(req: IncomingMessage, res: ServerResponse, bridge: Approv
         res.writeHead(400, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ ok: false }));
       }
+    }).catch((err: Error) => {
+      if (err?.message === 'payload too large') return;
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: false, error: 'invalid payload' }));
     });
     return;
   }
 
   // Sync a tab label to the relay for a specific claudeSessionId (startup use).
   if (req.method === 'POST' && url.pathname === '/v1/sync-session-label') {
-    let body = '';
-    req.on('data', (chunk) => { body += chunk; });
-    req.on('end', () => {
+    readJsonBody(req, res).then((rawBody) => {
+      const body = rawBody as any;
       try {
-        const { claudeSessionId, label } = JSON.parse(body);
+        const { claudeSessionId, label } = body;
         if (claudeSessionId && label && typeof label === 'string') {
           bridge.syncSessionLabel(claudeSessionId, label);
         }
@@ -816,16 +899,19 @@ function handleRequest(req: IncomingMessage, res: ServerResponse, bridge: Approv
         res.writeHead(400, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ ok: false }));
       }
+    }).catch((err: Error) => {
+      if (err?.message === 'payload too large') return;
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: false, error: 'invalid payload' }));
     });
     return;
   }
 
   if (req.method === 'POST' && url.pathname === '/v1/activate-session') {
-    let body = '';
-    req.on('data', (chunk) => { body += chunk; });
-    req.on('end', () => {
+    readJsonBody(req, res).then((rawBody) => {
+      const body = rawBody as any;
       try {
-        const { windowId, sessionLabel, windowIdPrefix } = JSON.parse(body);
+        const { windowId, sessionLabel, windowIdPrefix } = body;
         if (!windowId) {
           res.writeHead(400, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ ok: false, error: 'windowId required' }));
@@ -839,16 +925,19 @@ function handleRequest(req: IncomingMessage, res: ServerResponse, bridge: Approv
         res.writeHead(400, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ ok: false, error: 'invalid payload' }));
       }
+    }).catch((err: Error) => {
+      if (err?.message === 'payload too large') return;
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: false, error: 'invalid payload' }));
     });
     return;
   }
 
   if (req.method === 'POST' && url.pathname === '/v1/deactivate-session') {
-    let body = '';
-    req.on('data', (chunk) => { body += chunk; });
-    req.on('end', () => {
+    readJsonBody(req, res).then((rawBody) => {
+      const body = rawBody as any;
       try {
-        const { windowId } = JSON.parse(body);
+        const { windowId } = body;
         if (!windowId) {
           res.writeHead(400, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ ok: false, error: 'windowId required' }));
@@ -862,6 +951,10 @@ function handleRequest(req: IncomingMessage, res: ServerResponse, bridge: Approv
         res.writeHead(400, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ ok: false, error: 'invalid payload' }));
       }
+    }).catch((err: Error) => {
+      if (err?.message === 'payload too large') return;
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: false, error: 'invalid payload' }));
     });
     return;
   }
@@ -870,11 +963,10 @@ function handleRequest(req: IncomingMessage, res: ServerResponse, bridge: Approv
   // Used by VS Code deactivate() which must return quickly.
   // Deactivates ALL sessions matching the windowId prefix (window-level + tab-level).
   if (req.method === 'POST' && url.pathname === '/v1/close-window') {
-    let body = '';
-    req.on('data', (chunk) => { body += chunk; });
-    req.on('end', () => {
+    readJsonBody(req, res).then((rawBody) => {
+      const body = rawBody as any;
       try {
-        const { windowId } = JSON.parse(body);
+        const { windowId } = body;
         if (windowId) {
           bridge.deactivateByWindow(windowId);
         }
@@ -884,6 +976,10 @@ function handleRequest(req: IncomingMessage, res: ServerResponse, bridge: Approv
         res.writeHead(400, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ ok: false }));
       }
+    }).catch((err: Error) => {
+      if (err?.message === 'payload too large') return;
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: false, error: 'invalid payload' }));
     });
     return;
   }
@@ -898,7 +994,11 @@ function handleRequest(req: IncomingMessage, res: ServerResponse, bridge: Approv
       .catch((err) => {
         res.writeHead(500, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ ok: false, error: String(err) }));
-      });
+      }).catch((err: Error) => {
+      if (err?.message === 'payload too large') return;
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: false, error: 'invalid payload' }));
+    });
     return;
   }
 
@@ -920,11 +1020,10 @@ function handleRequest(req: IncomingMessage, res: ServerResponse, bridge: Approv
   }
 
   if (req.method === 'POST' && url.pathname === '/v1/claude-sessions/attach') {
-    let body = '';
-    req.on('data', (chunk) => { body += chunk; });
-    req.on('end', () => {
+    readJsonBody(req, res).then((rawBody) => {
+      const body = rawBody as any;
       try {
-        const { sessionId } = JSON.parse(body);
+        const { sessionId } = body;
         if (!sessionId) {
           res.writeHead(400, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ ok: false, error: 'sessionId required' }));
@@ -941,16 +1040,19 @@ function handleRequest(req: IncomingMessage, res: ServerResponse, bridge: Approv
         res.writeHead(400, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ ok: false, error: 'invalid payload' }));
       }
+    }).catch((err: Error) => {
+      if (err?.message === 'payload too large') return;
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: false, error: 'invalid payload' }));
     });
     return;
   }
 
   if (req.method === 'POST' && url.pathname === '/v1/detach-session') {
-    let body = '';
-    req.on('data', (chunk) => { body += chunk; });
-    req.on('end', () => {
+    readJsonBody(req, res).then((rawBody) => {
+      const body = rawBody as any;
       try {
-        const { claudeSessionId } = JSON.parse(body);
+        const { claudeSessionId } = body;
         if (!claudeSessionId) {
           res.writeHead(400, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ ok: false, error: 'claudeSessionId required' }));
@@ -964,6 +1066,10 @@ function handleRequest(req: IncomingMessage, res: ServerResponse, bridge: Approv
         res.writeHead(400, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ ok: false, error: 'invalid payload' }));
       }
+    }).catch((err: Error) => {
+      if (err?.message === 'payload too large') return;
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: false, error: 'invalid payload' }));
     });
     return;
   }
@@ -995,11 +1101,10 @@ function handleRequest(req: IncomingMessage, res: ServerResponse, bridge: Approv
       res.end(JSON.stringify({ ok: false, error: 'no shutdown callback registered' }));
       return;
     }
-    let body = '';
-    req.on('data', (chunk) => { body += chunk; });
-    req.on('end', () => {
+    readJsonBody(req, res).then((rawBody) => {
+      const body = rawBody as any;
       try {
-        const { windowId } = JSON.parse(body);
+        const { windowId } = body;
         if (windowId) bridge.deactivateByWindow(windowId);
 
         // Check remaining windows with 60s TTL: stale windows (crashed VS Code)
@@ -1022,6 +1127,10 @@ function handleRequest(req: IncomingMessage, res: ServerResponse, bridge: Approv
         res.writeHead(400, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ ok: false, error: 'invalid payload' }));
       }
+    }).catch((err: Error) => {
+      if (err?.message === 'payload too large') return;
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: false, error: 'invalid payload' }));
     });
     return;
   }
