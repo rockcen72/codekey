@@ -176,21 +176,25 @@ function handleRequest(req: IncomingMessage, res: ServerResponse, bridge: Approv
   }
 
   if (req.method === 'POST' && url.pathname === '/v1/hook-event') {
+    console.error('[bridge] /v1/hook-event received');
     readJsonBody(req, res).then((rawBody) => {
       const body = rawBody as any;
       try {
         const input: HookEventBody = body;
+        console.error('[bridge] /v1/hook-event: eventType=%s claudeSessionId=%s', input.eventType, input.claudeSessionId?.slice(0, 8) ?? '(none)');
         bridge.handleHookEvent(input).catch((err: unknown) => {
           console.error('[bridge] hook event error:', err);
         });
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ ok: true }));
-      } catch {
+      } catch (err) {
+        console.error('[bridge] /v1/hook-event try-catch err: %s', (err as Error).message);
         res.writeHead(400, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ ok: false, error: 'invalid payload' }));
       }
     }).catch((err: Error) => {
       if (err?.message === 'payload too large') return;
+      console.error('[bridge] /v1/hook-event readJsonBody err: %s', err.message);
       res.writeHead(400, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ ok: false, error: 'invalid payload' }));
     });

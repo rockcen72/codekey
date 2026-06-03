@@ -27,6 +27,10 @@ process.stdin.on('end', () => {
         debugEnvWindowId: process.env.CODEKEY_WINDOW_ID || '(unset)',
         data: { type: 'session_idle', idleMinutes: 0 },
       }),
-    }).catch(() => { /* bridge may not be running */ });
+    }).then((r) => {
+      process.stderr.write(`[codekey-hook] /v1/hook-event → status=${r?.status} session=${claudeSessionId.slice(0, 8)} summary.len=${summary.length}\n`);
+    }).catch((err) => {
+      process.stderr.write(`[codekey-hook] /v1/hook-event fetch FAILED: ${err.message}\n`);
+    });
   } catch { /* ignore parse errors */ }
 });
