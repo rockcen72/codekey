@@ -262,11 +262,27 @@ export class CommandRelayService {
       // before writing the first command. Newer / larger transcripts take longer.
       log('[command-relay] new terminal, delaying sendText by 5s for session=%s', sessionId.slice(0, 8));
       setTimeout(() => {
-        log('[command-relay] sendText to resume terminal session=%s text=%s', sessionId.slice(0, 8), text);
-        term!.sendText(text, true);
+        if (!term || !vscode.window.terminals.includes(term)) {
+          log('[command-relay] sendText ABORT: terminal for session=%s no longer exists', sessionId.slice(0, 8));
+          return;
+        }
+        log('[command-relay] sendText → terminal: session=%s text=%s (terminal state=%s exitStatus=%s)',
+          sessionId.slice(0, 8), text.slice(0, 60),
+          term.state, JSON.stringify(term.exitStatus));
+        term.sendText(text, true);
+        // If the CC process exited (e.g. --resume failed), surface the failure.
+        setTimeout(() => {
+          if (!vscode.window.terminals.includes(term)) {
+            log('[command-relay] POST-CHECK: terminal for session=%s is GONE (CC exited? data may have been lost)', sessionId.slice(0, 8));
+          } else {
+            log('[command-relay] POST-CHECK: terminal for session=%s still alive (state=%s)', sessionId.slice(0, 8), term.state);
+          }
+        }, 2000);
       }, 5000);
     } else {
-      log('[command-relay] sendText to resume terminal session=%s text=%s', sessionId.slice(0, 8), text);
+      log('[command-relay] sendText → terminal: session=%s text=%s (terminal state=%s exitStatus=%s)',
+        sessionId.slice(0, 8), text.slice(0, 60),
+        term!.state, JSON.stringify(term!.exitStatus));
       term!.sendText(text, true);
     }
   }
