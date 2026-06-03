@@ -209,7 +209,7 @@ export function renderApprovalsContent(state: SidebarState): string {
 
   const agentColors: Record<string, string> = {
     'claude-code': '#orange', 'claude-code-hook': 'orange',
-    'codex': '#4fc1ff', 'opencode': '#c084fc',
+    'codex': '#4fc1ff', 'opencode': '#5c9cf5',
   };
 
   return Object.entries(groups).map(([sid, g]) => `

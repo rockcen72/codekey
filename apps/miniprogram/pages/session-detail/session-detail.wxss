@@ -177,7 +177,7 @@
 }
 
 .event-card.accent-pending.agent-opencode {
-  border-left-color: #8b5cf6;
+  border-left-color: #5c9cf5;
   background: #fbfaff;
 }
 
@@ -201,7 +201,7 @@
 
 .event-card.accent-approved.agent-opencode,
 .event-card.accent-complete.agent-opencode {
-  border-left-color: #8b5cf6;
+  border-left-color: #5c9cf5;
   background: #fbfaff;
 }
 
@@ -252,7 +252,7 @@
 }
 
 .agent-opencode .glyph-pending {
-  background: #8b5cf6;
+  background: #5c9cf5;
 }
 
 .glyph-approved,
@@ -272,7 +272,7 @@
 
 .agent-opencode .glyph-approved,
 .agent-opencode .glyph-complete {
-  background: #8b5cf6;
+  background: #5c9cf5;
 }
 
 .glyph-denied {

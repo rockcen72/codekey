@@ -72,7 +72,7 @@
 .conn-bar.online { background: #ea580c; }
 .conn-bar.online.agent-claude { background: #ea580c; }
 .conn-bar.online.agent-codex { background: #22c55e; }
-.conn-bar.online.agent-opencode { background: #8b5cf6; }
+.conn-bar.online.agent-opencode { background: #5c9cf5; }
 
 /* ── Card body ── */
 
