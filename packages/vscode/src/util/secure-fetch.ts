@@ -1,5 +1,4 @@
 import * as tls from 'node:tls';
-import * as http from 'node:http';
 import { URL } from 'node:url';
 import { log } from '../log.js';
 
@@ -111,50 +110,82 @@ function rawHttpsRequest(
       socket.destroy(new Error(`secure-fetch timeout after ${timeoutMs}ms`));
     }, timeoutMs);
 
-    socket.on('secureConnect', () => {
-      log(`[secure-fetch]   TLS established (authorized=${socket.authorized})`);
-      const req = http.request({
-        host: url.hostname,
-        port,
-        method: init?.method ?? 'GET',
-        path: url.pathname + url.search,
-        headers,
-        // Create the request on our pre-connected TLS socket.
-        createConnection: () => socket,
-      });
-      req.on('response', (res) => {
-        const chunks: Buffer[] = [];
-        res.on('data', (c: Buffer) => chunks.push(c));
-        res.on('end', () => {
-          clearTimeout(timer);
-          if (init?.signal) init.signal.removeEventListener('abort', onAbort);
-          if (aborted) return;
-          const body = Buffer.concat(chunks);
-          const responseHeaders = new Headers();
-          for (const [k, v] of Object.entries(res.headers)) {
-            if (Array.isArray(v)) v.forEach((vv) => responseHeaders.append(k, String(vv)));
-            else if (v != null) responseHeaders.set(k, String(v));
-          }
-          resolve({
-            status: res.statusCode ?? 0,
-            statusText: res.statusMessage ?? '',
-            ok: (res.statusCode ?? 0) >= 200 && (res.statusCode ?? 0) < 300,
-            headers: responseHeaders,
-            bodyText: body.toString(),
-          });
-        });
-      });
-      req.on('error', (err) => {
-        clearTimeout(timer);
-        if (!aborted) reject(err);
-      });
-      if (body !== undefined) req.write(body);
-      req.end();
+    // Accumulator for response data.
+    const responseChunks: Buffer[] = [];
+    let responseHeadersBuf = Buffer.alloc(0);
+
+    socket.on('data', (chunk: Buffer) => {
+      // Response data after headers are fully received.
+      responseChunks.push(chunk);
     });
+
+    socket.on('end', () => {
+      clearTimeout(timer);
+      if (init?.signal) init.signal.removeEventListener('abort', onAbort);
+      if (aborted) return;
+      // Parse the full response (headers + body).
+      const raw = Buffer.concat([responseHeadersBuf, ...responseChunks]);
+      const headerEnd = raw.indexOf('\r\n\r\n');
+      if (headerEnd === -1) {
+        return reject(new Error('secure-fetch: malformed response (no header terminator)'));
+      }
+      const headerText = raw.subarray(0, headerEnd).toString('utf-8');
+      const bodyBuf = raw.subarray(headerEnd + 4);
+      const headerLines = headerText.split('\r\n');
+      const statusLine = headerLines.shift() ?? '';
+      const statusMatch = statusLine.match(/^HTTP\/1\.[01] (\d{3})(?: (.*))?$/);
+      const status = statusMatch ? Number(statusMatch[1]) : 0;
+      const statusText = statusMatch?.[2] ?? '';
+      const responseHeaders = new Headers();
+      for (const line of headerLines) {
+        const idx = line.indexOf(':');
+        if (idx === -1) continue;
+        const k = line.slice(0, idx).trim();
+        const v = line.slice(idx + 1).trim();
+        if (k) responseHeaders.append(k.toLowerCase(), v);
+      }
+      resolve({
+        status,
+        statusText,
+        ok: status >= 200 && status < 300,
+        headers: responseHeaders,
+        bodyText: bodyBuf.toString('utf-8'),
+      });
+    });
+
     socket.on('error', (err) => {
       clearTimeout(timer);
       log(`[secure-fetch]   TLS error: ${err.message}`);
       if (!aborted) reject(err);
+    });
+
+    socket.on('secureConnect', () => {
+      log(`[secure-fetch]   TLS established (authorized=${socket.authorized})`);
+      // Hand-craft the HTTP/1.1 request bytes and write to the TLS socket.
+      // Using http.request over a TLS socket misbehaves in Electron 39.x
+      // (the body is sent as plain HTTP and nginx rejects it with 400).
+      // Writing the raw request bytes to the TLS socket avoids the layering.
+      const method = init?.method ?? 'GET';
+      const reqPath = url.pathname + url.search;
+      const headerLines: string[] = [`${method} ${reqPath} HTTP/1.1`];
+      for (const [k, v] of Object.entries(headers)) {
+        if (k === 'host') continue; // emit canonical host below
+        headerLines.push(`${k}: ${v}`);
+      }
+      headerLines.push(`Host: ${url.host}`);
+      headerLines.push(`Connection: close`);
+      if (body && !('content-length' in headers)) {
+        headerLines.push(`Content-Length: ${Buffer.byteLength(body)}`);
+      }
+      const reqBytes = Buffer.from(headerLines.join('\r\n') + '\r\n\r\n', 'utf-8');
+      socket.write(reqBytes);
+      if (body) {
+        const bodyBytes = Buffer.isBuffer(body) ? body : Buffer.from(body, 'utf-8');
+        socket.write(bodyBytes);
+      }
+      // The 'data' / 'end' events on the socket deliver the full TLS-decoded
+      // HTTP response. We concatenate it in `responseChunks` and parse on 'end'.
+      void responseHeadersBuf; // silence unused
     });
   });
 }
