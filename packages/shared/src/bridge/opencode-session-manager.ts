@@ -559,9 +559,23 @@ export class OpenCodeSessionManager {
   // ── Command handling ────────────────────────────────────
 
   async handleCommand(sessionId: string, text: string, claudeSessionId?: string): Promise<void> {
-    // Use claudeSessionId (openCode local ID) directly if available
     const opencodeSessionId = claudeSessionId || this.resolveLocalSessionId(sessionId) || sessionId;
     console.error('[opencode] handleCommand: sessionId=%s opencodeSessionId=%s', sessionId.slice(0, 8), opencodeSessionId.slice(0, 8));
+
+    // Ensure mapping exists for SSE event forwarding
+    if (claudeSessionId && !this.opencodeSessionToRelayId.has(claudeSessionId)) {
+      this.registerSession(claudeSessionId, sessionId);
+    }
+
+    // CC pattern: emit user_prompt FIRST so phone sees the command
+    this.bridge.sendEventToRelay(sessionId, {
+      clientEventId: `oc-phone:${Date.now()}:${Math.random()}`,
+      sessionId,
+      agent: 'opencode',
+      eventType: 'user_prompt',
+      data: { type: 'user_prompt', prompt: text, summary: text.slice(0, 200) },
+      ts: new Date().toISOString(),
+    });
 
     try {
       const url = `${this.opencodeBaseUrl}/session/${encodeURIComponent(opencodeSessionId)}/prompt_async`;
