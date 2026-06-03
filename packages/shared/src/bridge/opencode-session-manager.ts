@@ -84,6 +84,18 @@ export class OpenCodeSessionManager {
     this.opencodeSessionToRelayId.set(localSessionId, serverSessionId);
   }
 
+  /** Update the OpenCode base URL (called when port changes after restart). */
+  updateBaseUrl(newUrl: string): void {
+    this.opencodeBaseUrl = newUrl;
+    // Force reconnect with new URL
+    if (this._abortController) this._abortController.abort();
+    this._stopped = false;
+    this._reconnectDelay = INITIAL_RECONNECT_DELAY;
+    this.connectSSE().catch((err: Error) => {
+      console.error('[opencode] SSE reconnect after URL change failed:', err.message);
+    });
+  }
+
   async start(): Promise<void> {
     this.bridge.registerExternalApprovalResponder({
       agentType: 'opencode',

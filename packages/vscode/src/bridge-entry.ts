@@ -107,6 +107,19 @@ async function main(): Promise<void> {
     console.error('[bridge-entry] opencode CLI not found, skipping OpenCode integration');
   }
 
+  // Periodically re-discover OpenCode port (it changes on restart)
+  const openCodePortCheckMs = 30_000;
+  const openCodePortTimer = setInterval(() => {
+    if (!opencodeManager) return;
+    const currentPort = discoverOpenCodePort();
+    const currentUrl = `http://127.0.0.1:${currentPort}`;
+    if (currentUrl !== ocUrl) {
+      console.error('[bridge-entry] OpenCode port changed %s -> %s, reconnecting', ocUrl, currentUrl);
+      ocUrl = currentUrl;
+      opencodeManager.updateBaseUrl(ocUrl);
+    }
+  }, openCodePortCheckMs);
+
   // Admin panel dir: resolved relative to the bundled bridge-entry.js in extension dist
   const adminDir = __dirname;
 
@@ -114,6 +127,7 @@ async function main(): Promise<void> {
     clearInterval(parentTimer);
     clearInterval(reconcileTimer);
     clearInterval(pruneTimer);
+    clearInterval(openCodePortTimer);
     console.error('[bridge-entry] shutting down via /v1/shutdown');
     const tasks = [];
     if (opencodeManager) { opencodeManager.stop(); }
