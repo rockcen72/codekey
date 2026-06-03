@@ -59,7 +59,7 @@ export class RelayClient extends EventEmitter {
     }
 
     this.intentionalClose = false;
-    this.ws = new WebSocket(url.toString(), { rejectUnauthorized: false });
+    this.ws = new WebSocket(url.toString());
 
     this.connectionTimer = setTimeout(() => {
       console.error('[relay-client] connection timeout — aborting and retrying');
