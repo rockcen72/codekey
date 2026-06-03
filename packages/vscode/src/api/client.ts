@@ -1,4 +1,5 @@
 import type { Credentials } from '../auth/credentials.js';
+import { secureFetch } from '../util/secure-fetch.js';
 
 export class ApiError extends Error {
   constructor(public status: number, message: string) {
@@ -33,7 +34,7 @@ export function createApi(creds: Credentials) {
 
   async function request<T>(method: string, path: string, body?: any): Promise<T> {
     const signal = AbortSignal.timeout(5000);
-    const res = await fetch(`${base}${path}`, {
+    const res = await secureFetch(`${base}${path}`, {
       method,
       headers: {
         'Content-Type': 'application/json',

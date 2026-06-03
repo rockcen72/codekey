@@ -14,6 +14,7 @@ import { CommandRelayService } from './services/command-relay.js';
 import { BridgeStatusService } from './services/bridge-status.js';
 import { SessionStore } from './services/session-store.js';
 import { log, setVerbose, isVerbose } from './log.js';
+import { secureFetch } from './util/secure-fetch.js';
 
 let statusBar: StatusBar | null = null;
 
@@ -33,15 +34,36 @@ export function activate(context: vscode.ExtensionContext) {
   log(`creds: ${creds ? 'yes' : 'no'}`);
 
   // TLS verification is enabled by default. The relay server uses a valid
-  // Let's Encrypt certificate. For local development with self-signed certs,
-  // set CODEKEY_INSECURE_TLS=1 — NEVER in production.
+  // Let's Encrypt certificate. For local development or temporary deployment
+  // on IP-based endpoints where the cert SAN does not include the IP
+  // (common while a domain is still in ICP filing), set:
+  //   CODEKEY_INSECURE_TLS_HOSTS=81.70.235.58,api.example.dev
+  // Comma-separated hostnames. The relay CLIENT (PC extension + bridge WS)
+  // skips certificate verification ONLY for these hosts. Everything else
+  // still enforces strict TLS. This is a temporary workaround — once the
+  // domain is in production, drop the env var and re-package.
+  //
+  // Alternative escape hatch: CODEKEY_INSECURE_TLS=1 disables verification
+  // globally. NEVER use in production.
+  const insecureHosts = (process.env.CODEKEY_INSECURE_TLS_HOSTS ?? '')
+    .split(',')
+    .map((h) => h.trim())
+    .filter(Boolean);
+  if (insecureHosts.length > 0) {
+    console.warn(
+      `[CodeKey] CODEKEY_INSECURE_TLS_HOSTS=${insecureHosts.join(',')} — TLS verification disabled for these hosts only. Remove once the relay is served from a hostname matching its certificate.`,
+    );
+    // The shared bridge WebSocket client reads this list to decide per-host
+    // whether to set { rejectUnauthorized: false } on its `ws` connection.
+    process.env.CODEKEY_INSECURE_TLS_HOSTS = insecureHosts.join(',');
+  }
   if (process.env.CODEKEY_INSECURE_TLS === '1') {
-    console.warn('[CodeKey] CODEKEY_INSECURE_TLS=1 — TLS verification disabled. NEVER use in production.');
+    console.warn('[CodeKey] CODEKEY_INSECURE_TLS=1 — TLS verification disabled GLOBALLY. NEVER use in production.');
     process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
   }
 
   if (creds?.deviceToken) {
-    fetch(`${creds.relayUrl}/health`)
+    secureFetch(`${creds.relayUrl}/health`)
       .then((res) => { if (statusBar && res.ok) statusBar.set('paired'); })
       .catch(() => { if (statusBar) statusBar.set('offline'); });
   }

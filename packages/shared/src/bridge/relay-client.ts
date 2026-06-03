@@ -59,7 +59,17 @@ export class RelayClient extends EventEmitter {
     }
 
     this.intentionalClose = false;
-    this.ws = new WebSocket(url.toString());
+    // Per-host TLS bypass. Empty env = strict verification (default).
+    // Populated by extension.ts from CODEKEY_INSECURE_TLS_HOSTS.
+    const insecureHosts = (process.env.CODEKEY_INSECURE_TLS_HOSTS ?? '')
+      .split(',')
+      .map((h) => h.trim())
+      .filter(Boolean);
+    const skipVerify = insecureHosts.includes(url.hostname);
+    if (skipVerify) {
+      console.warn(`[relay-client] TLS verify skipped for host ${url.hostname} (in CODEKEY_INSECURE_TLS_HOSTS)`);
+    }
+    this.ws = new WebSocket(url.toString(), skipVerify ? { rejectUnauthorized: false } : undefined);
 
     this.connectionTimer = setTimeout(() => {
       console.error('[relay-client] connection timeout — aborting and retrying');

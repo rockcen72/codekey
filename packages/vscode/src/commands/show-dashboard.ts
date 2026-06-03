@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import { loadCredentials } from '../auth/credentials.js';
 import { showDashboardView } from '../webview/dashboard.js';
 import type { StatusBar } from '../status/bar.js';
+import { secureFetch } from '../util/secure-fetch.js';
 
 export async function showDashboard(
   context: vscode.ExtensionContext,
@@ -22,7 +23,7 @@ export async function showDashboard(
   }
 
   try {
-    const res = await fetch(`${creds.relayUrl}/health`);
+    const res = await secureFetch(`${creds.relayUrl}/health`);
     if (res.ok) {
       statusBar.set('paired');
     }

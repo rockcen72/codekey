@@ -23,6 +23,7 @@ import {
 } from './sidebar-html.js';
 import { loadConversation, loadCodexConversation } from '@codekey/shared/bridge';
 import { log } from '../log.js';
+import { secureFetch } from '../util/secure-fetch.js';
 
 const AGENT_DISPLAY_NAMES: Record<string, string> = {
   'claude-code': 'Claude Code',
@@ -804,7 +805,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     const creds = loadCredentials();
     if (creds?.deviceToken) {
       try {
-        await fetch(`${creds.relayUrl}/api/v1/devices/${creds.deviceId}`, {
+        await secureFetch(`${creds.relayUrl}/api/v1/devices/${creds.deviceId}`, {
           method: 'DELETE',
           headers: { 'Authorization': `Bearer ${creds.deviceToken}` },
           signal: AbortSignal.timeout(5000),
@@ -826,7 +827,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       const deviceSecret = crypto.randomUUID();
       const deviceSecretHash = crypto.createHash('sha256').update(deviceSecret).digest('hex');
       try {
-        const resp = await fetch(`${relayUrl}/api/v1/devices/pair`, {
+        const resp = await secureFetch(`${relayUrl}/api/v1/devices/pair`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ deviceSecretHash, deviceName: `VS Code (${os.hostname()})` }),
@@ -862,7 +863,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
 
     const deviceSecretHash = crypto.createHash('sha256').update(creds.deviceSecret).digest('hex');
     try {
-      const resp = await fetch(`${relayUrl}/api/v1/devices/pair`, {
+      const resp = await secureFetch(`${relayUrl}/api/v1/devices/pair`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

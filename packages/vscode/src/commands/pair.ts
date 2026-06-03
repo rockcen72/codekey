@@ -5,6 +5,7 @@ import { loadCredentials, saveCredentials } from '../auth/credentials.js';
 import { BridgeStatusService } from '../services/bridge-status.js';
 import type { StatusBar } from '../status/bar.js';
 import { log } from '../log.js';
+import { secureFetch } from '../util/secure-fetch.js';
 
 export async function pairDevice(_context: vscode.ExtensionContext, statusBar: StatusBar): Promise<void> {
   let channel: vscode.OutputChannel | undefined;
@@ -31,7 +32,7 @@ export async function pairDevice(_context: vscode.ExtensionContext, statusBar: S
     const body: Record<string, unknown> = { deviceSecretHash, deviceName: hostname };
     if (!isNew) body.deviceId = creds.deviceId;
 
-    const response = await fetch(`${relayUrl}/api/v1/devices/pair`, {
+    const response = await secureFetch(`${relayUrl}/api/v1/devices/pair`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
