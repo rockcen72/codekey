@@ -1,6 +1,7 @@
 import * as https from 'node:https';
 import * as http from 'node:http';
 import { URL } from 'node:url';
+import { log } from '../log.js';
 
 /**
  * Like globalThis.fetch, but with per-host TLS verification bypass.
@@ -26,9 +27,10 @@ function parseInsecureHosts(): string[] {
 function buildAgent(hostname: string): https.Agent | undefined {
   const insecureHosts = parseInsecureHosts();
   if (insecureHosts.includes(hostname)) {
-    console.warn(`[secure-fetch] TLS verify skipped for host ${hostname} (in CODEKEY_INSECURE_TLS_HOSTS)`);
+    log(`[secure-fetch] TLS verify skipped for host ${hostname}`);
     return new https.Agent({ rejectUnauthorized: false });
   }
+  log(`[secure-fetch] TLS verify ENFORCED for host ${hostname} (not in CODEKEY_INSECURE_TLS_HOSTS=${JSON.stringify(insecureHosts)})`);
   return undefined; // use globalAgent (strict verify)
 }
 
@@ -49,11 +51,16 @@ export async function secureFetch(
   const url = typeof input === 'string' ? new URL(input) : input;
   const timeoutMs = init?.timeoutMs ?? 10_000;
 
+  log(`[secure-fetch] → ${init?.method ?? 'GET'} ${url.href}`);
+
   // Non-HTTPS, or localhost: pass straight through to global fetch.
   if (url.protocol !== 'https:' || url.hostname === '127.0.0.1' || url.hostname === 'localhost') {
+    log(`[secure-fetch]   (passthrough to global fetch — non-HTTPS or localhost)`);
     const { timeoutMs: _drop, ...rest } = init ?? {};
     return fetch(input, { ...rest, signal: init?.signal ?? AbortSignal.timeout(timeoutMs) });
   }
+
+  log(`[secure-fetch]   (HTTPS — using custom Agent)`);
 
   // HTTPS with potential bypass: use node:https with a per-host Agent.
   return new Promise<Response>((resolve, reject) => {
@@ -96,7 +103,13 @@ export async function secureFetch(
         });
       },
     );
-    req.on('error', reject);
+    req.on('error', (err) => {
+      log(`[secure-fetch]   error: ${err.message}`);
+      reject(err);
+    });
+    req.on('close', () => {
+      log(`[secure-fetch]   socket closed`);
+    });
     req.setTimeout(timeoutMs, () => {
       req.destroy(new Error(`secure-fetch timeout after ${timeoutMs}ms`));
     });
