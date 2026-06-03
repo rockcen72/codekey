@@ -114,7 +114,13 @@ export class CommandRelayService {
   ): void {
     try {
       log('[command-relay] spawning CC --resume %s --print %s cwd=%s', sessionId.slice(0, 8), text.slice(0, 40), cwd ?? '(default)');
-      const child = spawn(binary.path, [...binary.args, '--resume', sessionId, '--print', text], {
+      // Phone-pushed commands use --resume --print so the session is
+      // synchronous (process and exit). We must bypass the permission
+      // prompt because the --print mode does not invoke the
+      // PermissionRequest hook, which would otherwise block on the
+      // phone approval flow. The user already authorised the command
+      // by pushing it from the mini program.
+      const child = spawn(binary.path, [...binary.args, '--resume', sessionId, '--print', text, '--permission-mode', 'bypassPermissions'], {
         stdio: ['ignore', 'pipe', 'pipe'],
         windowsHide: true,
         cwd,
