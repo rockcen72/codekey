@@ -55,7 +55,7 @@ function startAutoCleanup(sql: postgres.Sql): () => void {
 
 export async function buildApp(databaseUrl: string) {
   const sql = await initDb(databaseUrl);
-  const app = Fastify({ logger: false });
+  const app = Fastify({ logger: false, trustProxy: ['127.0.0.1', '::1'] });
 
   await app.register(fastifyCors, { origin: true });
   await app.register(fastifyWebsocket);
@@ -66,7 +66,7 @@ export async function buildApp(databaseUrl: string) {
   // mini program's interactive workload, but enough to throttle abuse.
   // Set RATE_LIMIT_DISABLED=1 to bypass for debugging.
   app.addHook('onRequest', async (req, reply) => {
-    if (req.url === '/ws' || req.url.startsWith('/ws?')) return; // skip WS upgrade
+    if (req.url === '/ws' || req.url.startsWith('/ws?') || req.url === '/health') return; // skip WS, health
     await rateLimit({ windowMs: 60_000, max: 240, keyPrefix: 'global' })(req, reply);
   });
 
