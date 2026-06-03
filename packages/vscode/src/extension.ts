@@ -49,6 +49,7 @@ export function activate(context: vscode.ExtensionContext) {
     .split(',')
     .map((h) => h.trim())
     .filter(Boolean);
+  log(`CODEKEY_INSECURE_TLS_HOSTS=${JSON.stringify(process.env.CODEKEY_INSECURE_TLS_HOSTS ?? null)} → parsed=${JSON.stringify(insecureHosts)}`);
   if (insecureHosts.length > 0) {
     console.warn(
       `[CodeKey] CODEKEY_INSECURE_TLS_HOSTS=${insecureHosts.join(',')} — TLS verification disabled for these hosts only. Remove once the relay is served from a hostname matching its certificate.`,
