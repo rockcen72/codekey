@@ -48,19 +48,22 @@ export class RelayClient extends EventEmitter {
     this.isPairing = isPairing;
   }
 
+  /** Track whether the current connect() attempt should use query-token fallback. */
+  private _headerAuthAttempted = false;
+
+  /** Track whether we already retried with query token after a header auth failure. */
+  private _queryFallbackRetried = false;
+
   connect(): void {
     const url = new URL('/ws', this.relayUrl);
     url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
     url.searchParams.set('device_id', this.deviceId);
     if (this.isPairing) {
-      // Pairing uses a one-time code, sent as a query param.
       url.searchParams.set('device_secret', this.deviceSecret);
+    } else if (this._queryFallbackRetried) {
+      // Already tried header auth and failed — use query token as fallback.
+      url.searchParams.set('token', this.deviceSecret);
     }
-    // Note: authenticated PC connections no longer put `token` in the
-    // query string. The token travels in the Authorization header below,
-    // keeping it out of access logs and referer headers. The server
-    // still accepts the legacy ?token= form for older PC clients that
-    // haven't rolled this change yet. Remove the fallback in 2026-08-01.
 
     this.intentionalClose = false;
     // Per-host TLS bypass. Empty env = strict verification (default).
@@ -81,6 +84,10 @@ export class RelayClient extends EventEmitter {
     if (skipVerify) wsOptions.rejectUnauthorized = false;
     if (!this.isPairing && this.deviceSecret) {
       wsOptions.headers = { Authorization: `Bearer ${this.deviceSecret}` };
+      // Legacy fallback: if the server doesn't support header auth (pre-B2),
+      // the WS connection will close immediately. Retry once with the token
+      // in the query string. Remove after 2026-08-01 (transition window).
+      this._headerAuthAttempted = true;
     }
     this.ws = new WebSocket(url.toString(), wsOptions);
 
@@ -136,8 +143,21 @@ export class RelayClient extends EventEmitter {
       }
     });
 
-    this.ws.on('close', () => {
+    this.ws.on('close', (code?: number) => {
       this.stopHeartbeat();
+      this.clearConnectionTimer(); // prevent old timeout from closing a fallback
+      // If header auth failed (new client, old server), retry once with
+      // query token. Remove after 2026-08-01 transition window.
+      if (code === 4001 && this._headerAuthAttempted && !this._queryFallbackRetried) {
+        this._queryFallbackRetried = true;
+        this._headerAuthAttempted = false;
+        console.error('[relay-client] header auth failed (old server?), retrying with query token');
+        this.connect();
+        return;
+      }
+      // Reset the fallback flag on reconnect or non-auth close.
+      this._queryFallbackRetried = false;
+      this._headerAuthAttempted = false;
       if (!this.intentionalClose) {
         this.scheduleReconnect();
       }
