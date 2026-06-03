@@ -54,9 +54,36 @@ function saveAttachedSessions(sessions: AttachedOpenCodeSession[]): void {
   } catch {}
 }
 
+/** Discover the OpenCode port from running process. Used for reconnect. */
+function discoverOpenCodePortLocal(): number | null {
+  try {
+    const cp = require('node:child_process');
+    if (process.platform === 'win32') {
+      for (const query of ['opencode', 'node']) {
+        try {
+          const out = cp.execSync(
+            `wmic process where "name like '%${query}%'" get CommandLine /format:list`,
+            { encoding: 'utf-8', timeout: 5000 },
+          );
+          const all = [...out.matchAll(/--port\s+(\d+)/g)];
+          if (all.length > 0) return Number(all[all.length - 1][1]);
+        } catch { /* try next query */ }
+      }
+    } else {
+      const out = cp.execSync('ps aux | grep -v grep | grep -E "opencode|node.*opencode"', {
+        encoding: 'utf-8', timeout: 5000,
+      });
+      const m = out.match(/--port\s+(\d+)/);
+      if (m) return Number(m[1]);
+    }
+  } catch { /* fall through */ }
+  return null;
+}
+
 export class OpenCodeSessionManager {
   private bridge: ApprovalBridge;
   private opencodeBaseUrl: string;
+  private _port: number;
 
   private opencodeSessions: Set<string> = new Set();
   private opencodeSessionToRelayId: Map<string, string> = new Map();
@@ -71,6 +98,7 @@ export class OpenCodeSessionManager {
 
   constructor(opencodeBaseUrl: string, bridge: ApprovalBridge) {
     this.opencodeBaseUrl = opencodeBaseUrl;
+    this._port = parseInt(new URL(opencodeBaseUrl).port, 10) || 4096;
     this.bridge = bridge;
   }
 
@@ -82,18 +110,6 @@ export class OpenCodeSessionManager {
   registerSession(localSessionId: string, serverSessionId: string): void {
     this.opencodeSessions.add(serverSessionId);
     this.opencodeSessionToRelayId.set(localSessionId, serverSessionId);
-  }
-
-  /** Update the OpenCode base URL (called when port changes after restart). */
-  updateBaseUrl(newUrl: string): void {
-    this.opencodeBaseUrl = newUrl;
-    // Force reconnect with new URL
-    if (this._abortController) this._abortController.abort();
-    this._stopped = false;
-    this._reconnectDelay = INITIAL_RECONNECT_DELAY;
-    this.connectSSE().catch((err: Error) => {
-      console.error('[opencode] SSE reconnect after URL change failed:', err.message);
-    });
   }
 
   async start(): Promise<void> {
@@ -258,12 +274,20 @@ export class OpenCodeSessionManager {
       clearTimeout(this._reconnectTimer);
       this._reconnectTimer = null;
     }
+    // Re-discover port on reconnect (OpenCode may have restarted)
+    const newPort = discoverOpenCodePortLocal();
+    if (newPort && newPort !== this._port) {
+      const newUrl = `http://127.0.0.1:${newPort}`;
+      console.error('[opencode] port changed %d -> %d, switching', this._port, newPort);
+      this.opencodeBaseUrl = newUrl;
+      this._port = newPort;
+    }
     const delay = this._reconnectDelay;
     this._reconnectDelay = Math.min(
       this._reconnectDelay * BACKOFF_MULTIPLIER,
       MAX_RECONNECT_DELAY,
     );
-    console.error('[opencode] SSE reconnecting in %dms', delay);
+    console.error('[opencode] SSE reconnecting in %dms (port=%d)', delay, this._port);
     this._reconnectTimer = setTimeout(() => {
       this._reconnectTimer = null;
       if (!this._stopped) this.connectSSE().catch(() => {});
