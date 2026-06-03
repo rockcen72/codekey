@@ -488,8 +488,15 @@ export class OpenCodeSessionManager {
     const partType = part.type as string;
 
     if (!sessionID || !messageID) return;
-    const serverSessionId = this.opencodeSessionToRelayId.get(sessionID);
-    if (!serverSessionId) return;
+    let serverSessionId = this.opencodeSessionToRelayId.get(sessionID);
+    if (!serverSessionId) {
+      // Auto-register on first response — CC does this via hook events
+      console.error('[opencode] onMessagePartUpdated: registering session %s on-the-fly', sessionID);
+      this.ensureRelaySession(sessionID).then((sid) => {
+        // Defer — next SSE event for this session will find the mapping
+      }).catch(() => {});
+      return;
+    }
 
     const key = `part:${partID}`;
     if (this.deliveredMessageParts.has(key)) return;
