@@ -504,6 +504,23 @@ export class OpenCodeSessionManager {
       this.deliveredMessageParts = new Set(arr.slice(-5000));
     }
 
+    // User message typed in TUI: emit as user_prompt
+    if (info.role === 'user') {
+      const summary = info.summary as Record<string, unknown> | undefined;
+      const text = (summary?.body as string) || (summary?.title as string) || '';
+      if (text) {
+        this.bridge.sendEventToRelay(serverSessionId, {
+          clientEventId: `oc-user:${messageID}:${Date.now()}`,
+          sessionId: serverSessionId,
+          agent: 'opencode',
+          eventType: 'user_prompt',
+          data: { type: 'user_prompt', prompt: text, summary: text.slice(0, 200) },
+          ts: new Date().toISOString(),
+        });
+      }
+      return;
+    }
+
     const error = info.error as Record<string, unknown> | undefined;
     if (error) {
       this.bridge.sendEventToRelay(serverSessionId, {
