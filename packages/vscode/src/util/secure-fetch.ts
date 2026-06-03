@@ -1,4 +1,4 @@
-import * as https from 'node:https';
+import * as tls from 'node:tls';
 import * as http from 'node:http';
 import { URL } from 'node:url';
 import { log } from '../log.js';
@@ -15,7 +15,14 @@ import { log } from '../log.js';
  * Once the relay is served from a hostname that matches its cert, drop the
  * env var and switch back to globalThis.fetch.
  *
- * Localhost (127.0.0.1) and HTTP URLs are passed through unchanged.
+ * Non-HTTPS and localhost URLs are passed through to global fetch unchanged.
+ *
+ * Implementation note: VS Code's extension host runs in Electron, and
+ * Electron's `https.request` (and globalThis.fetch) is sometimes routed
+ * through Chromium's network stack which ignores the `agent` parameter
+ * on `https.request`. We instead build the TLS socket ourselves with
+ * `tls.connect({ rejectUnauthorized: false })` so the bypass actually
+ * takes effect in the extension host.
  */
 function parseInsecureHosts(): string[] {
   return (process.env.CODEKEY_INSECURE_TLS_HOSTS ?? '')
@@ -24,24 +31,134 @@ function parseInsecureHosts(): string[] {
     .filter(Boolean);
 }
 
-function buildAgent(hostname: string): https.Agent | undefined {
-  const insecureHosts = parseInsecureHosts();
-  if (insecureHosts.includes(hostname)) {
-    log(`[secure-fetch] TLS verify skipped for host ${hostname}`);
-    return new https.Agent({ rejectUnauthorized: false });
-  }
-  log(`[secure-fetch] TLS verify ENFORCED for host ${hostname} (not in CODEKEY_INSECURE_TLS_HOSTS=${JSON.stringify(insecureHosts)})`);
-  return undefined; // use globalAgent (strict verify)
+interface FetchResponseLike {
+  status: number;
+  statusText: string;
+  ok: boolean;
+  headers: Headers;
+  text(): Promise<string>;
+  json<T = unknown>(): Promise<T>;
 }
 
-function writeRequestBody(body: unknown): string | Buffer | undefined {
-  if (body == null) return undefined;
-  if (typeof body === 'string') return body;
-  if (Buffer.isBuffer(body)) return body;
-  if (body instanceof URLSearchParams) return body.toString();
-  if (body instanceof ArrayBuffer) return Buffer.from(body);
-  // FormData / Blob / ReadableStream: fall back to global fetch which handles these.
-  return undefined;
+function buildRequest(
+  url: URL,
+  init: RequestInit | undefined,
+  timeoutMs: number,
+): { headers: Record<string, string>; body: string | Buffer | undefined } {
+  const headers: Record<string, string> = {
+    host: url.host,
+  };
+  if (init?.headers) {
+    const h = init.headers;
+    if (h instanceof Headers) {
+      h.forEach((v, k) => { headers[k.toLowerCase()] = v; });
+    } else if (Array.isArray(h)) {
+      for (const [k, v] of h) headers[k.toLowerCase()] = v;
+    } else {
+      for (const [k, v] of Object.entries(h as Record<string, string>)) {
+        headers[k.toLowerCase()] = v;
+      }
+    }
+  }
+  let body: string | Buffer | undefined;
+  if (init?.body != null) {
+    if (typeof init.body === 'string') body = init.body;
+    else if (Buffer.isBuffer(init.body)) body = init.body;
+    else if (init.body instanceof URLSearchParams) body = init.body.toString();
+    else body = String(init.body);
+    if (!('content-length' in headers) && body.length > 0) {
+      headers['content-length'] = String(Buffer.byteLength(body));
+    }
+  }
+  return { headers, body };
+}
+
+function rawHttpsRequest(
+  url: URL,
+  init: RequestInit | undefined,
+  timeoutMs: number,
+): Promise<FetchResponseLike> {
+  const { headers, body } = buildRequest(url, init, timeoutMs);
+  const insecureHosts = parseInsecureHosts();
+  const skipVerify = insecureHosts.includes(url.hostname);
+  log(`[secure-fetch]   raw https — skipVerify=${skipVerify} (hosts=${JSON.stringify(insecureHosts)})`);
+
+  return new Promise<FetchResponseLike>((resolve, reject) => {
+    const port = url.port ? Number(url.port) : 443;
+    // SNI: use the URL hostname. If it's an IP, RFC 6066 forbids SNI; pass
+    // an empty string to suppress the deprecation warning while still
+    // attempting handshake.
+    const sni = /^[0-9.]+$/.test(url.hostname) ? '' : url.hostname;
+    const socket = tls.connect({
+      host: url.hostname,
+      port,
+      servername: sni || undefined,
+      rejectUnauthorized: !skipVerify,
+    });
+
+    let aborted = false;
+    const onAbort = () => {
+      aborted = true;
+      socket.destroy(new Error('aborted'));
+    };
+    if (init?.signal) {
+      if (init.signal.aborted) {
+        socket.destroy(new Error('aborted'));
+        return;
+      }
+      init.signal.addEventListener('abort', onAbort);
+    }
+    const timer = setTimeout(() => {
+      socket.destroy(new Error(`secure-fetch timeout after ${timeoutMs}ms`));
+    }, timeoutMs);
+
+    socket.on('secureConnect', () => {
+      log(`[secure-fetch]   TLS established (authorized=${socket.authorized})`);
+      const req = http.request({
+        host: url.hostname,
+        port,
+        method: init?.method ?? 'GET',
+        path: url.pathname + url.search,
+        headers,
+        // Create the request on our pre-connected TLS socket.
+        createConnection: () => socket,
+      });
+      req.on('response', (res) => {
+        const chunks: Buffer[] = [];
+        res.on('data', (c: Buffer) => chunks.push(c));
+        res.on('end', () => {
+          clearTimeout(timer);
+          if (init?.signal) init.signal.removeEventListener('abort', onAbort);
+          if (aborted) return;
+          const body = Buffer.concat(chunks);
+          const responseHeaders = new Headers();
+          for (const [k, v] of Object.entries(res.headers)) {
+            if (Array.isArray(v)) v.forEach((vv) => responseHeaders.append(k, String(vv)));
+            else if (v != null) responseHeaders.set(k, String(v));
+          }
+          resolve({
+            status: res.statusCode ?? 0,
+            statusText: res.statusMessage ?? '',
+            ok: (res.statusCode ?? 0) >= 200 && (res.statusCode ?? 0) < 300,
+            headers: responseHeaders,
+            text: () => Promise.resolve(body.toString()),
+            json: <T = unknown>() => Promise.resolve(JSON.parse(body.toString()) as T),
+          });
+        });
+      });
+      req.on('error', (err) => {
+        clearTimeout(timer);
+        if (!aborted) reject(err);
+      });
+      if (body !== undefined) req.write(body);
+      req.end();
+    });
+    socket.on('error', (err) => {
+      clearTimeout(timer);
+      log(`[secure-fetch]   TLS error: ${err.message}`);
+      if (!aborted) reject(err);
+    });
+  });
 }
 
 export async function secureFetch(
@@ -53,79 +170,21 @@ export async function secureFetch(
 
   log(`[secure-fetch] → ${init?.method ?? 'GET'} ${url.href}`);
 
-  // Non-HTTPS, or localhost: pass straight through to global fetch.
-  if (url.protocol !== 'https:' || url.hostname === '127.0.0.1' || url.hostname === 'localhost') {
-    log(`[secure-fetch]   (passthrough to global fetch — non-HTTPS or localhost)`);
-    const { timeoutMs: _drop, ...rest } = init ?? {};
-    return fetch(input, { ...rest, signal: init?.signal ?? AbortSignal.timeout(timeoutMs) });
+  if (url.protocol !== 'https:') {
+    log(`[secure-fetch]   (HTTP — using global fetch)`);
+    return fetch(input, { ...init, signal: init?.signal ?? AbortSignal.timeout(timeoutMs) });
+  }
+  if (url.hostname === '127.0.0.1' || url.hostname === 'localhost') {
+    log(`[secure-fetch]   (localhost — using global fetch)`);
+    return fetch(input, { ...init, signal: init?.signal ?? AbortSignal.timeout(timeoutMs) });
   }
 
-  log(`[secure-fetch]   (HTTPS — using custom Agent)`);
-
-  // HTTPS with potential bypass: use node:https with a per-host Agent.
-  return new Promise<Response>((resolve, reject) => {
-    const headers: Record<string, string> = {};
-    if (init?.headers) {
-      const h = init.headers;
-      if (h instanceof Headers) {
-        h.forEach((v, k) => { headers[k] = v; });
-      } else if (Array.isArray(h)) {
-        for (const [k, v] of h) headers[k] = v;
-      } else {
-        Object.assign(headers, h as Record<string, string>);
-      }
-    }
-    const agent = buildAgent(url.hostname);
-    const req = https.request(
-      {
-        hostname: url.hostname,
-        port: url.port || 443,
-        path: url.pathname + url.search,
-        method: init?.method ?? 'GET',
-        agent,
-        headers,
-      },
-      (res) => {
-        const chunks: Buffer[] = [];
-        res.on('data', (c: Buffer) => chunks.push(c));
-        res.on('end', () => {
-          const body = Buffer.concat(chunks);
-          const responseHeaders = new Headers();
-          for (const [k, v] of Object.entries(res.headers)) {
-            if (Array.isArray(v)) v.forEach((vv) => responseHeaders.append(k, vv));
-            else if (v != null) responseHeaders.set(k, String(v));
-          }
-          resolve(new Response(body, {
-            status: res.statusCode ?? 0,
-            statusText: res.statusMessage ?? '',
-            headers: responseHeaders,
-          }));
-        });
-      },
-    );
-    req.on('error', (err) => {
-      log(`[secure-fetch]   error: ${err.message}`);
-      reject(err);
-    });
-    req.on('close', () => {
-      log(`[secure-fetch]   socket closed`);
-    });
-    req.setTimeout(timeoutMs, () => {
-      req.destroy(new Error(`secure-fetch timeout after ${timeoutMs}ms`));
-    });
-    if (init?.signal) {
-      if (init.signal.aborted) {
-        req.destroy(new Error('aborted'));
-        return;
-      }
-      init.signal.addEventListener('abort', () => req.destroy(new Error('aborted')));
-    }
-
-    const body = writeRequestBody(init?.body);
-    if (body !== undefined) req.write(body);
-    req.end();
+  // HTTPS — manual TLS so rejectUnauthorized actually applies in Electron.
+  const result = await rawHttpsRequest(url, init, timeoutMs);
+  // Adapt to the global Response interface used by callers.
+  return new Response(await result.text(), {
+    status: result.status,
+    statusText: result.statusText,
+    headers: result.headers,
   });
 }
-
-// Silence unused-import lint for http (kept for future HTTP-only fallbacks).
-void http;
