@@ -1443,23 +1443,16 @@ export class ApprovalBridge {
    *  throws if no transcript found. Registers with relay using source='transcript_attach'.
    *  After registration, replays recent user prompts as user_prompt events (best-effort). */
   async attachClaudeSession(claudeSessionId: string): Promise<string> {
-    console.error(`[bridge] attachClaudeSession(${claudeSessionId.slice(0, 8)}) start`);
-    const transcript = await resolveClaudeTranscript(claudeSessionId).catch((err) => {
-      console.error(`[bridge] resolveClaudeTranscript err: ${(err as Error).message}`);
-      return null;
-    });
+    const transcript = await resolveClaudeTranscript(claudeSessionId).catch(() => null);
     if (!transcript) {
-      console.error(`[bridge] attachClaudeSession: no transcript for ${claudeSessionId.slice(0, 8)}`);
       throw new Error(`No local transcript found for session ${claudeSessionId}`);
     }
     this.transcriptAttachedIds.add(claudeSessionId);
     const existingServerSessionId = this.sessions.get(claudeSessionId);
-    console.error(`[bridge] attachClaudeSession: existingServerSessionId=${existingServerSessionId?.slice(0, 8) ?? 'null'}`);
     const serverSessionId = existingServerSessionId
       ?? await this.ensureSession(claudeSessionId, undefined, 'transcript_attach');
-    console.error(`[bridge] attachClaudeSession: serverSessionId resolved=${serverSessionId?.slice(0, 8)}`);
     if (existingServerSessionId) {
-      const sent = this.relay.sendRaw(JSON.stringify({
+      this.relay.sendRaw(JSON.stringify({
         type: 'attach_session',
         payload: {
           sessionId: existingServerSessionId,
@@ -1476,10 +1469,6 @@ export class ApprovalBridge {
           },
         },
       }));
-      const wsOpen = this.relay.status === 'connected';
-      console.error(`[bridge] attachClaudeSession: relay.sendRaw attach_session (ws=${wsOpen})`);
-    } else {
-      console.error(`[bridge] attachClaudeSession: skipping attach_session (no existing server session)`);
     }
     // Replay recent conversation history to relay (so phone sees same as sidebar)
     this.replayUserPrompts(claudeSessionId, serverSessionId).catch(() => {});

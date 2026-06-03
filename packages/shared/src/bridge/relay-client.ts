@@ -66,7 +66,6 @@ export class RelayClient extends EventEmitter {
       .map((h) => h.trim())
       .filter(Boolean);
     const skipVerify = insecureHosts.includes(url.hostname);
-    console.error(`[relay-client] WS connect → ${url.hostname} skipVerify=${skipVerify}`);
     this.ws = new WebSocket(url.toString(), skipVerify ? { rejectUnauthorized: false } : undefined);
 
     this.connectionTimer = setTimeout(() => {

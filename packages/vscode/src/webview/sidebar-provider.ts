@@ -232,15 +232,12 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
   }
 
   private async attachClaudeSession(sessionId: string): Promise<void> {
-    const bridgeUrl = this._bridgeService.getBridgeUrl();
-    log(`[attach] clicked sessionId=${sessionId.slice(0, 8)} → POST ${bridgeUrl}/v1/claude-sessions/attach`);
     try {
-      const res = await fetch(`${bridgeUrl}/v1/claude-sessions/attach`, {
+      const res = await fetch(`${this._bridgeService.getBridgeUrl()}/v1/claude-sessions/attach`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ sessionId }),
       });
-      log(`[attach] bridge responded status=${res.status}`);
       if (res.ok) {
         const creds = loadCredentials();
         if (creds?.deviceId) {
@@ -249,11 +246,9 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         vscode.window.showInformationMessage(`Session ${sessionId.slice(0, 8)} pushed to remote`);
       } else {
         const body = await res.json().catch(() => ({} as Record<string, unknown>));
-        log(`[attach] bridge error body=${JSON.stringify(body)}`);
         vscode.window.showErrorMessage(`Attach failed: ${(body as Record<string, unknown>).error || res.statusText}`);
       }
-    } catch (err) {
-      log(`[attach] fetch threw: ${(err as Error).message}`);
+    } catch {
       vscode.window.showErrorMessage('Attach failed: bridge not available');
     }
   }
