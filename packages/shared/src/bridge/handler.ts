@@ -1254,7 +1254,7 @@ export class ApprovalBridge {
       );
       if (isOpenCodeSession) {
         for (const handler of this._agentCommandHandlers) {
-          handler.handleCommand({ sessionId: payload.sessionId, data: payload.data }).catch((err) => {
+          handler.handleCommand({ sessionId: payload.sessionId, claudeSessionId: payload.claudeSessionId || '', data: payload.data }).catch((err) => {
             console.error('[bridge] opencode command handler error: %s', err);
           });
           return;

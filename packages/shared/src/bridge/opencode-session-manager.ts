@@ -93,7 +93,7 @@ export class OpenCodeSessionManager {
 
     this.bridge.registerAgentCommandHandler({
       ownsSession: (sid) => this.opencodeSessions.has(sid),
-      handleCommand: (payload) => this.handleCommand(payload.sessionId, payload.data),
+      handleCommand: (payload) => this.handleCommand(payload.sessionId, payload.data, payload.claudeSessionId || ''),
     });
 
     this.bridge.onEventAck((clientEventId, serverEventId) => {
@@ -558,15 +558,10 @@ export class OpenCodeSessionManager {
 
   // ── Command handling ────────────────────────────────────
 
-  async handleCommand(sessionId: string, text: string): Promise<void> {
-    const opencodeSessionId = this.resolveLocalSessionId(sessionId);
-    if (!opencodeSessionId) {
-      console.error('[opencode] handleCommand: no local session mapping for serverSessionId=%s, map=%s',
-        sessionId, JSON.stringify([...this.opencodeSessionToRelayId]));
-      this.bridge.sendErrorToRelay(sessionId, '会话映射未找到，请在侧边栏重新 Attach');
-      return;
-    }
-    console.error('[opencode] handleCommand: sending prompt to session %s', opencodeSessionId);
+  async handleCommand(sessionId: string, text: string, claudeSessionId?: string): Promise<void> {
+    // Use claudeSessionId (openCode local ID) directly if available
+    const opencodeSessionId = claudeSessionId || this.resolveLocalSessionId(sessionId) || sessionId;
+    console.error('[opencode] handleCommand: sessionId=%s opencodeSessionId=%s', sessionId.slice(0, 8), opencodeSessionId.slice(0, 8));
 
     try {
       const url = `${this.opencodeBaseUrl}/session/${encodeURIComponent(opencodeSessionId)}/prompt_async`;
