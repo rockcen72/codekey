@@ -120,6 +120,12 @@ export class CommandRelayService {
       // PermissionRequest hook, which would otherwise block on the
       // phone approval flow. The user already authorised the command
       // by pushing it from the mini program.
+      //
+      // SCOPE: This bypass applies ONLY to phone-pushed commands routed
+      // through _executeCommand. The user's interactive CC running in a
+      // managed VS Code terminal is unaffected — that path uses
+      // term.sendText() above and goes through the full PermissionRequest
+      // hook → phone approval flow.
       const child = spawn(binary.path, [...binary.args, '--resume', sessionId, '--print', text, '--permission-mode', 'bypassPermissions'], {
         stdio: ['ignore', 'pipe', 'pipe'],
         windowsHide: true,
