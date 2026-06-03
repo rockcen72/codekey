@@ -187,6 +187,12 @@
   background: #f9fcf9;
 }
 
+.event-card.accent-approved.agent-opencode,
+.event-card.accent-complete.agent-opencode {
+  border-left-color: #8b5cf6;
+  background: #fbfaff;
+}
+
 .event-card.accent-denied {
   border-left-color: var(--ck-danger);
   background: #fdf9f8;
