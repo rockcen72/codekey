@@ -147,7 +147,10 @@ export class OpenCodeSessionManager {
         .then(r => r.ok ? r.json() as Promise<any[]> : Promise.resolve([]))
         .catch((): any[] => []);
     };
-    return this.bridge.attachOpenCodeSession(localSessionId, fetchMessages, title);
+    return this.bridge.attachOpenCodeSession(localSessionId, fetchMessages, title, (localId, serverId) => {
+      this.registerSession(localId, serverId);
+      saveAttachedSessions([...loadAttachedSessions(), { localSessionId: localId, serverSessionId: serverId }]);
+    });
   }
 
   async detachSession(localSessionId: string, knownServerSessionId?: string): Promise<boolean> {
@@ -576,7 +579,8 @@ export class OpenCodeSessionManager {
         }),
       });
       if (!resp.ok) {
-        throw new Error(`OpenCode prompt_async returned ${resp.status}`);
+        const text = await resp.text().catch(() => '');
+        throw new Error(`OpenCode prompt_async returned ${resp.status}: ${text}`);
       }
       console.error('[opencode] handleCommand: prompt sent OK');
     } catch (err) {
