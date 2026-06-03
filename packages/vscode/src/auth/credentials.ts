@@ -39,5 +39,20 @@ export function clearCredentials(): void {
 export function saveCredentials(creds: Credentials): void {
   const dir = path.dirname(credentialsPath());
   fs.mkdirSync(dir, { recursive: true });
-  fs.writeFileSync(credentialsPath(), JSON.stringify(creds, null, 2), 'utf-8');
+  const filePath = credentialsPath();
+  fs.writeFileSync(filePath, JSON.stringify(creds, null, 2), {
+    mode: 0o600,
+    encoding: 'utf-8',
+  });
+  // Windows ignores the mode option; chmodSync is a no-op there. POSIX
+  // filesystems honor the mode, but call chmodSync as a belt-and-suspenders
+  // fallback (some umask configurations can mask the requested bits).
+  if (process.platform !== 'win32') {
+    try {
+      fs.chmodSync(filePath, 0o600);
+    } catch {
+      // Best-effort: if chmod fails, the file is still saved with mode from
+      // writeFileSync. Don't crash the credential-save path.
+    }
+  }
 }
