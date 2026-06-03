@@ -855,8 +855,13 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         };
         this._pushState();
       } catch (err) {
-        this._pairingState = { code: '', method: 'code', platform: this._pairingState?.platform || 'wechat', status: 'error', statusText: `Connection failed: ${(err as Error).message}`, expiresAt: 0 };
+        const msg = (err as Error).message;
+        log(`pairing generate failed: ${msg}`);
+        this._pairingState = { code: '', method: 'code', platform: this._pairingState?.platform || 'wechat', status: 'error', statusText: `Connection failed: ${msg}`, expiresAt: 0 };
         this._pushState();
+        // Also surface as a notification so the failure is unmissable, even
+        // if the small inline status is overlooked.
+        vscode.window.showErrorMessage(`CodeKey: pairing failed — ${msg}`);
       }
       return;
     }
@@ -893,8 +898,11 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       };
       this._pushState();
     } catch (err) {
-      this._pairingState = { code: '', method: 'code', platform: this._pairingState?.platform || 'wechat', status: 'error', statusText: `Connection failed: ${(err as Error).message}`, expiresAt: 0 };
+      const msg = (err as Error).message;
+      log(`pairing generate (with creds) failed: ${msg}`);
+      this._pairingState = { code: '', method: 'code', platform: this._pairingState?.platform || 'wechat', status: 'error', statusText: `Connection failed: ${msg}`, expiresAt: 0 };
       this._pushState();
+      vscode.window.showErrorMessage(`CodeKey: pairing failed — ${msg}`);
     }
   }
 
