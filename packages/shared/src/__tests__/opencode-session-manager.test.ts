@@ -289,6 +289,210 @@ describe('OpenCodeSessionManager event handling', () => {
       );
       expect(taskComplete).toBeDefined();
     });
+
+    it('surfaces error info from session.idle props as an error event', async () => {
+      // Register a session mapping so onSessionIdle can resolve it.
+      await (manager as any).handleSSEEvent({
+        type: 'permission.updated',
+        properties: {
+          id: 'perm-idle-err',
+          type: 'Bash',
+          sessionID: 'oc-session-7e',
+          messageID: 'msg-7e',
+          title: 'Test',
+          metadata: {},
+          time: { created: Date.now() },
+        },
+      });
+
+      relay.sent.length = 0;
+      relay.sentEvents.length = 0;
+
+      // OpenCode's session.idle sometimes carries an error payload even
+      // when no separate session.error event was emitted (e.g. agent
+      // gave up on a task). The phone needs the reason, not just
+      // "Session idle".
+      await (manager as any).handleSSEEvent({
+        type: 'session.idle',
+        properties: {
+          sessionID: 'oc-session-7e',
+          error: { message: 'Agent exceeded max iterations and aborted' },
+        },
+      });
+
+      const events = relay.sentEvents as any[];
+      const errorEvent = events.find(
+        (e: any) => e.payload?.eventType === 'error',
+      );
+      expect(errorEvent).toBeDefined();
+      expect(errorEvent.payload.data.message).toBe(
+        'Agent exceeded max iterations and aborted',
+      );
+
+      // task_complete should still fire so the phone UI knows the
+      // turn is over.
+      const taskComplete = events.find(
+        (e: any) => e.payload?.eventType === 'task_complete',
+      );
+      expect(taskComplete).toBeDefined();
+    });
+  });
+
+  describe('message.part.updated — phone-sent text echo', () => {
+    it('does NOT forward the echoed phone prompt as agent text', async () => {
+      // Register session mapping via permission event.
+      await (manager as any).handleSSEEvent({
+        type: 'permission.updated',
+        properties: {
+          id: 'perm-echo',
+          type: 'Bash',
+          sessionID: 'oc-session-echo',
+          messageID: 'msg-echo',
+          title: 'Test',
+          metadata: {},
+          time: { created: Date.now() },
+        },
+      });
+
+      relay.sent.length = 0;
+      relay.sentEvents.length = 0;
+
+      // Simulate the phone-sent command: in production this happens in
+      // handleCommand(), but we want to avoid the fetch side-effect, so
+      // we call the tracker directly.
+      (manager as any)._trackPhoneCommand('oc-session-echo', '查询上海天气');
+
+      // OpenCode echoes the user input as a text part on the user
+      // message. Without the fix, this fired a task_complete event
+      // marked as the agent's reply.
+      await (manager as any).handleSSEEvent({
+        type: 'message.part.updated',
+        properties: {
+          part: {
+            id: 'part-echo-1',
+            sessionID: 'oc-session-echo',
+            messageID: 'msg-echo',
+            type: 'text',
+            text: '查询上海天气',
+          },
+        },
+      });
+
+      const events = relay.sentEvents as any[];
+      const echoAsTaskComplete = events.find(
+        (e: any) =>
+          e.payload?.eventType === 'task_complete' &&
+          e.payload?.data?.summary === '查询上海天气',
+      );
+      expect(echoAsTaskComplete).toBeUndefined();
+    });
+
+    it('still forwards genuine agent text even after a phone command', async () => {
+      await (manager as any).handleSSEEvent({
+        type: 'permission.updated',
+        properties: {
+          id: 'perm-genuine',
+          type: 'Bash',
+          sessionID: 'oc-session-genuine',
+          messageID: 'msg-genuine',
+          title: 'Test',
+          metadata: {},
+          time: { created: Date.now() },
+        },
+      });
+
+      relay.sent.length = 0;
+      relay.sentEvents.length = 0;
+
+      (manager as any)._trackPhoneCommand('oc-session-genuine', '查询上海天气');
+
+      // The agent's actual reply — different text, should pass through.
+      await (manager as any).handleSSEEvent({
+        type: 'message.part.updated',
+        properties: {
+          part: {
+            id: 'part-genuine-1',
+            sessionID: 'oc-session-genuine',
+            messageID: 'msg-genuine',
+            type: 'text',
+            text: '上海今天多云，气温 22°C。',
+          },
+        },
+      });
+
+      const events = relay.sentEvents as any[];
+      const taskComplete = events.find(
+        (e: any) => e.payload?.eventType === 'task_complete',
+      );
+      expect(taskComplete).toBeDefined();
+      expect(taskComplete.payload.data.summary).toBe('上海今天多云，气温 22°C。');
+    });
+
+    it('does not consume the fingerprint on first match (allows multiple checks)', async () => {
+      // Regression guard: when message.part.updated fires before
+      // message.updated for the same user input, the part handler must
+      // not delete the entry that the message handler also needs.
+      await (manager as any).handleSSEEvent({
+        type: 'permission.updated',
+        properties: {
+          id: 'perm-multi',
+          type: 'Bash',
+          sessionID: 'oc-session-multi',
+          messageID: 'msg-multi',
+          title: 'Test',
+          metadata: {},
+          time: { created: Date.now() },
+        },
+      });
+
+      relay.sent.length = 0;
+      relay.sentEvents.length = 0;
+
+      (manager as any)._trackPhoneCommand('oc-session-multi', 'hello world');
+
+      // First check: text part — should suppress.
+      await (manager as any).handleSSEEvent({
+        type: 'message.part.updated',
+        properties: {
+          part: {
+            id: 'part-multi-1',
+            sessionID: 'oc-session-multi',
+            messageID: 'msg-multi',
+            type: 'text',
+            text: 'hello world',
+          },
+        },
+      });
+
+      // Second check: message.updated (TUI echo) — must STILL see the
+      // fingerprint as recent and suppress the user_prompt emission.
+      await (manager as any).handleSSEEvent({
+        type: 'message.updated',
+        properties: {
+          info: {
+            id: 'msg-multi',
+            sessionID: 'oc-session-multi',
+            role: 'user',
+            summary: { body: 'hello world' },
+          },
+        },
+      });
+
+      // The text-part echo must not have produced a task_complete.
+      const events = relay.sentEvents as any[];
+      const echo = events.find(
+        (e: any) =>
+          e.payload?.eventType === 'task_complete' &&
+          e.payload?.data?.summary === 'hello world',
+      );
+      expect(echo).toBeUndefined();
+
+      // The TUI-echo user_prompt must not have fired either.
+      const userPrompts = events.filter(
+        (e: any) => e.payload?.eventType === 'user_prompt',
+      );
+      expect(userPrompts.length).toBe(0);
+    });
   });
 
   describe('session.created', () => {

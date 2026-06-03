@@ -90,6 +90,8 @@ export class OpenCodeSessionManager {
   private inFlightSessions: Map<string, Promise<string>> = new Map();
   private permissionMap: Map<string, { requestID: string; serverSessionId: string; localSessionID: string }> = new Map();
   private deliveredMessageParts: Set<string> = new Set();
+  /** Track recently sent phone commands to avoid echoing them back. */
+  private recentPhoneTexts = new Map<string, { text: string; expiresAt: number }>();
 
   private _abortController: AbortController | null = null;
   private _stopped = false;
@@ -452,13 +454,30 @@ export class OpenCodeSessionManager {
     const serverSessionId = this.opencodeSessionToRelayId.get(sessionID);
     if (!serverSessionId) return;
 
+    // OpenCode sometimes carries an error payload on session.idle even
+    // when no separate session.error event was emitted (e.g. the agent
+    // hit a max-iteration cap and gave up). Surface it as a proper
+    // error event so the phone can show the reason — otherwise the
+    // user only sees a generic "Session idle" and has no idea why the
+    // task ended without completing.
+    const errorObj = props.error as Record<string, unknown> | undefined;
+    if (errorObj) {
+      const message = (errorObj.message as string) || 'Session idle with error';
+      this.bridge.sendEventToRelay(serverSessionId, {
+        sessionId: serverSessionId,
+        agent: 'opencode',
+        eventType: 'error',
+        data: { type: 'error', message },
+      });
+    }
+
     this.bridge.sendEventToRelay(serverSessionId, {
       sessionId: serverSessionId,
       agent: 'opencode',
       eventType: 'task_complete',
       data: {
         type: 'task_complete',
-        summary: 'Session idle',
+        summary: errorObj ? (errorObj.message as string) || 'Session idle with error' : 'Session idle',
       },
     });
   }
@@ -508,7 +527,7 @@ export class OpenCodeSessionManager {
     if (info.role === 'user') {
       const summary = info.summary as Record<string, unknown> | undefined;
       const text = (summary?.body as string) || (summary?.title as string) || '';
-      if (text) {
+      if (text && !this._isRecentPhoneCommand(sessionID, text)) {
         this.bridge.sendEventToRelay(serverSessionId, {
           clientEventId: `oc-user:${messageID}:${Date.now()}`,
           sessionId: serverSessionId,
@@ -563,13 +582,22 @@ export class OpenCodeSessionManager {
       const text = (part.text as string) || (props.delta as string) || '';
       if (!text) return;
 
+      // Suppress the text-part echo of a phone-sent prompt. OpenCode
+      // surfaces the user input as a text part on the user message
+      // before any assistant reply; without this check, the phone
+      // sees the same string twice — once as its own user_prompt and
+      // once as a task_complete marked as the agent's reply.
+      if (this._isRecentPhoneCommand(sessionID, text)) return;
+
       this.bridge.sendEventToRelay(serverSessionId, {
+        clientEventId: `oc-part:${partID}:${Date.now()}`,
         sessionId: serverSessionId,
         agent: 'opencode',
         eventType: 'task_complete',
         data: {
           type: 'task_complete',
           summary: text.slice(0, 500),
+          summaryShort: text.slice(0, 200),
         },
       });
     } else if (partType === 'tool') {
@@ -631,7 +659,10 @@ export class OpenCodeSessionManager {
       this.registerSession(claudeSessionId, sessionId);
     }
 
-    // CC pattern: emit user_prompt FIRST so phone sees the command
+    // Track this text so onMessageUpdated doesn't echo it back
+    this._trackPhoneCommand(opencodeSessionId, text);
+
+    // Emit user_prompt FIRST so phone sees the command
     this.bridge.sendEventToRelay(sessionId, {
       clientEventId: `oc-phone:${Date.now()}:${Math.random()}`,
       sessionId,
@@ -660,6 +691,30 @@ export class OpenCodeSessionManager {
       console.error('[opencode] handleCommand: %s', (err as Error).message);
       this.bridge.sendErrorToRelay(sessionId, `命令发送失败: ${err}`);
     }
+  }
+
+  private _trackPhoneCommand(sessionID: string, text: string): void {
+    const fingerprint = text.trim().slice(0, 40);
+    if (!fingerprint) return;
+    this.recentPhoneTexts.set(`${sessionID}:${fingerprint}`, { text, expiresAt: Date.now() + 30_000 });
+  }
+
+  private _isRecentPhoneCommand(sessionID: string, text: string): boolean {
+    // Non-consuming check: the entry is removed only by the TTL
+    // sweeper. We have two call sites (message.updated for the TUI
+    // echo AND message.part.updated for the text-part echo) and the
+    // order in which OpenCode emits them is not guaranteed, so each
+    // site must see the entry. Same text repeating within 30s is
+    // almost always the same echoed prompt — suppressing all of them
+    // is the correct behaviour.
+    const fingerprint = text.trim().slice(0, 40);
+    const entry = this.recentPhoneTexts.get(`${sessionID}:${fingerprint}`);
+    if (!entry) return false;
+    if (Date.now() > entry.expiresAt) {
+      this.recentPhoneTexts.delete(`${sessionID}:${fingerprint}`);
+      return false;
+    }
+    return true;
   }
 
   private resolveLocalSessionId(serverSessionId: string): string | null {
