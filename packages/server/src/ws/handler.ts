@@ -727,14 +727,14 @@ export function wsHandler(sql: postgres.Sql) {
             WHERE device_id = ${deviceId}
               AND status = 'finished'
               AND metadata->>'source' = 'transcript_attach'
-              AND id <> ALL(${sql.array(keepIds.length > 0 ? keepIds : ['00000000-0000-0000-0000-000000000000'])})
+              AND id <> ALL(${sql.array(keepIds.length > 0 ? keepIds : ['00000000-0000-0000-0000-000000000000'])}::uuid[])
           `;
           if (toDelete.length === 0) return [];
 
           const ids = toDelete.map((r) => r.id);
-          await tx`DELETE FROM approvals WHERE session_id = ANY(${sql.array(ids)})`;
-          await tx`DELETE FROM events WHERE session_id = ANY(${sql.array(ids)})`;
-          await tx`DELETE FROM sessions WHERE id = ANY(${sql.array(ids)})`;
+          await tx`DELETE FROM approvals WHERE session_id = ANY(${sql.array(ids)}::uuid[])`;
+          await tx`DELETE FROM events WHERE session_id = ANY(${sql.array(ids)}::uuid[])`;
+          await tx`DELETE FROM sessions WHERE id = ANY(${sql.array(ids)}::uuid[])`;
           return ids;
         }).then((deletedIds) => {
           const count = Array.isArray(deletedIds) ? deletedIds.length : 0;
