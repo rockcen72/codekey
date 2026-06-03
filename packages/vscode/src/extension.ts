@@ -32,8 +32,13 @@ export function activate(context: vscode.ExtensionContext) {
   const creds = loadCredentials();
   log(`creds: ${creds ? 'yes' : 'no'}`);
 
-  // Allow self-signed certificates for relay HTTPS
-  process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
+  // TLS verification is enabled by default. The relay server uses a valid
+  // Let's Encrypt certificate. For local development with self-signed certs,
+  // set CODEKEY_INSECURE_TLS=1 — NEVER in production.
+  if (process.env.CODEKEY_INSECURE_TLS === '1') {
+    console.warn('[CodeKey] CODEKEY_INSECURE_TLS=1 — TLS verification disabled. NEVER use in production.');
+    process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
+  }
 
   if (creds?.deviceToken) {
     fetch(`${creds.relayUrl}/health`)
