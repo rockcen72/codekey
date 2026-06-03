@@ -696,6 +696,17 @@ export function wsHandler(sql: postgres.Sql) {
           return;
         }
 
+        // Guard against non-UUID entries leaking in from a corrupted bridge state.
+        // postgres.js would otherwise pass them as text and PG would emit
+        // "column <uuid> does not exist" on the IN/= ANY comparison.
+        const safeKeepIds = keepClaudeSessionIds.filter((s) =>
+          /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s),
+        );
+        if (safeKeepIds.length === 0) {
+          socket.send(JSON.stringify({ type: 'prune_done', payload: { deleted: 0 } }));
+          return;
+        }
+
         sql.begin(async (tx) => {
           // Keep only the latest session per claudeSessionId in the keep list.
           // All older finished transcript_attach sessions get deleted, even if
@@ -706,7 +717,7 @@ export function wsHandler(sql: postgres.Sql) {
             FROM sessions
             WHERE device_id = ${deviceId}
               AND metadata->>'source' = 'transcript_attach'
-              AND metadata->>'claudeSessionId' IN ${sql(keepClaudeSessionIds)}
+              AND metadata->>'claudeSessionId' = ANY(${sql.array(safeKeepIds)})
             ORDER BY metadata->>'claudeSessionId', started_at DESC
           `;
           const keepIds = keepLatest.map((r) => r.id);
@@ -716,14 +727,14 @@ export function wsHandler(sql: postgres.Sql) {
             WHERE device_id = ${deviceId}
               AND status = 'finished'
               AND metadata->>'source' = 'transcript_attach'
-              AND id != ALL(${sql(keepIds)})
+              AND id <> ALL(${sql.array(keepIds.length > 0 ? keepIds : ['00000000-0000-0000-0000-000000000000'])})
           `;
           if (toDelete.length === 0) return [];
 
           const ids = toDelete.map((r) => r.id);
-          await tx`DELETE FROM approvals WHERE session_id IN ${sql(ids)}`;
-          await tx`DELETE FROM events WHERE session_id IN ${sql(ids)}`;
-          await tx`DELETE FROM sessions WHERE id IN ${sql(ids)}`;
+          await tx`DELETE FROM approvals WHERE session_id = ANY(${sql.array(ids)})`;
+          await tx`DELETE FROM events WHERE session_id = ANY(${sql.array(ids)})`;
+          await tx`DELETE FROM sessions WHERE id = ANY(${sql.array(ids)})`;
           return ids;
         }).then((deletedIds) => {
           const count = Array.isArray(deletedIds) ? deletedIds.length : 0;
