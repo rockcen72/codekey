@@ -7,6 +7,7 @@ import { sessionRoutes } from './routes/sessions.js';
 import { auditRoutes } from './routes/audit.js';
 import { wsHandler } from './ws/handler.js';
 import { initDb } from './db/init.js';
+import { rateLimit } from './middleware/rate-limit.js';
 import type postgres from 'postgres';
 
 const CLEANUP_INTERVAL_MS = 60_000; // check every 60s
@@ -58,6 +59,16 @@ export async function buildApp(databaseUrl: string) {
 
   await app.register(fastifyCors, { origin: true });
   await app.register(fastifyWebsocket);
+
+  // Global rate limit on REST endpoints only (does NOT apply to WS upgrades,
+  // which are handled by Fastify's websocket plugin before any hooks fire).
+  // 240 req/min/IP — comfortably above the bridge's polling cadence and the
+  // mini program's interactive workload, but enough to throttle abuse.
+  // Set RATE_LIMIT_DISABLED=1 to bypass for debugging.
+  app.addHook('onRequest', async (req, reply) => {
+    if (req.url === '/ws' || req.url.startsWith('/ws?')) return; // skip WS upgrade
+    await rateLimit({ windowMs: 60_000, max: 240, keyPrefix: 'global' })(req, reply);
+  });
 
   // REST routes
   await app.register(deviceRoutes(sql), { prefix: '/api/v1' });

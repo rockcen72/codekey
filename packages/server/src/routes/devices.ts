@@ -3,6 +3,7 @@ import type postgres from 'postgres';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { deviceTokenAuth } from '../auth/middleware.js';
 import { pairingClients } from '../ws/connection-registry.js';
+import { rateLimit } from '../middleware/rate-limit.js';
 
 export function deviceRoutes(sql: postgres.Sql) {
   return async function (fastify: FastifyInstance) {
@@ -67,7 +68,11 @@ export function deviceRoutes(sql: postgres.Sql) {
 
     // Mini program confirms pairing
     // After confirm, deviceToken is sent to PC via its pairing WebSocket
-    fastify.post('/devices/confirm', async (req, reply) => {
+    // Rate limit: prevent brute-force pairing-code guessing — 30/min/IP is
+    // generous for a real user (one code, one confirm) but stops a scanner.
+    fastify.post('/devices/confirm', {
+      preHandler: rateLimit({ windowMs: 60_000, max: 30, keyPrefix: 'confirm' }),
+    }, async (req, reply) => {
       const { code } = req.body as { code: string };
       if (!code) return reply.code(400).send({ error: 'code required' });
 
