@@ -318,6 +318,10 @@ export class OpenCodeSessionManager {
   // ── Event dispatch ──────────────────────────────────────
 
   private async handleSSEEvent(event: { type: string; properties: Record<string, unknown> }): Promise<void> {
+    // Log all events briefly for debugging
+    if (event.type.startsWith('message') || event.type.startsWith('permission')) {
+      console.error('[opencode] SSE: %s (session=%s)', event.type, (event.properties as any)?.sessionID || (event.properties as any)?.part?.sessionID || '?');
+    }
     switch (event.type) {
       case 'server.connected':
         return;
