@@ -534,6 +534,8 @@ export function wsHandler(sql: postgres.Sql) {
 
             const sessionMetadata = rows[0].metadata ?? {};
             const visibleToMiniProgram = sessionMetadata.source === 'transcript_attach'
+              || sessionMetadata.runtime === 'opencode'
+              || sessionMetadata.runtime === 'codex-resume'
               || !!sessionMetadata.claudeSessionId;
             const mpList = visibleToMiniProgram ? clientClients.get(deviceId!) : undefined;
             if (mpList) {
