@@ -36,8 +36,7 @@ interface FetchResponseLike {
   statusText: string;
   ok: boolean;
   headers: Headers;
-  text(): Promise<string>;
-  json<T = unknown>(): Promise<T>;
+  bodyText: string;
 }
 
 function buildRequest(
@@ -141,8 +140,7 @@ function rawHttpsRequest(
             statusText: res.statusMessage ?? '',
             ok: (res.statusCode ?? 0) >= 200 && (res.statusCode ?? 0) < 300,
             headers: responseHeaders,
-            text: () => Promise.resolve(body.toString()),
-            json: <T = unknown>() => Promise.resolve(JSON.parse(body.toString()) as T),
+            bodyText: body.toString(),
           });
         });
       });
@@ -181,8 +179,10 @@ export async function secureFetch(
 
   // HTTPS — manual TLS so rejectUnauthorized actually applies in Electron.
   const result = await rawHttpsRequest(url, init, timeoutMs);
-  // Adapt to the global Response interface used by callers.
-  return new Response(await result.text(), {
+  // Adapt to the global Response interface used by callers. The raw
+  // implementation already buffered the body; expose it as a fresh
+  // ReadableStream-like so callers can call .text() / .json() as usual.
+  return new Response(result.bodyText, {
     status: result.status,
     statusText: result.statusText,
     headers: result.headers,
