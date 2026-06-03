@@ -23,7 +23,21 @@ export function wsHandler(sql: postgres.Sql) {
     const url = new URL(req.url, 'http://localhost');
     const deviceId = url.searchParams.get('device_id');
     const deviceSecret = url.searchParams.get('device_secret');
-    const token = url.searchParams.get('token');
+
+    // Token precedence: Authorization: Bearer <token> > ?token= query.
+    // Header is preferred because it keeps the token out of access logs and
+    // referer headers. The query fallback is kept for compatibility with:
+    //   - the WeChat mini program, whose wx.connectSocket predates
+    //     subprotocol/header support (2.18.0 still cannot set headers);
+    //   - older PC bridge clients during the migration window.
+    // This dual-read path will be removed on 2026-08-01 — see
+    // docs/REMEDIATION-2026-06-03.md (B2-4).
+    const authHeader = req.headers['authorization'];
+    let token: string | null = null;
+    if (typeof authHeader === 'string' && authHeader.toLowerCase().startsWith('bearer ')) {
+      token = authHeader.slice(7).trim();
+    }
+    if (!token) token = url.searchParams.get('token');
 
     if (!deviceId) {
       socket.close(4001, 'missing device_id');

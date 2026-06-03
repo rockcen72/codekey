@@ -53,10 +53,14 @@ export class RelayClient extends EventEmitter {
     url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
     url.searchParams.set('device_id', this.deviceId);
     if (this.isPairing) {
+      // Pairing uses a one-time code, sent as a query param.
       url.searchParams.set('device_secret', this.deviceSecret);
-    } else {
-      url.searchParams.set('token', this.deviceSecret);
     }
+    // Note: authenticated PC connections no longer put `token` in the
+    // query string. The token travels in the Authorization header below,
+    // keeping it out of access logs and referer headers. The server
+    // still accepts the legacy ?token= form for older PC clients that
+    // haven't rolled this change yet. Remove the fallback in 2026-08-01.
 
     this.intentionalClose = false;
     // Per-host TLS bypass. Empty env = strict verification (default).
@@ -66,7 +70,19 @@ export class RelayClient extends EventEmitter {
       .map((h) => h.trim())
       .filter(Boolean);
     const skipVerify = insecureHosts.includes(url.hostname);
-    this.ws = new WebSocket(url.toString(), skipVerify ? { rejectUnauthorized: false } : undefined);
+
+    // Build WS options. We send the auth token via the Authorization header
+    // (Node `ws` supports it via the second-arg options) instead of the
+    // query string, so the token never lands in access logs or referer
+    // headers. The server also accepts the legacy ?token= form while the
+    // mini program migrates (wx.connectSocket cannot set headers until
+    // a baseline 2.x is widely deployed) and older PC clients catch up.
+    const wsOptions: any = {};
+    if (skipVerify) wsOptions.rejectUnauthorized = false;
+    if (!this.isPairing && this.deviceSecret) {
+      wsOptions.headers = { Authorization: `Bearer ${this.deviceSecret}` };
+    }
+    this.ws = new WebSocket(url.toString(), wsOptions);
 
     this.connectionTimer = setTimeout(() => {
       console.error('[relay-client] connection timeout — aborting and retrying');
