@@ -7,7 +7,12 @@ import { findCli } from '../cli.js';
 import { log, debug } from '../log.js';
 import { BridgeStatusService } from './bridge-status.js';
 
-const POLL_MS = 2000;
+// Phone → PC command latency budget: a user pushing a command on the
+// mini program expects a near-instant reaction. Poll at 200ms so the
+// average pickup latency is ~100ms (vs ~1000ms at POLL_MS=2000). The
+// bridge is local-only and the queue is normally empty, so the extra
+// traffic is negligible (~5 requests/sec per VS Code window).
+const POLL_MS = 200;
 
 /**
  * Polls the bridge for pending commands from the phone.
