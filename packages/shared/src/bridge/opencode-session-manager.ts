@@ -452,108 +452,11 @@ export class OpenCodeSessionManager {
     const serverSessionId = this.opencodeSessionToRelayId.get(sessionID);
     if (!serverSessionId) return;
 
-    this.bridge.sendEventToRelay(serverSessionId, {
-      sessionId: serverSessionId,
-      agent: 'opencode',
-      eventType: 'task_complete',
-      data: {
-        type: 'task_complete',
-        summary: 'Session idle',
-      },
-    });
-  }
-
-  private onSessionError(props: Record<string, unknown>): void {
-    const sessionID = props.sessionID as string;
-    if (!sessionID) return;
-    const serverSessionId = this.opencodeSessionToRelayId.get(sessionID);
-    if (!serverSessionId) return;
-
-    const errorObj = props.error as Record<string, unknown> | undefined;
-    const message = (errorObj?.message as string) || 'Session error';
-
-    this.bridge.sendEventToRelay(serverSessionId, {
-      sessionId: serverSessionId,
-      agent: 'opencode',
-      eventType: 'error',
-      data: {
-        type: 'error',
-        message,
-      },
-    });
-  }
-
-  // ── Message handling ────────────────────────────────────
-
-  private onMessageUpdated(props: Record<string, unknown>): void {
-    const info = props.info as Record<string, unknown> | undefined;
-    if (!info) return;
-    const messageID = info.id as string;
-    const sessionID = info.sessionID as string;
-    if (!messageID || !sessionID) return;
-
-    const serverSessionId = this.opencodeSessionToRelayId.get(sessionID);
-    if (!serverSessionId) return;
-
-    const key = `msg:${messageID}`;
-    if (this.deliveredMessageParts.has(key)) return;
-    this.deliveredMessageParts.add(key);
-
-    if (this.deliveredMessageParts.size > 10000) {
-      const arr = [...this.deliveredMessageParts];
-      this.deliveredMessageParts = new Set(arr.slice(-5000));
-    }
-
-    const error = info.error as Record<string, unknown> | undefined;
-    if (error) {
-      this.bridge.sendEventToRelay(serverSessionId, {
-        sessionId: serverSessionId,
-        agent: 'opencode',
-        eventType: 'error',
-        data: {
-          type: 'error',
-          message: (error.message as string) || 'Unknown error',
-        },
-      });
-    }
-  }
-
-  private onMessagePartUpdated(props: Record<string, unknown>): void {
-    const part = props.part as Record<string, unknown> | undefined;
-    if (!part) return;
-
-    const sessionID = part.sessionID as string;
-    const messageID = part.messageID as string;
-    const partID = part.id as string;
-    const partType = part.type as string;
-
-    if (!sessionID || !messageID) return;
-    let serverSessionId = this.opencodeSessionToRelayId.get(sessionID);
-    if (!serverSessionId) {
-      // Auto-register on first response — CC does this via hook events
-      console.error('[opencode] onMessagePartUpdated: registering session %s on-the-fly', sessionID);
-      this.ensureRelaySession(sessionID).then((sid) => {
-        // Defer — next SSE event for this session will find the mapping
-      }).catch(() => {});
-      return;
-    }
-
-    const key = `part:${partID}`;
-    if (this.deliveredMessageParts.has(key)) return;
-
-    if (partType === 'text') {
-      this.deliveredMessageParts.add(key);
-      const text = (part.text as string) || (props.delta as string) || '';
-      if (!text) return;
-
       this.bridge.sendEventToRelay(serverSessionId, {
         sessionId: serverSessionId,
         agent: 'opencode',
         eventType: 'task_complete',
-        data: {
-          type: 'task_complete',
-          summary: text.slice(0, 500),
-        },
+        data: { type: 'task_complete', summary: text.slice(0, 500), output: text.slice(0, 500) },
       });
     } else if (partType === 'tool') {
       const state = part.state as Record<string, unknown> | undefined;
