@@ -10,7 +10,13 @@ import {
 /** Grace period timers: device socket close → delay session cleanup by 30s.
  *  If the device reconnects within that window, the timer is cancelled. */
 const disconnectTimers = new Map<string, NodeJS.Timeout>();
-const DISCONNECT_GRACE_MS = 5_000;
+const DISCONNECT_GRACE_MS = 10_000;
+
+/** Max bytes a single unauthenticated WebSocket may buffer.
+ *  P1-6: prevents a malicious client from exhausting server memory by
+ *  sending large frames before auth completes. Close the socket
+ *  with code 4002 if exceeded. */
+const PENDING_MAX_BYTES = 1_048_576; // 1 MB
 
 export function wsHandler(sql: postgres.Sql) {
   return function (socket: WebSocket, req: FastifyRequest) {
@@ -30,11 +36,20 @@ export function wsHandler(sql: postgres.Sql) {
     // ahead of the async auth SQL query and lose messages.
     let authed = false;
     let tokenType: string | null = null;
+    let pendingBytes = 0;
     const pending: Buffer[] = [];
     const activationRequests = new Map<string, string>(); // clientRequestId → sessionId (idempotency)
 
     socket.on('message', (raw: Buffer) => {
       if (!authed) {
+        pendingBytes += raw.length;
+        if (pendingBytes > PENDING_MAX_BYTES) {
+          // Drop the connection — pre-auth buffer overflow is a strong
+          // signal of abuse. The pairing/registration handshake fits in
+          // well under 1 KB; anything bigger is suspect.
+          socket.close(4002, 'pending buffer overflow');
+          return;
+        }
         pending.push(raw);
         return;
       }
@@ -888,9 +903,16 @@ export function wsHandler(sql: postgres.Sql) {
             }
           }
 
-          // Delay session cleanup by DISCONNECT_GRACE_MS to tolerate brief reconnections
+          // Delay session cleanup by DISCONNECT_GRACE_MS to tolerate brief reconnections.
+          // The close handler above already guards against a newer socket
+          // replacing this one; the timer callback does a second check in
+          // case a new connection came up in the grace window.
           const timer = setTimeout(() => {
             disconnectTimers.delete(deviceId);
+            if (pcClients.get(deviceId)) {
+              // Device reconnected in the grace window; leave sessions alone.
+              return;
+            }
             sql`
               SELECT id FROM sessions
               WHERE device_id = ${deviceId} AND status = 'active'

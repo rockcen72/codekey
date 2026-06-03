@@ -31,6 +31,27 @@ interface CodexHookResponse {
 const DEFAULT_MAX_BODY_BYTES = 1_048_576; // 1 MB
 
 /**
+ * CORS allowlist for the bridge HTTP server. The bridge only binds
+ * 127.0.0.1, so this is defense-in-depth — we narrow Access-Control-Allow-Origin
+ * from `*` to a strict prefix list. Anything not on the list gets `null`,
+ * which browsers treat as "denied for CORS purposes".
+ */
+const ALLOWED_BRIDGE_ORIGIN_PREFIXES = [
+  'vscode-webview://',   // VS Code webview host
+  'http://127.0.0.1:',    // bridge URL (loopback)
+  'http://localhost:',    // bridge URL (loopback)
+];
+
+function bridgeCorsOrigin(req: IncomingMessage): string {
+  const origin = req.headers.origin;
+  if (!origin) return 'null';
+  for (const prefix of ALLOWED_BRIDGE_ORIGIN_PREFIXES) {
+    if (origin.startsWith(prefix)) return origin;
+  }
+  return 'null';
+}
+
+/**
  * Read and parse a JSON request body, rejecting if the payload exceeds
  * `maxBytes` (default 1 MB). On overflow, writes a 413 response and destroys
  * the request socket. Resolves with the parsed JSON; rejects on overflow,
@@ -122,7 +143,16 @@ function stableStringify(value: unknown): string {
 function handleRequest(req: IncomingMessage, res: ServerResponse, bridge: ApprovalBridge, source: string, onShutdown?: () => void, startedAt?: number, bridgeConfig?: BridgeConfig, codexRelay?: CodexRelay, codexResumeManager?: CodexResumeManager, opencodeManager?: OpenCodeSessionManager, pendingCodexHookRequests?: Map<string, Promise<CodexHookResponse>>, getMpOnline?: () => boolean): void {
   const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
 
-  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Origin', bridgeCorsOrigin(req));
+  res.setHeader('Vary', 'Origin');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+
+  if (req.method === 'OPTIONS') {
+    res.writeHead(204);
+    res.end();
+    return;
+  }
 
   if (req.method === 'POST' && url.pathname === '/v1/hook/approval') {
     readJsonBody(req, res).then((rawBody) => {

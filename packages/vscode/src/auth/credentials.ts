@@ -19,11 +19,18 @@ export function loadCredentials(): Credentials | null {
   try {
     const raw = fs.readFileSync(credentialsPath(), 'utf-8');
     const parsed = JSON.parse(raw);
+    if (!parsed.deviceId || !parsed.deviceSecret) {
+      // Missing required fields → treat as unpaired, force re-pair.
+      return null;
+    }
     return {
-      deviceId: parsed.deviceId ?? '',
-      deviceSecret: parsed.deviceSecret ?? '',
-      deviceToken: parsed.deviceToken ?? undefined,
-      relayUrl: parsed.relayUrl ?? 'https://81.70.235.58',
+      deviceId: parsed.deviceId,
+      deviceSecret: parsed.deviceSecret,
+      deviceToken: typeof parsed.deviceToken === 'string' ? parsed.deviceToken : undefined,
+      // Empty relayUrl is intentional — callers (pair.ts, sidebar-provider)
+      // must decide what to do. Do NOT fall back to a hardcoded IP here;
+      // that's a security regression (P1-1).
+      relayUrl: typeof parsed.relayUrl === 'string' ? parsed.relayUrl : '',
     };
   } catch {
     return null;
