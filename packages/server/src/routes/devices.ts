@@ -58,7 +58,10 @@ export function deviceRoutes(sql: postgres.Sql) {
         VALUES (${codeHash}, ${device.id}, ${ip}, now() + interval '5 minutes')
       `;
 
-      const pairUrl = `https://81.70.235.58/pair?code=${code}`;
+      // PUBLIC_BASE_URL is set in start.sh / systemd EnvironmentFile.
+      // server/index.ts and bundle-entry.ts both exit if it is missing,
+      // so we can safely assume it's defined at request time.
+      const pairUrl = `${process.env.PUBLIC_BASE_URL}/pair?code=${code}`;
       return { code, deviceId: device.id, expiresIn: 300, pairUrl };
     });
 

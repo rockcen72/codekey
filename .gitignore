@@ -40,6 +40,9 @@ data/
 tmp/
 .tmp/
 
+# Pre-deploy server backups (timestamped snapshots, see docs/server-deployment.md)
+backups/
+
 # Admin panel (WIP)
 packages/admin/
 
