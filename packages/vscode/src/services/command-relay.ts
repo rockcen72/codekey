@@ -180,11 +180,16 @@ export class CommandRelayService {
       for (const cmd of claimed) {
         log('[command-relay] dispatch: claudeSessionId=%s text=%s term=%s', cmd.claudeSessionId ?? '(none)', cmd.text.slice(0, 60), !!term);
         if (term) {
-          // Terminal mode: sendText to managed terminal
+          // Terminal mode: sendText to managed terminal (used when the user
+          // already has an interactive CC running they want to interleave with).
           term.sendText(cmd.text, true);
         } else if (claudeBinary && cmd.claudeSessionId) {
-          // Resume terminal mode: hidden terminal with --resume, send text via stdin
-          this._sendToResumeTerminal(cmd.claudeSessionId, cmd.text, cmd.cwd, claudeBinary);
+          // Phone-pushed commands: use spawn --resume --print so CC runs
+          // synchronously, processes the prompt, fires the Stop hook on exit,
+          // and produces a task_complete back to the phone. The previous
+          // _sendToResumeTerminal path used a hidden VS Code terminal + stdin
+          // sendText, which silently lost the prompt in some CC versions.
+          this._executeCommand(cmd.claudeSessionId, cmd.text, claudeBinary, cmd.cwd);
         }
       }
     } catch {
