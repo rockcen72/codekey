@@ -21,6 +21,24 @@ if (!PUBLIC_BASE_URL) {
   console.error('Example: PUBLIC_BASE_URL=https://81.70.235.58 (used to build pairUrl)');
   process.exit(1);
 }
+// Validate and normalize (remove trailing slash and path, strictly http/https)
+let normalizedBaseUrl: string;
+{
+  let parsed: URL;
+  try {
+    parsed = new URL(PUBLIC_BASE_URL);
+  } catch {
+    console.error('FATAL: PUBLIC_BASE_URL is not a valid URL: %s', PUBLIC_BASE_URL);
+    process.exit(1);
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    console.error('FATAL: PUBLIC_BASE_URL must be http or https: %s', PUBLIC_BASE_URL);
+    process.exit(1);
+  }
+  normalizedBaseUrl = `${parsed.protocol}//${parsed.host}`;
+}
+// Override env so the rest of the app uses the normalized value
+process.env.PUBLIC_BASE_URL = normalizedBaseUrl;
 
 async function main() {
   const { app } = await buildApp(DATABASE_URL!);
