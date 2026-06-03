@@ -79,7 +79,6 @@ function rawHttpsRequest(
   const { headers, body } = buildRequest(url, init, timeoutMs);
   const insecureHosts = parseInsecureHosts();
   const skipVerify = insecureHosts.includes(url.hostname);
-  log(`[secure-fetch]   raw https — skipVerify=${skipVerify} (hosts=${JSON.stringify(insecureHosts)})`);
 
   return new Promise<FetchResponseLike>((resolve, reject) => {
     const port = url.port ? Number(url.port) : 443;
@@ -155,12 +154,11 @@ function rawHttpsRequest(
 
     socket.on('error', (err) => {
       clearTimeout(timer);
-      log(`[secure-fetch]   TLS error: ${err.message}`);
+      log(`[secure-fetch] TLS error to ${url.hostname}: ${err.message}`);
       if (!aborted) reject(err);
     });
 
     socket.on('secureConnect', () => {
-      log(`[secure-fetch]   TLS established (authorized=${socket.authorized})`);
       // Hand-craft the HTTP/1.1 request bytes and write to the TLS socket.
       // Using http.request over a TLS socket misbehaves in Electron 39.x
       // (the body is sent as plain HTTP and nginx rejects it with 400).
@@ -197,20 +195,15 @@ export async function secureFetch(
   const url = typeof input === 'string' ? new URL(input) : input;
   const timeoutMs = init?.timeoutMs ?? 10_000;
 
-  log(`[secure-fetch] → ${init?.method ?? 'GET'} ${url.href}`);
-
   if (url.protocol !== 'https:') {
-    log(`[secure-fetch]   (HTTP — using global fetch)`);
     return fetch(input, { ...init, signal: init?.signal ?? AbortSignal.timeout(timeoutMs) });
   }
   if (url.hostname === '127.0.0.1' || url.hostname === 'localhost') {
-    log(`[secure-fetch]   (localhost — using global fetch)`);
     return fetch(input, { ...init, signal: init?.signal ?? AbortSignal.timeout(timeoutMs) });
   }
 
   // HTTPS — manual TLS so rejectUnauthorized actually applies in Electron.
   const result = await rawHttpsRequest(url, init, timeoutMs);
-  log(`[secure-fetch]   ← ${result.status} ${result.statusText} (${result.bodyText.length} bytes) ${result.bodyText.substring(0, 200)}`);
   // Adapt to the global Response interface used by callers. The raw
   // implementation already buffered the body; expose it as a fresh
   // ReadableStream-like so callers can call .text() / .json() as usual.

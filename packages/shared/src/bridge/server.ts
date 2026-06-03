@@ -1020,28 +1020,35 @@ function handleRequest(req: IncomingMessage, res: ServerResponse, bridge: Approv
   }
 
   if (req.method === 'POST' && url.pathname === '/v1/claude-sessions/attach') {
+    console.error(`[bridge] /v1/claude-sessions/attach received`);
     readJsonBody(req, res).then((rawBody) => {
       const body = rawBody as any;
       try {
         const { sessionId } = body;
         if (!sessionId) {
+          console.error('[bridge] /v1/claude-sessions/attach: missing sessionId');
           res.writeHead(400, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ ok: false, error: 'sessionId required' }));
           return;
         }
+        console.error(`[bridge] /v1/claude-sessions/attach: calling bridge.attachClaudeSession(${sessionId.slice(0, 8)})`);
         bridge.attachClaudeSession(sessionId).then((serverSessionId) => {
+          console.error(`[bridge] /v1/claude-sessions/attach: success, serverSessionId=${serverSessionId?.slice(0, 8)}`);
           res.writeHead(200, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ ok: true, serverSessionId }));
         }).catch((err: Error) => {
+          console.error(`[bridge] /v1/claude-sessions/attach: bridge error: ${err.message}`);
           res.writeHead(404, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ ok: false, error: err.message }));
         });
-      } catch {
+      } catch (err) {
+        console.error(`[bridge] /v1/claude-sessions/attach: try-catch err: ${(err as Error).message}`);
         res.writeHead(400, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ ok: false, error: 'invalid payload' }));
       }
     }).catch((err: Error) => {
       if (err?.message === 'payload too large') return;
+      console.error(`[bridge] /v1/claude-sessions/attach: readJsonBody err: ${err.message}`);
       res.writeHead(400, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ ok: false, error: 'invalid payload' }));
     });
