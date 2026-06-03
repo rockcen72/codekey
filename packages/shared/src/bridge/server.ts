@@ -521,7 +521,10 @@ function handleRequest(req: IncomingMessage, res: ServerResponse, bridge: Approv
     req.on('end', () => {
       try {
         const input = JSON.parse(body);
-        console.error('[bridge] opencode telemetry: type=%s', input.type || 'unknown');
+        // Route telemetry events through the SSE handler to forward to relay
+        if (opencodeManager && input.type && input.properties) {
+          opencodeManager.handleSSEEvent(input).catch(() => {});
+        }
       } catch {
         // best-effort, don't fail
       }
