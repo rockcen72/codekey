@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { ApprovalBridge } from './handler.js';
+import { OpenCodeSessionManager } from './opencode-session-manager.js';
 
 /** Create a temp CLAUDE_CONFIG_DIR with a transcript for the given sessionId.
  *  Returns the temp dir path. Caller must set process.env.CLAUDE_CONFIG_DIR. */
@@ -120,6 +121,17 @@ describe('ApprovalBridge canonical sessions', () => {
     expect(bridge.commandQueue.peek()).toEqual([
       { id: expect.any(String), sessionId: sessionB, claudeSessionId: 'claude-b', text: 'next step' },
     ]);
+  });
+
+  it('registers OpenCode attach mappings so phone commands route to OpenCode', async () => {
+    const relay = new FakeRelay();
+    const bridge = new ApprovalBridge(relay as any);
+    const manager = new OpenCodeSessionManager('http://127.0.0.1:1', bridge);
+
+    await manager.attachSession('ses_local_a');
+
+    expect(manager.ownsSession('server-ses_local_a')).toBe(true);
+    expect(bridge.getAttachedSessionIds()).toContain('ses_local_a');
   });
 
   it('skips command queue for resumed Codex server sessions', async () => {

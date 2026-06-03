@@ -92,7 +92,7 @@ export interface ApprovalResponder {
 /** External agent command handler. Routes commands by ownsSession(). */
 export interface CommandHandler {
   ownsSession: (serverSessionId: string) => boolean;
-  handleCommand: (payload: { sessionId: string; data: string }) => Promise<void>;
+  handleCommand: (payload: { sessionId: string; data: string; claudeSessionId?: string }) => Promise<void>;
 }
 
 export class ApprovalBridge {
