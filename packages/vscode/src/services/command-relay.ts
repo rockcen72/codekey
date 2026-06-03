@@ -110,44 +110,78 @@ export class CommandRelayService {
    * Execute a command via CC in one-shot --print mode.
    * CC resumes the session, processes the prompt, prints output, and exits.
    * The Stop hook fires on exit, generating task_complete for the mini program.
+   * Returns a Promise that resolves when CC exits (or rejects on spawn error).
    */
   private _executeCommand(
     sessionId: string,
     text: string,
     binary: { path: string; args: string[] },
     cwd?: string,
-  ): void {
+  ): Promise<{ code: number | null; stderr: string; durationMs: number }> {
+    const startMs = Date.now();
+    return new Promise((resolve, reject) => {
+      try {
+        log('[command-relay] spawning CC --resume %s --print %s cwd=%s', sessionId.slice(0, 8), text.slice(0, 40), cwd ?? '(default)');
+        // Phone-pushed commands use --resume --print so the session is
+        // synchronous (process and exit). We must bypass the permission
+        // prompt because the --print mode does not invoke the
+        // PermissionRequest hook, which would otherwise block on the
+        // phone approval flow. The user already authorised the command
+        // by pushing it from the mini program.
+        //
+        // SCOPE: This bypass applies ONLY to phone-pushed commands routed
+        // through _executeCommand. The user's interactive CC running in a
+        // managed VS Code terminal is unaffected — that path uses
+        // term.sendText() above and goes through the full PermissionRequest
+        // hook → phone approval flow.
+        const child = spawn(binary.path, [...binary.args, '--resume', sessionId, '--print', text, '--permission-mode', 'bypassPermissions'], {
+          stdio: ['ignore', 'pipe', 'pipe'],
+          windowsHide: true,
+          cwd,
+        });
+        let stdout = '';
+        let stderr = '';
+        child.stdout?.on('data', (chunk) => { stdout += chunk.toString(); });
+        child.stderr?.on('data', (chunk) => { stderr += chunk.toString(); });
+        child.on('exit', (code) => {
+          const dur = Date.now() - startMs;
+          log('[command-relay] CC --print session=%s exited code=%d dur=%dms stdout=%s stderr=%s',
+            sessionId.slice(0, 8), code, dur, stdout.slice(0, 200), stderr.slice(0, 200));
+          resolve({ code, stderr, durationMs: dur });
+        });
+        child.on('error', (err) => {
+          log('[command-relay] CC --print spawn error: %s', err.message);
+          reject(err);
+        });
+      } catch (err) {
+        log('[command-relay] CC --print failed: %s', String(err));
+        reject(err);
+      }
+    });
+  }
+
+  private _inFlightSpawns = new Map<string, Promise<void>>();
+
+  /** Post an error event to the bridge so the phone sees a clear failure message. */
+  private async _reportCommandError(
+    serverSessionId: string,
+    claudeSessionId: string,
+    result: { code: number | null; stderr: string; durationMs: number },
+  ): Promise<void> {
     try {
-      log('[command-relay] spawning CC --resume %s --print %s cwd=%s', sessionId.slice(0, 8), text.slice(0, 40), cwd ?? '(default)');
-      // Phone-pushed commands use --resume --print so the session is
-      // synchronous (process and exit). We must bypass the permission
-      // prompt because the --print mode does not invoke the
-      // PermissionRequest hook, which would otherwise block on the
-      // phone approval flow. The user already authorised the command
-      // by pushing it from the mini program.
-      //
-      // SCOPE: This bypass applies ONLY to phone-pushed commands routed
-      // through _executeCommand. The user's interactive CC running in a
-      // managed VS Code terminal is unaffected — that path uses
-      // term.sendText() above and goes through the full PermissionRequest
-      // hook → phone approval flow.
-      const child = spawn(binary.path, [...binary.args, '--resume', sessionId, '--print', text, '--permission-mode', 'bypassPermissions'], {
-        stdio: ['ignore', 'pipe', 'pipe'],
-        windowsHide: true,
-        cwd,
+      const message = `CC exited with code ${result.code} (${result.durationMs}ms)`;
+      log('[command-relay] %s session=%s', message, claudeSessionId.slice(0, 8));
+      await fetch(`${BridgeStatusService.getInstance().getBridgeUrl()}/v1/session-error`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sessionId: serverSessionId,
+          agent: 'claude-code-hook',
+          message: result.stderr ? `${message}: ${result.stderr.slice(0, 300)}` : message,
+        }),
       });
-      let stdout = '';
-      let stderr = '';
-      child.stdout?.on('data', (chunk) => { stdout += chunk.toString(); });
-      child.stderr?.on('data', (chunk) => { stderr += chunk.toString(); });
-      child.on('exit', (code) => {
-        log('[command-relay] CC --print session=%s exited code=%d stdout=%s stderr=%s', sessionId.slice(0, 8), code, stdout.slice(0, 500), stderr.slice(0, 500));
-      });
-      child.on('error', (err) => {
-        log('[command-relay] CC --print spawn error: %s', err.message);
-      });
-    } catch (err) {
-      log('[command-relay] CC --print failed: %s', String(err));
+    } catch {
+      // bridge may be gone — the failure is already logged above
     }
   }
 
@@ -192,7 +226,7 @@ export class CommandRelayService {
         body: JSON.stringify({ ids }),
       });
       if (!claimResp.ok) return;
-      const claimed = await claimResp.json() as { id: string; claudeSessionId?: string; cwd?: string; text: string }[];
+      const claimed = await claimResp.json() as { id: string; sessionId?: string; claudeSessionId?: string; cwd?: string; text: string }[];
 
       for (const cmd of claimed) {
         log('[command-relay] dispatch: claudeSessionId=%s text=%s term=%s', cmd.claudeSessionId ?? '(none)', cmd.text.slice(0, 60), !!term);
@@ -201,12 +235,23 @@ export class CommandRelayService {
           // already has an interactive CC running they want to interleave with).
           term.sendText(cmd.text, true);
         } else if (claudeBinary && cmd.claudeSessionId) {
-          // Phone-pushed commands: use spawn --resume --print so CC runs
-          // synchronously, processes the prompt, fires the Stop hook on exit,
-          // and produces a task_complete back to the phone. The previous
-          // _sendToResumeTerminal path used a hidden VS Code terminal + stdin
-          // sendText, which silently lost the prompt in some CC versions.
-          this._executeCommand(cmd.claudeSessionId, cmd.text, claudeBinary, cmd.cwd);
+          // Phone-pushed commands: use spawn --resume --print. Serialise per
+          // session so two concurrent phone prompts don't race each other.
+          const key = cmd.sessionId || cmd.claudeSessionId;
+          const previous = this._inFlightSpawns.get(key) ?? Promise.resolve();
+          const task = previous.then(() =>
+            this._executeCommand(cmd.claudeSessionId!, cmd.text, claudeBinary, cmd.cwd).then((result) => {
+              if (result.code !== 0) {
+                this._reportCommandError(cmd.sessionId || cmd.claudeSessionId || '', cmd.claudeSessionId!, result);
+              }
+            }).catch((err) => {
+              this._reportCommandError(cmd.sessionId || cmd.claudeSessionId || '', cmd.claudeSessionId!, { code: -1, stderr: String(err), durationMs: 0 });
+            })
+          );
+          const tracked = task.finally(() => {
+            if (this._inFlightSpawns.get(key) === tracked) this._inFlightSpawns.delete(key);
+          });
+          this._inFlightSpawns.set(key, tracked);
         }
       }
     } catch {

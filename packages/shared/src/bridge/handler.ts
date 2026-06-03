@@ -177,13 +177,13 @@ export class ApprovalBridge {
   }
 
   /** Public wrapper: send error event to relay. */
-  sendErrorToRelay(serverSessionId: string, message: string): void {
+  sendErrorToRelay(serverSessionId: string, message: string, agent = 'opencode'): void {
     this.relay.sendRaw(JSON.stringify({
       type: 'event',
       payload: {
         clientEventId: `error:${serverSessionId}:${Date.now()}`,
         sessionId: serverSessionId,
-        agent: 'opencode',
+        agent,
         eventType: 'error',
         data: { type: 'error', message },
         ts: new Date().toISOString(),

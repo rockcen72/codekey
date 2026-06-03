@@ -1198,8 +1198,28 @@ function handleRequest(req: IncomingMessage, res: ServerResponse, bridge: Approv
     return;
   }
 
+  if (req.method === 'POST' && url.pathname === '/v1/session-error') {
+    readJsonBody(req, res).then((input) => {
+      const { sessionId, agent, message } = input as { sessionId?: string; agent?: string; message?: string };
+      if (!sessionId || !message) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: false, error: 'sessionId and message required' }));
+          return;
+        }
+        bridge.sendErrorToRelay(sessionId, message, agent || undefined);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: true }));
+    }).catch((err) => {
+      if (err.message !== 'payload too large') {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: false, error: 'invalid payload' }));
+      }
+    });
+    return;
+  }
+
   if (url.pathname === '/v1/health') {
-    const supports = ['mp-status', 'register-window', 'window-id', 'session-label', 'approval_forward', 'activate-session', 'deactivate-session', 'claude-sessions/recent', 'claude-sessions/attach', 'detach-session', 'attached-sessions', 'relay-reconnect', 'admin-config', 'pending-approvals', 'approval-response', 'codex-hooks/permission-request'];
+    const supports = ['mp-status', 'register-window', 'window-id', 'session-label', 'approval_forward', 'activate-session', 'deactivate-session', 'claude-sessions/recent', 'claude-sessions/attach', 'detach-session', 'attached-sessions', 'relay-reconnect', 'admin-config', 'pending-approvals', 'approval-response', 'codex-hooks/permission-request', 'session-error'];
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({
       ok: true,

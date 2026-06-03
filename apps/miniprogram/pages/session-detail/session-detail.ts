@@ -249,6 +249,30 @@ Page({
         lastUserPrompt = prompt;
       }
 
+      if (e.type === 'error') {
+        messages.push({
+          id: e.id + '-err',
+          type: 'ai',
+          side: 'left',
+          content: e.data?.message || e.data?.summary || 'Unknown error',
+          displayTime: time,
+          typeLabel: '错误',
+          isTaskComplete: false,
+          command: '',
+          summary: e.data?.message || '',
+          risk_level: '',
+          riskText: '',
+          pending: false,
+          decision: '',
+          decisionText: '',
+          canApprove: false,
+          eventId: e.id,
+          accent: 'denied',
+          kindBadge: '',
+        });
+        continue;
+      }
+
       if (e.type === 'session_idle') {
         messages.push({
           id: e.id + '-sys',
