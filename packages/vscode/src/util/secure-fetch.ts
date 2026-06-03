@@ -179,6 +179,7 @@ export async function secureFetch(
 
   // HTTPS — manual TLS so rejectUnauthorized actually applies in Electron.
   const result = await rawHttpsRequest(url, init, timeoutMs);
+  log(`[secure-fetch]   ← ${result.status} ${result.statusText} (${result.bodyText.length} bytes) ${result.bodyText.substring(0, 200)}`);
   // Adapt to the global Response interface used by callers. The raw
   // implementation already buffered the body; expose it as a fresh
   // ReadableStream-like so callers can call .text() / .json() as usual.
