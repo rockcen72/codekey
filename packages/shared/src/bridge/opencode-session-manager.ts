@@ -578,9 +578,26 @@ export class OpenCodeSessionManager {
     if (this.deliveredMessageParts.has(key)) return;
 
     if (partType === 'text') {
-      this.deliveredMessageParts.add(key);
       const text = (part.text as string) || (props.delta as string) || '';
       if (!text) return;
+
+      // Dedup key includes the text content, not just the partID, so
+      // streaming updates with growing text are not collapsed. The
+      // previous key was `part:${partID}` alone, which had two
+      // failure modes:
+      //   1. OpenCode often creates a part with text="" first, then
+      //      updates it with the real content. The old code added
+      //      partID to the dedup set BEFORE the empty check, so the
+      //      first event consumed the slot and the agent's actual
+      //      response was dropped on the floor. The phone then only
+      //      saw the generic "Session idle" task_complete.
+      //   2. Streaming updates (text="H" → "He" → "Hello") were
+      //      suppressed after the first chunk.
+      // With the new key, same-content re-fires still dedup, but
+      // empty-then-non-empty and incremental updates both pass.
+      const dedupKey = `part:${partID}:${text}`;
+      if (this.deliveredMessageParts.has(dedupKey)) return;
+      this.deliveredMessageParts.add(dedupKey);
 
       // Suppress the text-part echo of a phone-sent prompt. OpenCode
       // surfaces the user input as a text part on the user message

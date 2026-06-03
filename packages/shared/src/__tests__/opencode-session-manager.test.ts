@@ -495,6 +495,159 @@ describe('OpenCodeSessionManager event handling', () => {
     });
   });
 
+  describe('message.part.updated — streaming agent response', () => {
+    // Regression guard: the agent's actual text response was being
+    // dropped because the partID was added to the dedup set on the
+    // first event (text="") and the second event (the real text) was
+    // suppressed by the same dedup key. Phone only saw the generic
+    // "Session idle" task_complete with no summary.
+
+    it('forwards the real text when the first text-part event is empty', async () => {
+      await (manager as any).handleSSEEvent({
+        type: 'permission.updated',
+        properties: {
+          id: 'perm-stream-empty',
+          type: 'Bash',
+          sessionID: 'oc-session-stream-empty',
+          messageID: 'msg-stream-empty',
+          title: 'Test',
+          metadata: {},
+          time: { created: Date.now() },
+        },
+      });
+
+      relay.sent.length = 0;
+      relay.sentEvents.length = 0;
+
+      // OpenCode often creates the part with empty text first, then
+      // updates it with the real content. The old code added partID
+      // to the dedup set before the empty-text check, so the second
+      // event was dropped.
+      await (manager as any).handleSSEEvent({
+        type: 'message.part.updated',
+        properties: {
+          part: {
+            id: 'part-stream-empty',
+            sessionID: 'oc-session-stream-empty',
+            messageID: 'msg-stream-empty',
+            type: 'text',
+            text: '',
+          },
+        },
+      });
+
+      await (manager as any).handleSSEEvent({
+        type: 'message.part.updated',
+        properties: {
+          part: {
+            id: 'part-stream-empty',
+            sessionID: 'oc-session-stream-empty',
+            messageID: 'msg-stream-empty',
+            type: 'text',
+            text: '上海今天多云，气温 22°C。',
+          },
+        },
+      });
+
+      const events = relay.sentEvents as any[];
+      const realResponse = events.find(
+        (e: any) =>
+          e.payload?.eventType === 'task_complete' &&
+          e.payload?.data?.summary === '上海今天多云，气温 22°C。',
+      );
+      expect(realResponse).toBeDefined();
+    });
+
+    it('forwards each streaming text chunk (different text per update)', async () => {
+      await (manager as any).handleSSEEvent({
+        type: 'permission.updated',
+        properties: {
+          id: 'perm-stream-chunks',
+          type: 'Bash',
+          sessionID: 'oc-session-stream-chunks',
+          messageID: 'msg-stream-chunks',
+          title: 'Test',
+          metadata: {},
+          time: { created: Date.now() },
+        },
+      });
+
+      relay.sent.length = 0;
+      relay.sentEvents.length = 0;
+
+      // OpenCode may also fire multiple updates with growing text.
+      // Each unique (partID, text) should be allowed through.
+      for (const text of ['H', 'He', 'Hello', 'Hello world']) {
+        await (manager as any).handleSSEEvent({
+          type: 'message.part.updated',
+          properties: {
+            part: {
+              id: 'part-stream-chunks',
+              sessionID: 'oc-session-stream-chunks',
+              messageID: 'msg-stream-chunks',
+              type: 'text',
+              text,
+            },
+          },
+        });
+      }
+
+      const events = relay.sentEvents as any[];
+      const summaries = events
+        .filter((e: any) => e.payload?.eventType === 'task_complete')
+        .map((e: any) => e.payload?.data?.summary);
+
+      // The last (and longest) text must be among the delivered
+      // summaries — that is the user-visible final answer.
+      expect(summaries).toContain('Hello world');
+    });
+
+    it('still dedupes when the exact same text is re-fired', async () => {
+      // Regression guard for the original 'deduplicates same part ID'
+      // test — same content, fired twice, must produce only ONE
+      // task_complete. We changed the dedup key to (partID, text)
+      // so this is the explicit check that the new key still
+      // suppresses exact duplicates.
+      await (manager as any).handleSSEEvent({
+        type: 'permission.updated',
+        properties: {
+          id: 'perm-dup-text',
+          type: 'Bash',
+          sessionID: 'oc-session-dup-text',
+          messageID: 'msg-dup-text',
+          title: 'Test',
+          metadata: {},
+          time: { created: Date.now() },
+        },
+      });
+
+      relay.sent.length = 0;
+      relay.sentEvents.length = 0;
+
+      const partEvent = {
+        type: 'message.part.updated',
+        properties: {
+          part: {
+            id: 'part-dup-text',
+            sessionID: 'oc-session-dup-text',
+            messageID: 'msg-dup-text',
+            type: 'text',
+            text: 'Same content, fired twice',
+          },
+        },
+      };
+
+      await (manager as any).handleSSEEvent(partEvent);
+      await (manager as any).handleSSEEvent(partEvent);
+
+      const events = relay.sentEvents as any[];
+      const taskCompletes = events.filter(
+        (e: any) => e.payload?.eventType === 'task_complete',
+      );
+      expect(taskCompletes.length).toBe(1);
+    });
+  });
+
   describe('session.created', () => {
     it('does not push a new local session to relay by itself', async () => {
       await (manager as any).handleSSEEvent({
