@@ -49,8 +49,7 @@ export class ApprovalNotificationService implements vscode.Disposable {
     }
 
     for (const approval of approvals) {
-      if (approval.agentType !== 'codex') continue;
-      if (await this._isCodexResumed(approval.claudeSessionId)) continue;
+      if (approval.agentType === 'codex' && await this._isCodexResumed(approval.claudeSessionId)) continue;
       if (this._visible.has(approval.id) || this._handled.has(approval.id)) continue;
       this._visible.add(approval.id);
       this._showApproval(approval).catch((err) => log(`approval notification failed: ${err?.stack || err}`));

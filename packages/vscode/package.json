@@ -118,7 +118,9 @@
     "package": "vsce package --no-dependencies",
     "test": "echo 'No tests yet'"
   },
-  "dependencies": {},
+  "dependencies": {
+    "qrcode-terminal": "^0.12.0"
+  },
   "devDependencies": {
     "@codekey/shared": "*",
     "@types/vscode": "^1.96.0",
