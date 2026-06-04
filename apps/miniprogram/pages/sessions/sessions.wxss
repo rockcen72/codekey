@@ -69,10 +69,10 @@
 .session-card:active { box-shadow: 0 4rpx 12rpx rgba(28,25,23,0.08); transform: translateY(-1rpx); }
 .session-card.connected { border-color: #fed7aa; }
 .conn-bar { width: 6rpx; flex-shrink: 0; background: var(--ck-border); transition: background 200ms ease; }
-.conn-bar.online { background: #ea580c; }
-.conn-bar.online.agent-claude { background: #ea580c; }
-.conn-bar.online.agent-codex { background: #22c55e; }
-.conn-bar.online.agent-opencode { background: #5c9cf5; }
+.conn-bar.agent-claude { background: #ea580c; }
+.conn-bar.agent-codex { background: #22c55e; }
+.conn-bar.agent-opencode { background: #5c9cf5; }
+.conn-bar.agent-unknown { background: var(--ck-border); }
 
 /* ── Card body ── */
 
