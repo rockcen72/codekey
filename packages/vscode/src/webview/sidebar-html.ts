@@ -253,25 +253,27 @@ export function renderSessionsContent(state: SidebarState): string {
     + '<span class="agent-tab active" data-tab="all">All</span>'
     + agents.map(a => `<span class="agent-tab" data-tab="${h(a.id)}">${h(a.name)}</span>`).join('')
     + '</div>';
-  if (items.length === 0) return tabsHtml + '<div class="empty-state">No local sessions</div>';
+  if (items.length === 0) return tabsHtml + '<div class="empty-state">' + i18n(state.lang, 'No local sessions', '无本地会话') + '</div>';
   const maxVisible = 5;
   const itemsHtml = items.map((s, i) => {
     const hidden = i >= maxVisible;
     const extraCls = hidden ? ' session-hidden' : '';
-    return _sessionItemHtml(s, extraCls);
+    return _sessionItemHtml(state.lang, s, extraCls);
   }).join('');
+  const more = Math.max(0, items.length - maxVisible);
+  const moreText = more > 0 ? '+ ' + more + ' ' + i18n(state.lang, 'more', '更多') : '';
   return tabsHtml
     + '<div class="session-scroll">'
     + itemsHtml
-    + '<div class="session-show-more" id="sessionShowMore"><button class="btn-ghost btn-sm" data-action="toggleShowMoreSessions">+ ' + Math.max(0, items.length - maxVisible) + ' more</button></div>'
+    + (moreText ? '<div class="session-show-more" id="sessionShowMore"><button class="btn-ghost btn-sm" data-action="toggleShowMoreSessions">' + moreText + '</button></div>' : '')
     + '</div>';
 }
 
-function _sessionItemHtml(s: any, extraCls: string): string {
+function _sessionItemHtml(lang: string | undefined, s: any, extraCls: string): string {
       const isAttached = s.attached;
       const sid = s.sessionId;
       const btnCls = isAttached ? 'btn-attached' : '';
-      const btnText = isAttached ? 'Detach' : 'Attach';
+      const btnText = isAttached ? i18n(lang, 'Unsync', '取消同步') : i18n(lang, 'Sync', '同步');
       const agent = s.isOpenCodeSession ? 'opencode' : s.isCodexSession ? 'codex' : 'claude-code';
       const isCodex = s.isCodexSession ? 'true' : 'false';
       const isOpenCode = s.isOpenCodeSession ? 'true' : '';
@@ -309,7 +311,7 @@ function renderClaudeSessions(state: SidebarState): string {
     <div class="card-header">
       <span class="card-label">
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
-        Local Sessions
+        ${i18n(state.lang, 'Local Sessions', '本地会话')}
       </span>
       <button class="btn-ghost btn-sm" data-action="refreshClaudeSessions" title="Refresh" style="font-size:11px;padding:2px 6px">↻</button>
     </div>
