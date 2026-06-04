@@ -7,6 +7,7 @@ import { resolveCodexBinaryForVSCode } from './codex-binary-resolver.js';
 import { loadCredentials } from '../auth/credentials.js';
 import { getHookPath } from '../hook/installer.js';
 import { log, debug } from '../log.js';
+import { listPidsByPort, killPid } from '@codekey/shared/bridge';
 
 export type BridgeStatus = 'running' | 'stopped' | 'error' | 'connecting';
 export type HookConfigStatus = 'enabled' | 'installed_only' | 'not_found';
@@ -265,26 +266,10 @@ export class BridgeStatusService {
 
   /** Force-kill any process listening on the bridge port. */
   private _forceKillBridgeOnPort(): void {
-    const port = this._port;
-    try {
-      if (process.platform === 'win32') {
-        const out = execSync(`netstat -ano | findstr :${port}`, { encoding: 'utf-8', timeout: 5000 });
-        const lines = out.trim().split(/\r?\n/);
-        const killed = new Set<string>();
-        for (const line of lines) {
-          const m = line.match(/(\d+)\s*$/);
-          if (m && m[1] && !killed.has(m[1])) {
-            const pid = m[1];
-            killed.add(pid);
-            log(`[CodeKey] force-killing bridge on port ${port} (PID=${pid})`);
-            execSync(`taskkill /F /PID ${pid}`, { encoding: 'utf-8', timeout: 5000 });
-          }
-        }
-      } else {
-        execSync(`lsof -ti :${port} | xargs kill -9 2>/dev/null; true`, { timeout: 5000 });
-      }
-    } catch {
-      // Process may already be gone
+    const pids = listPidsByPort(this._port);
+    for (const pid of pids) {
+      log(`[CodeKey] force-killing bridge on port ${this._port} (PID=${pid})`);
+      killPid(pid);
     }
   }
 

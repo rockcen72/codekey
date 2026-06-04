@@ -1,5 +1,4 @@
-import { RelayClient, ApprovalBridge, startBridgeServer, CodexResumeManager, OpenCodeSessionManager } from '@codekey/shared/bridge';
-import * as cp from 'node:child_process';
+import { RelayClient, ApprovalBridge, startBridgeServer, CodexResumeManager, OpenCodeSessionManager, whichBinary, discoverOpenCodePort } from '@codekey/shared/bridge';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -28,35 +27,6 @@ function isParentAlive(): boolean {
   } catch {
     return false;
   }
-}
-
-/** Discover the port of a running opencode process by parsing its --port argument. */
-function discoverOpenCodePort(): number {
-  try {
-    if (process.platform === 'win32') {
-      // Try both the opencode binary and node.exe running opencode
-      for (const query of ['opencode', 'node']) {
-        try {
-          const out = cp.execSync(
-            `wmic process where "name like '%${query}%'" get CommandLine /format:list`,
-            { encoding: 'utf-8', timeout: 5000 },
-          );
-          if (/--port\s+(\d+)/.test(out)) {
-            const all = [...out.matchAll(/--port\s+(\d+)/g)];
-            // Return the latest port found (if multiple opencode instances)
-            if (all.length > 0) return Number(all[all.length - 1][1]);
-          }
-        } catch { /* try next query */ }
-      }
-    } else {
-      const out = cp.execSync('ps aux | grep -v grep | grep -E "opencode|node.*opencode"', {
-        encoding: 'utf-8', timeout: 5000,
-      });
-      const m = out.match(/--port\s+(\d+)/);
-      if (m) return Number(m[1]);
-    }
-  } catch { /* fall through */ }
-  return 4096;
 }
 
 async function main(): Promise<void> {
@@ -93,10 +63,8 @@ async function main(): Promise<void> {
   // ── OpenCode Session Manager ─────────────────────────────
   let opencodeManager: OpenCodeSessionManager | null = null;
   let ocUrl: string | undefined;
-  try {
-    const whichCmd = process.platform === 'win32' ? 'where' : 'which';
-    cp.execSync(`${whichCmd} opencode`, { stdio: 'ignore', timeout: 3000 });
-    const ocPort = discoverOpenCodePort();
+  if (whichBinary('opencode') !== null) {
+    const ocPort = discoverOpenCodePort() ?? 4096;
     ocUrl = `http://127.0.0.1:${ocPort}`;
     opencodeManager = new OpenCodeSessionManager(ocUrl, bridge);
     const startOpenCodeWithRetry = async (maxRetries = 5) => {
@@ -116,7 +84,7 @@ async function main(): Promise<void> {
     };
     startOpenCodeWithRetry();
     console.error('[bridge-entry] OpenCode integration starting on port %d', ocPort);
-  } catch {
+  } else {
     console.error('[bridge-entry] opencode CLI not found, skipping OpenCode integration');
   }
 

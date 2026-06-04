@@ -6,6 +6,7 @@ import { classifyTerminal } from '../commands/start-claude.js';
 import { findCli } from '../cli.js';
 import { log, debug } from '../log.js';
 import { BridgeStatusService } from './bridge-status.js';
+import { whichBinary, binaryName, needsShellForScript } from '@codekey/shared/bridge';
 
 // Phone → PC command latency budget: a user pushing a command on the
 // mini program expects a near-instant reaction. Poll at 200ms so the
@@ -88,16 +89,14 @@ export class CommandRelayService {
     if (cliPath) return { path: cliPath, args: ['claude'] };
 
     // Global claude on PATH — has access to user's session transcripts
-    try {
-      const which = execSync(process.platform === 'win32' ? 'where claude.exe' : 'which claude', { encoding: 'utf-8', timeout: 3000 }).trim().split('\n')[0];
-      if (which && fs.existsSync(which)) return { path: which, args: [] };
-    } catch { /* not in PATH */ }
+    const claudePath = whichBinary('claude');
+    if (claudePath) return { path: claudePath, args: [] };
 
     // CC extension bundled binary — fallback only (no --resume support)
     const ccExt = vscode.extensions.getExtension('anthropic.claude-code');
     if (ccExt) {
-      const binaryName = process.platform === 'win32' ? 'claude.exe' : 'claude';
-      const binaryPath = path.join(ccExt.extensionUri.fsPath, 'resources', 'native-binary', binaryName);
+      const exeName = binaryName('claude');
+      const binaryPath = path.join(ccExt.extensionUri.fsPath, 'resources', 'native-binary', exeName);
       try {
         if (fs.existsSync(binaryPath)) return { path: binaryPath, args: [] };
       } catch { /* ignore */ }
@@ -137,6 +136,7 @@ export class CommandRelayService {
         const child = spawn(binary.path, [...binary.args, '--resume', sessionId, '--print', text, '--permission-mode', 'bypassPermissions'], {
           stdio: ['ignore', 'pipe', 'pipe'],
           windowsHide: true,
+          shell: needsShellForScript(binary.path),
           cwd,
         });
         let stdout = '';

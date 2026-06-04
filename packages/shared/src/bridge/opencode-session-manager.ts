@@ -3,6 +3,7 @@ import { get as httpGet } from 'node:http';
 import { createEventStreamParser } from './sse-parser.js';
 import { ApprovalBridge } from './handler.js';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { discoverOpenCodePort } from './platform.js';
 
 interface AttachedOpenCodeSession {
   localSessionId: string;
@@ -52,32 +53,6 @@ function saveAttachedSessions(sessions: AttachedOpenCodeSession[]): void {
     }
     writeFileSync(getAttachedStoragePath(), JSON.stringify([...byLocal.values()]), 'utf-8');
   } catch {}
-}
-
-/** Discover the OpenCode port from running process. Used for reconnect. */
-function discoverOpenCodePortLocal(): number | null {
-  try {
-    const cp = require('node:child_process');
-    if (process.platform === 'win32') {
-      for (const query of ['opencode', 'node']) {
-        try {
-          const out = cp.execSync(
-            `wmic process where "name like '%${query}%'" get CommandLine /format:list`,
-            { encoding: 'utf-8', timeout: 5000 },
-          );
-          const all = [...out.matchAll(/--port\s+(\d+)/g)];
-          if (all.length > 0) return Number(all[all.length - 1][1]);
-        } catch { /* try next query */ }
-      }
-    } else {
-      const out = cp.execSync('ps aux | grep -v grep | grep -E "opencode|node.*opencode"', {
-        encoding: 'utf-8', timeout: 5000,
-      });
-      const m = out.match(/--port\s+(\d+)/);
-      if (m) return Number(m[1]);
-    }
-  } catch { /* fall through */ }
-  return null;
 }
 
 export class OpenCodeSessionManager {
@@ -277,7 +252,7 @@ export class OpenCodeSessionManager {
       this._reconnectTimer = null;
     }
     // Re-discover port on reconnect (OpenCode may have restarted)
-    const newPort = discoverOpenCodePortLocal();
+    const newPort = discoverOpenCodePort();
     if (newPort && newPort !== this._port) {
       const newUrl = `http://127.0.0.1:${newPort}`;
       console.error('[opencode] port changed %d -> %d, switching', this._port, newPort);

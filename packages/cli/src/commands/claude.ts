@@ -1,17 +1,10 @@
 import { Command } from 'commander';
-import { spawn, execSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
+import { whichBinary, needsShellForScript } from '@codekey/shared/bridge';
 
 function findClaude(): string | null {
-  const candidates = ['claude', 'claude.cmd', 'npx', 'npx.cmd'];
-  for (const cmd of candidates) {
-    try {
-      const which = (process.platform === 'win32'
-        ? execSync(`where ${cmd}`, { encoding: 'utf-8', timeout: 2000 }).trim().split('\n')[0]
-        : execSync(`which ${cmd}`, { encoding: 'utf-8', timeout: 2000 }).trim());
-      if (which) return which;
-    } catch { /* not found */ }
-  }
-  return null;
+  // Prefer claude, fall back to npx (which can run @anthropic-ai/claude-code)
+  return whichBinary('claude') ?? whichBinary('npx') ?? null;
 }
 
 export const claudeCommand = new Command('claude')
@@ -37,7 +30,7 @@ export const claudeCommand = new Command('claude')
 
     const child = spawn(claudeBin, claudeArgs, {
       stdio: 'inherit',
-      shell: process.platform === 'win32' && /\.(cmd|bat)$/i.test(claudeBin),
+      shell: needsShellForScript(claudeBin),
     });
 
     child.on('exit', (code) => {

@@ -1,15 +1,9 @@
 import * as vscode from 'vscode';
 import { existsSync } from 'node:fs';
-import { CodexAppServerClient, type ServerRequestMessage } from '@codekey/shared/bridge';
+import { CodexAppServerClient, type ServerRequestMessage, detectPlatform } from '@codekey/shared/bridge';
 import { resolveCodexBinaryForVSCode } from '../services/codex-binary-resolver.js';
 import { BridgeStatusService } from '../services/bridge-status.js';
 import { log, debug } from '../log.js';
-
-function detectPlatform(): 'win32' | 'linux' | 'darwin' {
-  if (process.platform === 'win32') return 'win32';
-  if (process.platform === 'darwin') return 'darwin';
-  return 'linux';
-}
 
 function bridgeUrl(): string {
   return `http://127.0.0.1:${BridgeStatusService.getInstance().getBridgePort()}`;

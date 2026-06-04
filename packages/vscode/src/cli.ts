@@ -1,11 +1,12 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { execSync } from 'node:child_process';
+import { whichBinary, detectPlatform } from '@codekey/shared/bridge';
 
 const scriptDir = __dirname;
 
 // Walk up from an anchor dir to find node_modules/.bin
-function findInParent(anchor: string, isWin: boolean): string | null {
+function findInParent(anchor: string): string | null {
+  const isWin = detectPlatform() === 'win32';
   let dir = anchor;
   for (let i = 0; i < 6; i++) { // max 6 levels up
     const binDir = path.join(dir, 'node_modules', '.bin');
@@ -26,24 +27,17 @@ function findInParent(anchor: string, isWin: boolean): string | null {
 }
 
 export function findCli(): string | null {
-  const isWin = process.platform === 'win32';
-
   // Try from CWD (workspace root when run from VS Code)
-  let result = findInParent(process.cwd(), isWin);
+  let result = findInParent(process.cwd());
   if (result) return result;
 
   // Try from the extension's own directory (monorepo dev)
-  result = findInParent(scriptDir, isWin);
+  result = findInParent(scriptDir);
   if (result) return result;
 
-  // PATH lookup
-  try {
-    const pathResult = execSync(
-      isWin ? 'where codekey' : 'which codekey',
-      { encoding: 'utf-8', timeout: 3000 },
-    ).trim().split('\n')[0];
-    if (pathResult) return pathResult;
-  } catch { /* not in PATH */ }
+  // PATH lookup via whichBinary
+  const pathResult = whichBinary('codekey');
+  if (pathResult) return pathResult;
 
   return null;
 }

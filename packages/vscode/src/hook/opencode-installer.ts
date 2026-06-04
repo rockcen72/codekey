@@ -1,6 +1,8 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
+import { execSync } from 'node:child_process';
+import { whichBinary } from '@codekey/shared/bridge';
 
 const PLUGIN_NAME = 'codekey-telemetry.js';
 
@@ -36,21 +38,13 @@ export function uninstallOpenCodePlugin(): void {
 }
 
 export function isOpenCodeCliInstalled(): boolean {
-  try {
-    const which = process.platform === 'win32' ? 'where' : 'which';
-    const result = require('child_process').execSync(`${which} opencode`, {
-      encoding: 'utf-8',
-      stdio: ['ignore', 'pipe', 'ignore'],
-      timeout: 3000,
-    });
-    return !!result.trim();
-  } catch {
-    const commonPaths = [
-      path.join(os.homedir(), '.opencode', 'bin', 'opencode'),
-      path.join(os.homedir(), 'AppData', 'Roaming', 'npm', 'opencode'),
-      '/usr/local/bin/opencode',
-      '/usr/bin/opencode',
-    ];
-    return commonPaths.some(p => { try { return fs.existsSync(p); } catch { return false; } });
-  }
+  if (whichBinary('opencode') !== null) return true;
+  // Fallback: check common install paths
+  const commonPaths = [
+    path.join(os.homedir(), '.opencode', 'bin', 'opencode'),
+    path.join(os.homedir(), 'AppData', 'Roaming', 'npm', 'opencode'),
+    '/usr/local/bin/opencode',
+    '/usr/bin/opencode',
+  ];
+  return commonPaths.some(p => { try { return fs.existsSync(p); } catch { return false; } });
 }

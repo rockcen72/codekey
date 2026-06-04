@@ -28,3 +28,16 @@ export type { TranscriptEvent, CodexTranscriptWatcherOptions } from './codex-tra
 
 export { CodexResumeManager } from './codex-resume-manager.js';
 export { OpenCodeSessionManager } from './opencode-session-manager.js';
+
+// Cross-platform utilities
+export {
+  detectPlatform,
+  binaryName,
+  whichBinary,
+  needsShellForScript,
+  discoverOpenCodePort,
+  listPidsByPort,
+  killPid,
+  killPort,
+} from './platform.js';
+export type { Platform } from './platform.js';
