@@ -5,6 +5,7 @@ import {
   resolveClaudeTranscript,
   extractUserPrompts,
   resolveTranscriptCwd,
+  loadConversation,
 } from './claude-transcripts.js';
 import { discoverLocalSessions } from './codex-local-session-resolver.js';
 import { MAX_PROMPT_LENGTH } from '../types.js';
@@ -118,7 +119,10 @@ export class ApprovalBridge {
   private claimedTabSessions = new Set<string>(); // tab-level windowIds already bound to a claudeSessionId
   private pendingDeactivations = new Set<string>(); // windowIds to deactivate once in-flight activation completes
   private transcriptAttachedIds = new Set<string>(); // claudeSessionIds attached via attachClaudeSession (for reconciliation)
+  private claudeTranscriptSyncTimers = new Map<string, ReturnType<typeof setInterval>>();
   private sentPromptKeys = new Set<string>();     // "claudeSessionId:index" — prevents re-attach duplicates
+  private sentAssistantKeys = new Set<string>();  // "claudeSessionId:index" — prevents transcript duplicate sends
+  private sentAssistantTextKeys = new Set<string>(); // "claudeSessionId:fingerprint" — dedups hook + transcript sends
   // Tracks number of phone commands claimed but not yet acknowledged via session_idle.
   // Used to gate task_complete synthesis from session_idle events.
   private pendingPhoneDeliveryCount = new Map<string, number>(); // serverSessionId → count
@@ -1237,13 +1241,7 @@ export class ApprovalBridge {
     // genuinely-pending approval. Scope to serverSessionId so one session's
     // activity never wipes another session's pending approvals.
     if (body.eventType === 'task_complete') {
-      for (const [key, entry] of this.pendingByServerEventId) {
-        if (entry.serverSessionId !== serverSessionId) continue;
-        clearTimeout(entry.timer);
-        this.resolveEventOnRelay(key);
-        this.pendingByServerEventId.delete(key);
-        entry.resolve({ approved: false });
-      }
+      this.resolvePendingApprovalsForSession(serverSessionId);
     }
 
     // Synthesize task_complete from session_idle to surface the assistant's response
@@ -1256,6 +1254,7 @@ export class ApprovalBridge {
       if (pendingCount > 0) {
         this.pendingPhoneDeliveryCount.set(serverSessionId, pendingCount - 1);
       }
+      if (this.markAssistantTextSent(claudeSessionId, body.lastAssistantMessage)) return;
       const msg: SessionEventMessage = {
         type: 'event',
         payload: {
@@ -1378,6 +1377,102 @@ export class ApprovalBridge {
     });
   }
 
+  private startClaudeTranscriptSync(claudeSessionId: string, serverSessionId: string): void {
+    if (this.claudeTranscriptSyncTimers.has(claudeSessionId)) return;
+    this.syncClaudeTranscript(claudeSessionId, serverSessionId).catch(() => {});
+    const timer = setInterval(() => {
+      const currentServerSessionId = this.sessions.get(claudeSessionId);
+      if (!this.transcriptAttachedIds.has(claudeSessionId) || !currentServerSessionId) {
+        this.stopClaudeTranscriptSync(claudeSessionId);
+        return;
+      }
+      this.syncClaudeTranscript(claudeSessionId, currentServerSessionId).catch(() => {});
+    }, 2_000);
+    timer.unref?.();
+    this.claudeTranscriptSyncTimers.set(claudeSessionId, timer);
+  }
+
+  private stopClaudeTranscriptSync(claudeSessionId: string): void {
+    const timer = this.claudeTranscriptSyncTimers.get(claudeSessionId);
+    if (timer) clearInterval(timer);
+    this.claudeTranscriptSyncTimers.delete(claudeSessionId);
+  }
+
+  private async syncClaudeTranscript(claudeSessionId: string, serverSessionId: string): Promise<void> {
+    const entries = loadConversation(claudeSessionId, 100);
+    for (const entry of entries) {
+      if (entry.role === 'user') {
+        const dedupKey = `${claudeSessionId}:${entry.index}`;
+        if (this.sentPromptKeys.has(dedupKey)) continue;
+        this.sentPromptKeys.add(dedupKey);
+        if (this.consumePhoneCommandMatch(serverSessionId, entry.text)) continue;
+
+        const prompt = entry.text.slice(0, MAX_PROMPT_LENGTH);
+        const relayMsg: SessionEventMessage = {
+          type: 'event',
+          payload: {
+            clientEventId: `prompt:${claudeSessionId}:${entry.index}`,
+            sessionId: serverSessionId,
+            agent: 'claude-code-hook',
+            eventType: 'user_prompt',
+            data: {
+              type: 'user_prompt',
+              prompt,
+              summary: entry.text.slice(0, 200),
+              timestamp: entry.timestamp,
+              index: entry.index,
+            },
+            ts: entry.timestamp || new Date().toISOString(),
+          },
+        };
+        this.relay.sendEvent(serverSessionId, relayMsg);
+        continue;
+      }
+
+      const dedupKey = `${claudeSessionId}:${entry.index}`;
+      if (this.sentAssistantKeys.has(dedupKey)) continue;
+      this.sentAssistantKeys.add(dedupKey);
+      if (this.markAssistantTextSent(claudeSessionId, entry.text)) continue;
+
+      const relayMsg: SessionEventMessage = {
+        type: 'event',
+        payload: {
+          clientEventId: `assistant:${claudeSessionId}:${entry.index}`,
+          sessionId: serverSessionId,
+          agent: 'claude-code-hook',
+          eventType: 'task_complete',
+          data: {
+            type: 'task_complete',
+            summary: entry.text.slice(0, 200),
+            summaryShort: entry.text.slice(0, 200),
+          },
+          ts: entry.timestamp || new Date().toISOString(),
+        },
+      };
+      this.relay.sendEvent(serverSessionId, relayMsg);
+      this.resolvePendingApprovalsForSession(serverSessionId);
+    }
+  }
+
+  private resolvePendingApprovalsForSession(serverSessionId: string): void {
+    for (const [key, entry] of this.pendingByServerEventId) {
+      if (entry.serverSessionId !== serverSessionId) continue;
+      clearTimeout(entry.timer);
+      this.resolveEventOnRelay(key);
+      this.pendingByServerEventId.delete(key);
+      entry.resolve({ approved: false });
+    }
+  }
+
+  private markAssistantTextSent(claudeSessionId: string, text: string): boolean {
+    const fingerprint = this.fingerprintText(text);
+    if (!fingerprint) return false;
+    const key = `${claudeSessionId}:${fingerprint}`;
+    if (this.sentAssistantTextKeys.has(key)) return true;
+    this.sentAssistantTextKeys.add(key);
+    return false;
+  }
+
   /** Extract recent user prompts from transcript and emit as user_prompt events.
    *  Dedup strategy: sentPromptKeys (cross-attach) + consumePhoneCommandMatch (one-shot per session). */
   private async replayUserPrompts(
@@ -1418,31 +1513,7 @@ export class ApprovalBridge {
 
   /** Backfill assistant messages from CC transcript so phone shows conversation history. */
   private async _backfillAssistantHistory(claudeSessionId: string, serverSessionId: string): Promise<void> {
-    try {
-      const { loadConversation } = await import('./claude-transcripts.js');
-      const entries = loadConversation(claudeSessionId, 5);
-      if (entries.length === 0) return;
-
-      for (let i = 0; i < entries.length; i++) {
-        const entry = entries[i];
-        if (entry.role !== 'assistant') continue;
-        this.relay.sendRaw(JSON.stringify({
-          type: 'event',
-          payload: {
-            clientEventId: `hist:${claudeSessionId}:${entry.index || i}`,
-            sessionId: serverSessionId,
-            agent: 'claude-code-hook',
-            eventType: 'task_complete',
-            data: {
-              type: 'task_complete',
-              summary: entry.text.slice(0, 200),
-              output: entry.text.slice(0, 500),
-            },
-            ts: entry.timestamp || new Date().toISOString(),
-          },
-        }));
-      }
-    } catch { /* best-effort */ }
+    await this.syncClaudeTranscript(claudeSessionId, serverSessionId);
   }
 
   // ── Phone command dedup methods ──────────────────────────
@@ -1459,6 +1530,24 @@ export class ApprovalBridge {
     // Increment pending delivery counter for task_complete synthesis
     const count = this.pendingPhoneDeliveryCount.get(serverSessionId) ?? 0;
     this.pendingPhoneDeliveryCount.set(serverSessionId, count + 1);
+
+    const relayMsg: SessionEventMessage = {
+      type: 'event',
+      payload: {
+        clientEventId: `phone-started:${serverSessionId}:${Date.now()}`,
+        sessionId: serverSessionId,
+        agent: 'claude-code-hook',
+        eventType: 'command_started',
+        data: {
+          type: 'command_started',
+          command: text,
+        },
+        ts: new Date().toISOString(),
+      },
+    };
+    console.error('[bridge] phone command claimed: sending command_started sessionId=%s text=%s',
+      serverSessionId, text.slice(0, 80));
+    this.relay.sendEvent(serverSessionId, relayMsg);
   }
 
   /** Check and consume one matching fingerprint (one-shot). */
@@ -1525,6 +1614,7 @@ export class ApprovalBridge {
     // Replay recent conversation history to relay (so phone sees same as sidebar)
     this.replayUserPrompts(claudeSessionId, serverSessionId).catch(() => {});
     this._backfillAssistantHistory(claudeSessionId, serverSessionId).catch(() => {});
+    this.startClaudeTranscriptSync(claudeSessionId, serverSessionId);
     return serverSessionId;
   }
 
@@ -1536,6 +1626,7 @@ export class ApprovalBridge {
     if (!claudeSessionId) return { ok: false };
     const serverSessionId = this.sessions.get(claudeSessionId);
     if (!serverSessionId) return { ok: true };
+    this.stopClaudeTranscriptSync(claudeSessionId);
 
     this.relay.sendRaw(JSON.stringify({
       type: 'deactivate_session',
@@ -1609,6 +1700,7 @@ export class ApprovalBridge {
           if (!newAttached.has(csid)) {
             const ssid = this.sessions.get(csid);
             this.sessions.delete(csid);
+            this.stopClaudeTranscriptSync(csid);
             if (this.primarySessionId === ssid) this.primarySessionId = null;
           }
         }
@@ -1617,6 +1709,7 @@ export class ApprovalBridge {
         for (const [csid, ssid] of newEntries) {
           this.sessions.set(csid, ssid);
           if (!this.primarySessionId) this.primarySessionId = ssid;
+          this.startClaudeTranscriptSync(csid, ssid);
         }
 
         // Replace transcriptAttachedIds with the relay's view

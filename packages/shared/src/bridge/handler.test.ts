@@ -1,5 +1,5 @@
 import { EventEmitter } from 'node:events';
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { appendFileSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -16,6 +16,10 @@ function createTranscriptFixture(sessionId: string, title: string): string {
     JSON.stringify({ type: 'user', message: { role: 'user', content: title } }) + '\n',
   );
   return tmpDir;
+}
+
+function appendTranscriptLine(tmpDir: string, sessionId: string, line: unknown): void {
+  appendFileSync(join(tmpDir, 'projects', 'test-project', `${sessionId}.jsonl`), JSON.stringify(line) + '\n');
 }
 
 function createCodexSessionFixture(sessionId: string): string {
@@ -159,6 +163,31 @@ describe('ApprovalBridge canonical sessions', () => {
     expect(bridge.commandQueue.peek()).toEqual([
       { id: expect.any(String), sessionId: sessionB, claudeSessionId: 'claude-b', text: 'claude prompt' },
     ]);
+  });
+
+  it('emits command_started when a phone command is claimed by desktop', async () => {
+    const relay = new FakeRelay();
+    const bridge = new ApprovalBridge(relay as any);
+    const serverSession = await bridge.ensureSession('claude-a');
+
+    bridge.listenRelayCommands();
+    relay.emit('command', { sessionId: serverSession, action: 'write_stdin', data: 'phone prompt' });
+
+    const [cmd] = bridge.commandQueue.peek();
+    const claimed = bridge.commandQueue.claim([cmd.id]);
+    for (const item of claimed) {
+      bridge.recordClaimedPhoneCommand(item.sessionId, item.text);
+    }
+
+    const events = relay.sent
+      .map(m => JSON.parse(m))
+      .filter((m: any) => m.type === 'event');
+    const started = events.find((m: any) => m.payload.eventType === 'command_started');
+
+    expect(started).toBeDefined();
+    expect(started.payload.sessionId).toBe(serverSession);
+    expect(started.payload.data).toEqual({ type: 'command_started', command: 'phone prompt' });
+    expect(events.some((m: any) => m.payload.eventType === 'task_complete')).toBe(false);
   });
 
   it('does not queue commands for known Codex local sessions that are not resumed', async () => {
@@ -523,6 +552,108 @@ describe('ApprovalBridge canonical sessions', () => {
           .map(m => JSON.parse(m))
           .filter((m: any) => m.payload?.eventType === 'user_prompt');
         expect(newPromptEvents.length).toBe(0);
+      } finally {
+        delete process.env.CLAUDE_CONFIG_DIR;
+      }
+    });
+
+    it('syncs newly appended Claude assistant transcript messages', async () => {
+      const tmpDir = createTranscriptFixture('claude-a', 'First prompt');
+      process.env.CLAUDE_CONFIG_DIR = tmpDir;
+      try {
+        const relay = new FakeRelay();
+        const bridge = new ApprovalBridge(relay as any);
+
+        await bridge.attachClaudeSession('claude-a');
+        await flushAsync();
+        const beforeCount = relay.sent.length;
+
+        appendTranscriptLine(tmpDir, 'claude-a', {
+          type: 'assistant',
+          timestamp: '2026-06-04T01:02:03.000Z',
+          message: { role: 'assistant', content: [{ type: 'text', text: 'Done from transcript' }] },
+        });
+
+        await (bridge as any).syncClaudeTranscript('claude-a', 'server-claude-a');
+
+        const taskEvents = relay.sent.slice(beforeCount)
+          .map(m => JSON.parse(m))
+          .filter((m: any) => m.type === 'event' && m.payload.eventType === 'task_complete');
+        expect(taskEvents.length).toBe(1);
+        expect(taskEvents[0].payload.data.summary).toContain('Done from transcript');
+      } finally {
+        delete process.env.CLAUDE_CONFIG_DIR;
+      }
+    });
+
+    it('clears pending approvals when Claude continues via transcript output', async () => {
+      const tmpDir = createTranscriptFixture('claude-a', 'First prompt');
+      process.env.CLAUDE_CONFIG_DIR = tmpDir;
+      try {
+        const relay = new FakeRelay();
+        const bridge = new ApprovalBridge(relay as any);
+
+        await bridge.attachClaudeSession('claude-a');
+        await flushAsync();
+        bridge.trackPendingApproval({
+          id: 'approval-1',
+          serverSessionId: 'server-claude-a',
+          claudeSessionId: 'claude-a',
+          agentType: 'claude-code-hook',
+          command: 'npm test',
+          summary: 'Run tests',
+          toolName: 'Bash',
+          risk: 'medium',
+        });
+
+        appendTranscriptLine(tmpDir, 'claude-a', {
+          type: 'assistant',
+          timestamp: '2026-06-04T01:02:03.000Z',
+          message: { role: 'assistant', content: [{ type: 'text', text: 'Continued after desktop approval' }] },
+        });
+
+        await (bridge as any).syncClaudeTranscript('claude-a', 'server-claude-a');
+
+        expect(bridge.getPendingApprovals()).toEqual([]);
+        const resolveMsg = relay.sent
+          .map(m => JSON.parse(m))
+          .find((m: any) => m.type === 'resolve_event' && m.payload.eventId === 'approval-1');
+        expect(resolveMsg).toBeDefined();
+      } finally {
+        delete process.env.CLAUDE_CONFIG_DIR;
+      }
+    });
+
+    it('does not duplicate assistant text already sent by session_idle hook', async () => {
+      const tmpDir = createTranscriptFixture('claude-a', 'First prompt');
+      process.env.CLAUDE_CONFIG_DIR = tmpDir;
+      try {
+        const relay = new FakeRelay();
+        const bridge = new ApprovalBridge(relay as any);
+
+        await bridge.attachClaudeSession('claude-a');
+        await flushAsync();
+
+        await bridge.handleHookEvent({
+          eventType: 'session_idle',
+          claudeSessionId: 'claude-a',
+          lastAssistantMessage: 'Same assistant text',
+          data: { type: 'session_idle', idleMinutes: 0 },
+        });
+
+        const beforeCount = relay.sent.length;
+        appendTranscriptLine(tmpDir, 'claude-a', {
+          type: 'assistant',
+          timestamp: '2026-06-04T01:02:03.000Z',
+          message: { role: 'assistant', content: [{ type: 'text', text: 'Same assistant text' }] },
+        });
+
+        await (bridge as any).syncClaudeTranscript('claude-a', 'server-claude-a');
+
+        const duplicateTaskEvents = relay.sent.slice(beforeCount)
+          .map(m => JSON.parse(m))
+          .filter((m: any) => m.type === 'event' && m.payload.eventType === 'task_complete');
+        expect(duplicateTaskEvents.length).toBe(0);
       } finally {
         delete process.env.CLAUDE_CONFIG_DIR;
       }

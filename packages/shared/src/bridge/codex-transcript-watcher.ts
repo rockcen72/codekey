@@ -11,6 +11,8 @@ export interface CodexTranscriptWatcherOptions {
   transcriptPath: string;
   /** Poll interval in ms (fallback when FS watcher is unreliable) */
   pollIntervalMs?: number;
+  /** Whether to emit existing transcript lines on start. Defaults to true. */
+  processExisting?: boolean;
 }
 
 /**
@@ -41,6 +43,7 @@ export interface TranscriptEvent {
 export class CodexTranscriptWatcher extends EventEmitter {
   private transcriptPath: string;
   private pollIntervalMs: number;
+  private processExisting: boolean;
   private watcher: FSWatcher | null = null;
   private pollTimer: ReturnType<typeof setInterval> | null = null;
   private lastSize = 0;
@@ -52,6 +55,7 @@ export class CodexTranscriptWatcher extends EventEmitter {
     super();
     this.transcriptPath = options.transcriptPath;
     this.pollIntervalMs = options.pollIntervalMs ?? 2000;
+    this.processExisting = options.processExisting ?? true;
   }
 
   /**
@@ -71,8 +75,8 @@ export class CodexTranscriptWatcher extends EventEmitter {
       const stat = statSync(this.transcriptPath);
       this.lastSize = stat.size;
 
-      // Process existing content on first start
-      if (this.lastSize > 0) {
+      // Process existing content on first start unless the caller only wants tailing.
+      if (this.processExisting && this.lastSize > 0) {
         const content = this.readNewContent(0, this.lastSize);
         if (content) {
           this.processNewContent(content);

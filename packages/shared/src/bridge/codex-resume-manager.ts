@@ -4,6 +4,7 @@ import type { ApprovalBridge } from './handler.js';
 import { cleanCodexDisplayText, discoverLocalSessions, findMostRecentSession, type CodexLocalSession } from './codex-local-session-resolver.js';
 import { CodexResumeRuntime, type ResumeResult } from './codex-resume-runtime.js';
 import { resolveCodexBinary } from './codex-binary.js';
+import { CodexTranscriptWatcher, type TranscriptEvent } from './codex-transcript-watcher.js';
 
 /**
  * Manages Codex resume sessions: discovery, relay registration, command handling,
@@ -147,7 +148,13 @@ export class CodexResumeManager {
       approvalPolicy,
     });
 
-    this.sessions.set(serverSessionId, { localSession, runtime });
+    const state: ResumeSessionState = {
+      localSession,
+      runtime,
+      watcher: null,
+      forwardedTextKeys: new Set(),
+    };
+    this.sessions.set(serverSessionId, state);
     this.localToServer.set(localSession.sessionId, serverSessionId);
 
     // Register with ApprovalBridge so getAttachedSessionIds() includes this session (like CC)
@@ -155,6 +162,7 @@ export class CodexResumeManager {
 
     // Push last 3 transcript messages to relay so phone has minimal context
     this._forwardRecentHistory(serverSessionId, localSession.transcriptPath).catch(() => {});
+    this._startTranscriptWatcher(serverSessionId, state);
 
     // Persist resumed session IDs so state survives bridge restart
     this._savePersistedIds();
@@ -197,11 +205,13 @@ export class CodexResumeManager {
    * a final error event if the process did not complete successfully.
    */
   private _forwardResumeResult(serverSessionId: string, result: ResumeResult): void {
+    const state = this.sessions.get(serverSessionId);
     // 1. Forward all structured events from the JSONL output
     for (const event of result.events) {
       if (event.type === 'message' && event.role === 'assistant') {
         const text = cleanCodexDisplayText(event.content || '');
         if (!text) continue;
+        if (state && this._markForwardedText(state, 'assistant', text)) continue;
         this._forwardEvent(serverSessionId, {
           type: 'event',
           payload: {
@@ -278,6 +288,7 @@ export class CodexResumeManager {
     const state = this.sessions.get(serverSessionId);
     if (state) {
       state.runtime.clearQueue();
+      state.watcher?.stop();
       this.sessions.delete(serverSessionId);
     }
 
@@ -299,6 +310,7 @@ export class CodexResumeManager {
   /** Push last 10 transcript messages to relay so phone shows same history as sidebar. */
   private async _forwardRecentHistory(serverSessionId: string, transcriptPath: string): Promise<void> {
     try {
+      const state = this.sessions.get(serverSessionId);
       const { existsSync, readFileSync } = await import('node:fs');
       if (!existsSync(transcriptPath)) return;
       const text = readFileSync(transcriptPath, 'utf8');
@@ -340,6 +352,7 @@ export class CodexResumeManager {
       }
       // Forward in chronological order
       for (const msg of messages.reverse()) {
+        if (state && this._markForwardedText(state, msg.type === 'user_prompt' ? 'user' : 'assistant', msg.text)) continue;
         this._forwardEvent(serverSessionId, {
           type: 'event',
           payload: {
@@ -355,6 +368,54 @@ export class CodexResumeManager {
         });
       }
     } catch { /* best-effort */ }
+  }
+
+  private _startTranscriptWatcher(serverSessionId: string, state: ResumeSessionState): void {
+    if (state.watcher) return;
+    const watcher = new CodexTranscriptWatcher({
+      transcriptPath: state.localSession.transcriptPath,
+      pollIntervalMs: 1000,
+      processExisting: false,
+    });
+    watcher.on('event', (event: TranscriptEvent) => {
+      this._forwardTranscriptEvent(serverSessionId, state, event);
+    });
+    watcher.on('error', (err) => {
+      console.error('[codex-resume] transcript watcher error for %s: %s', state.localSession.sessionId, err);
+    });
+    watcher.start();
+    state.watcher = watcher;
+  }
+
+  private _forwardTranscriptEvent(serverSessionId: string, state: ResumeSessionState, event: TranscriptEvent): void {
+    if (event.type !== 'message') return;
+    const text = cleanCodexDisplayText(event.content || '');
+    if (!text) return;
+    const role = event.role === 'assistant' ? 'assistant' : event.role === 'user' ? 'user' : null;
+    if (!role) return;
+    if (this._markForwardedText(state, role, text)) return;
+
+    this._forwardEvent(serverSessionId, {
+      type: 'event',
+      payload: {
+        clientEventId: `transcript:${serverSessionId}:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`,
+        sessionId: serverSessionId,
+        agent: 'codex',
+        eventType: role === 'user' ? 'user_prompt' : 'task_complete',
+        data: role === 'user'
+          ? { type: 'user_prompt', prompt: text, summary: text.slice(0, 200) }
+          : { type: 'task_complete', summary: text.slice(0, 500), output: text.slice(0, 500) },
+        ts: event.timestamp || new Date().toISOString(),
+      },
+    });
+  }
+
+  private _markForwardedText(state: ResumeSessionState, role: 'user' | 'assistant', text: string): boolean {
+    const key = `${role}:${text.trim().toLowerCase().slice(0, 500)}`;
+    if (!key || key === `${role}:`) return false;
+    if (state.forwardedTextKeys.has(key)) return true;
+    state.forwardedTextKeys.add(key);
+    return false;
   }
 
   /** Save resumed local session IDs to a JSON file so state survives bridge restart. */
@@ -481,4 +542,6 @@ export class CodexResumeManager {
 interface ResumeSessionState {
   localSession: CodexLocalSession;
   runtime: CodexResumeRuntime;
+  watcher: CodexTranscriptWatcher | null;
+  forwardedTextKeys: Set<string>;
 }

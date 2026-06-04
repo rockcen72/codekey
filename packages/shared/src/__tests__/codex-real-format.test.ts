@@ -167,6 +167,95 @@ describe('Codex real transcript format', () => {
       expect(last.content).toBe('Appended after start.');
     });
 
+    it('can tail only newly appended lines', async () => {
+      const dir = path.join(tmpHome, 'sessions', '2026', '06', '01');
+      mkdirSync(dir, { recursive: true });
+      const file = path.join(dir, 'rollout.jsonl');
+      writeFileSync(file, fixture, 'utf8');
+
+      const events: TranscriptEvent[] = [];
+      const w = new CodexTranscriptWatcher({ transcriptPath: file, pollIntervalMs: 30, processExisting: false });
+      w.on('event', (e: TranscriptEvent) => events.push(e));
+      w.start();
+      expect(events).toHaveLength(0);
+
+      appendFileSync(file, JSON.stringify({
+        timestamp: '2026-06-01T08:00:00.000Z',
+        type: 'event_msg',
+        payload: { type: 'agent_message', message: 'Only new content.' },
+      }) + '\n', 'utf8');
+
+      await new Promise(resolve => setTimeout(resolve, 120));
+      w.stop();
+
+      expect(events).toHaveLength(1);
+      expect(events[0].content).toBe('Only new content.');
+    });
+
+    it('CodexResumeManager forwards appended assistant transcript output', async () => {
+      const dir = path.join(tmpHome, 'sessions', '2026', '06', '01');
+      mkdirSync(dir, { recursive: true });
+      const sessionId = '019e8231-a3f7-7c43-8dfb-f2107c803690';
+      const file = path.join(dir, `rollout-${sessionId}.jsonl`);
+      writeFileSync(file, fixture, 'utf8');
+
+      const previousBinary = process.env.CODEX_BINARY_PATH;
+      process.env.CODEX_BINARY_PATH = 'codex-test-binary';
+      const sent: Record<string, any>[] = [];
+      const relay = Object.assign(new EventEmitter(), {
+        sendRaw(value: string) {
+          const msg = JSON.parse(value);
+          sent.push(msg);
+          if (msg.type === 'register_session') {
+            queueMicrotask(() => {
+              relay.emit('session_registered', {
+                clientRequestId: msg.payload.clientRequestId,
+                sessionId: 'server-codex',
+              });
+            });
+          }
+        },
+      });
+      const manager = new CodexResumeManager(relay as any, new Set());
+
+      try {
+        await manager.startResume({
+          sessionId,
+          cwd: tmpHome,
+          title: 'Codex test',
+          transcriptPath: file,
+          source: 'vscode',
+          updatedAt: '2026-06-01T08:00:00.000Z',
+          createdAt: '2026-06-01T07:00:00.000Z',
+        });
+        const beforeCount = sent.length;
+
+        appendFileSync(file, JSON.stringify({
+          timestamp: '2026-06-01T08:01:00.000Z',
+          type: 'event_msg',
+          payload: { type: 'agent_message', message: 'Final answer after approval.' },
+        }) + '\n', 'utf8');
+
+        await new Promise(resolve => setTimeout(resolve, 1200));
+
+        const taskEvents = sent.slice(beforeCount)
+          .filter((m: any) => m.type === 'event' && m.payload?.eventType === 'task_complete');
+        expect(taskEvents).toEqual(expect.arrayContaining([
+          expect.objectContaining({
+            payload: expect.objectContaining({
+              data: expect.objectContaining({
+                summary: expect.stringContaining('Final answer after approval'),
+              }),
+            }),
+          }),
+        ]));
+      } finally {
+        await manager.stopResume(sessionId);
+        if (previousBinary === undefined) delete process.env.CODEX_BINARY_PATH;
+        else process.env.CODEX_BINARY_PATH = previousBinary;
+      }
+    });
+
     it('handles writes that land mid-line', async () => {
       const dir = path.join(tmpHome, 'sessions', '2026', '06', '01');
       mkdirSync(dir, { recursive: true });
