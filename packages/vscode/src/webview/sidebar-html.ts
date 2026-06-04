@@ -1106,7 +1106,7 @@ body{
   overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;
   transition:color .2s;
 }
-.session-title-row .btn{flex-shrink:0}
+.session-title-row .btn{flex-shrink:0;min-width:56px}
 .btn-attached{
   background:rgba(46,204,113,.12);border-color:rgba(46,204,113,.3);color:#2ecc71;
 }
