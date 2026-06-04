@@ -5,7 +5,7 @@ import { renderQrCode } from '../qrcode/display.js';
 
 export const loginCommand = new Command('login')
   .description('Display QR code to bind with WeChat mini program')
-  .option('--relay <url>', 'Relay server URL', 'https://81.70.235.58')
+  .option('--relay <url>', 'Relay server URL', 'https://codekey.tinymoney.cn')
   .action(async (options: { relay: string }) => {
     const secretManager = new DeviceSecretManager();
     const { deviceId, deviceSecret, isNew } = secretManager.loadOrCreate();
@@ -28,7 +28,7 @@ export const loginCommand = new Command('login')
       process.exit(1);
     }
 
-    const pairResult = await response.json() as { code: string; deviceId?: string };
+    const pairResult = await response.json() as { code: string; deviceId?: string; pairUrl?: string };
     const code = pairResult.code;
     const serverDeviceId = pairResult.deviceId;
     const effectiveDeviceId = serverDeviceId ?? deviceId;
@@ -38,9 +38,11 @@ export const loginCommand = new Command('login')
       secretManager.saveDeviceId(serverDeviceId);
     }
 
-    // Render QR with pairing code
+    // Render QR with pairUrl if available (includes server domain + code),
+    // so the mini program can auto-detect the server and extract the code
+    const qrContent = pairResult.pairUrl || code;
     console.log('\nScan this QR code with WeChat Mini Program:\n');
-    renderQrCode(code);
+    renderQrCode(qrContent);
     console.log(`\nOr enter code manually: ${code}`);
     console.log('Code expires in 5 minutes.\n');
 

@@ -33,15 +33,15 @@ export function activate(context: vscode.ExtensionContext) {
   const creds = loadCredentials();
   log(`creds: ${creds ? 'yes' : 'no'}`);
 
-  // TLS verification is enabled by default. The relay server uses a valid
-  // Let's Encrypt certificate. For local development or temporary deployment
-  // on IP-based endpoints where the cert SAN does not include the IP
-  // (common while a domain is still in ICP filing), set:
-  //   CODEKEY_INSECURE_TLS_HOSTS=81.70.235.58,api.example.dev
+  // TLS verification is enabled by default. The production domain
+  // (codekey.tinymoney.cn) is served with a valid Let's Encrypt certificate.
+  // For local development or temporary deployment on IP-based endpoints
+  // where the cert SAN does not include the IP, set:
+  //   CODEKEY_INSECURE_TLS_HOSTS=81.70.235.58
   // Comma-separated hostnames. The relay CLIENT (PC extension + bridge WS)
   // skips certificate verification ONLY for these hosts. Everything else
-  // still enforces strict TLS. This is a temporary workaround — once the
-  // domain is in production, drop the env var and re-package.
+  // still enforces strict TLS. This is a temporary workaround — drop the
+  // env var once the target hostname matches its certificate.
   //
   // Alternative escape hatch: CODEKEY_INSECURE_TLS=1 disables verification
   // globally. NEVER use in production.

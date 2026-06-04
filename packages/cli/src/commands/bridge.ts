@@ -4,7 +4,7 @@ import { DeviceSecretManager } from '../auth/device-secret.js';
 
 export const bridgeCommand = new Command('bridge')
   .description('Start the local bridge HTTP server for Claude Code hook events')
-  .option('--relay <url>', 'Relay server URL', 'https://81.70.235.58')
+  .option('--relay <url>', 'Relay server URL', 'https://codekey.tinymoney.cn')
   .action(async (options: { relay: string }) => {
     const secretManager = new DeviceSecretManager();
     const deviceId = secretManager.getDeviceId();

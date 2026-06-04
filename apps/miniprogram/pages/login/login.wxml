@@ -22,15 +22,4 @@
   <view class="hint">
     <text>在电脑上运行 "codekey login" 获取配对码</text>
   </view>
-
-  <view class="server-section">
-    <text class="server-toggle" bindtap="toggleServerInput">
-      {{showServerInput ? '收起' : '服务器地址'}}
-    </text>
-    <view class="server-input-area" wx:if="{{showServerInput}}">
-      <input class="server-input" placeholder="https://81.70.235.58"
-             value="{{serverUrl}}" bindinput="onServerUrlInput" />
-      <button class="server-save-btn" bindtap="saveServerUrl">保存</button>
-    </view>
-  </view>
 </view>

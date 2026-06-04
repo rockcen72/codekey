@@ -13,7 +13,7 @@ if (!DATABASE_URL) {
 
 if (!PUBLIC_BASE_URL) {
   console.error('FATAL: PUBLIC_BASE_URL environment variable is required');
-  console.error('Example: PUBLIC_BASE_URL=https://81.70.235.58 (used to build pairUrl)');
+  console.error('Example: PUBLIC_BASE_URL=https://codekey.tinymoney.cn (used to build pairUrl)');
   process.exit(1);
 }
 // Validate and normalize (remove trailing slash and path, strictly http/https)

@@ -822,7 +822,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
 
   private async _handlePairingGenerate(): Promise<void> {
     const creds = loadCredentials();
-    const relayUrl = creds?.relayUrl || 'https://81.70.235.58';
+    const relayUrl = creds?.relayUrl || 'https://codekey.tinymoney.cn';
 
     // No credentials: bootstrap (first-time pair or after unpair)
     if (!creds?.deviceSecret || !creds?.deviceId) {
