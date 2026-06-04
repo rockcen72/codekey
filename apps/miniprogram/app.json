@@ -13,5 +13,10 @@
     "backgroundColor": "#f5f0eb"
   },
   "style": "v2",
-  "sitemapLocation": "sitemap.json"
+  "sitemapLocation": "sitemap.json",
+  "permission": {
+    "scope.camera": {
+      "desc": "扫码绑定电脑端的配对码"
+    }
+  }
 }

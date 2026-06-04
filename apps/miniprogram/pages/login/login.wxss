@@ -49,17 +49,17 @@
   align-items: center;
   gap: 16rpx;
   margin-top: 16rpx;
-  width: 520rpx;
+  width: 620rpx;
 }
 .code-input {
   flex: 1;
-  height: 72rpx;
+  height: 88rpx;
   border: 2rpx solid var(--ck-border);
   border-radius: var(--ck-radius-md);
-  padding: 0 20rpx;
-  font-size: 28rpx;
+  padding: 0 24rpx;
+  font-size: 38rpx;
   text-align: center;
-  letter-spacing: 4rpx;
+  letter-spacing: 8rpx;
   text-transform: uppercase;
 }
 .confirm-btn {
@@ -80,41 +80,4 @@
 .hint text {
   font-size: 24rpx;
   color: var(--ck-subtle);
-}
-.server-section {
-  width: 100%;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  margin-top: 24rpx;
-}
-.server-toggle {
-  font-size: 24rpx;
-  color: var(--ck-subtle);
-  padding: 12rpx;
-}
-.server-input-area {
-  display: flex;
-  align-items: center;
-  gap: 12rpx;
-  margin-top: 12rpx;
-  width: 520rpx;
-}
-.server-input {
-  flex: 1;
-  height: 64rpx;
-  border: 1rpx solid var(--ck-border);
-  border-radius: var(--ck-radius-sm);
-  padding: 0 16rpx;
-  font-size: 24rpx;
-}
-.server-save-btn {
-  height: 64rpx;
-  line-height: 64rpx;
-  padding: 0 20rpx;
-  background: var(--ck-primary);
-  color: #fff;
-  border-radius: var(--ck-radius-sm);
-  font-size: 24rpx;
-  text-align: center;
 }

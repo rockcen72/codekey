@@ -1,12 +1,10 @@
-import { hasAuth, getServerUrl, setServerUrl } from '../../services/storage';
+import { hasAuth } from '../../services/storage';
 
 Page({
   data: {
     canScan: true,
     showManualInput: false,
     manualCode: '',
-    showServerInput: false,
-    serverUrl: getServerUrl(),
   },
 
   onLoad() {
@@ -19,12 +17,21 @@ Page({
     wx.scanCode({
       onlyFromCamera: true,
       success: (res) => {
-        const code = res.result.trim();
+        const raw = res.result.trim();
+        // 支持直接扫描配对码（8位）或 pairUrl（如 https://domain/pair?code=XXX）
+        let code = raw;
+        const urlMatch = raw.match(/[?&]code=([A-Z2-9]{8})(?:$|&)/i);
+        if (urlMatch) {
+          code = urlMatch[1].toUpperCase();
+        }
         if (code.length === 8 && /^[A-Z2-9]+$/.test(code)) {
           wx.navigateTo({ url: `/pages/bind/bind?code=${code}` });
         } else {
           wx.showToast({ title: '无效的配对码', icon: 'none' });
         }
+      },
+      fail: (err) => {
+        wx.showToast({ title: '扫码失败：' + (err.errMsg || '未知错误'), icon: 'none' });
       },
     });
   },
@@ -34,7 +41,8 @@ Page({
   },
 
   onCodeInput(e: any) {
-    this.setData({ manualCode: e.detail.value });
+    // 自动转大写，方便用户核对
+    this.setData({ manualCode: e.detail.value.toUpperCase() });
   },
 
   confirmManualCode() {
@@ -46,21 +54,4 @@ Page({
     }
   },
 
-  toggleServerInput() {
-    this.setData({ showServerInput: !this.data.showServerInput });
-  },
-
-  onServerUrlInput(e: any) {
-    this.setData({ serverUrl: e.detail.value });
-  },
-
-  saveServerUrl() {
-    const url = this.data.serverUrl.trim();
-    if (!url) {
-      wx.showToast({ title: '服务器地址不能为空', icon: 'none' });
-      return;
-    }
-    setServerUrl(url);
-    wx.showToast({ title: '服务器地址已保存', icon: 'success' });
-  },
 });
