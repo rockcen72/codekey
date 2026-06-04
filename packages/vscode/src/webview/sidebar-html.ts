@@ -123,7 +123,11 @@ export function renderDeviceContent(state: SidebarState): string {
   const hasPhone = state.deviceStatus !== 'unpaired';
   const mpOnline = state.deviceStatus === 'paired' && state.bridge.mpOnline;
   const mpDot = dot(mpOnline ? 'green' : 'gray');
-  const mpLabel = mpOnline ? i18n(state.lang, "Online", "已连接") : hasPhone ? i18n(state.lang, "Offline", "未连接") : '';
+  const mpLabel = mpOnline
+    ? i18n(state.lang, "Online", "已连接")
+    : hasPhone
+      ? i18n(state.lang, "Paired (background)", "已配对（后台）")
+      : '';
   return `<div class="row" style="cursor:pointer" data-action="relayReconnect" title="Click to reconnect"><span class="row-label">${i18n(state.lang, "Server", "服务器")}</span><span class="row-val">${serverDot}${serverLabel}</span></div>
     ${mpLabel ? `<div class="row"><span class="row-label">${i18n(state.lang, "Phone", "移动端")}</span><span class="row-val">${mpDot}${mpLabel}</span></div>` : ''}`;
 }
@@ -200,18 +204,16 @@ export function renderApprovalsContent(state: SidebarState): string {
     groups[a.serverSessionId].items.push(a);
   }
 
-  const agentColors: Record<string, string> = {
-    'claude-code': '#f5a623', 'claude-code-hook': '#f5a623',
-    'codex': '#4fc1ff', 'opencode': '#5c9cf5',
+  const agentColorClass: Record<string, string> = {
+    'claude-code': 'c-orange', 'claude-code-hook': 'c-orange',
+    'codex': 'c-green', 'opencode': 'c-blue',
   };
 
-  return Object.entries(groups).map(([sid, g]) => `
-    <div class="approval-session">
+  return Object.entries(groups).map(([sid, g]) => {
+    const cls = agentColorClass[g.agentType] || 'c-orange';
+    return `<div class="approval-session ${cls}">
       <div class="approval-header">
-        <span class="approval-agent" style="color:${agentColors[g.agentType] || '#888'}">
-          <span class="agent-count-dot" style="background:${agentColors[g.agentType] || '#888'}">${g.items.length}</span>
-          ${h(g.agent)}
-        </span>
+        <span class="approval-agent ${cls}">${h(g.agent)}</span>
       ${g.items.map(item => {
         const rCls = item.risk === 'high' || item.risk === 'critical' ? 'risk-high' : item.risk === 'medium' ? 'risk-medium' : 'risk-low';
         const showCmd = item.toolName === 'Bash' && item.command !== item.summary;
@@ -225,24 +227,26 @@ export function renderApprovalsContent(state: SidebarState): string {
         </div>`;
       }).join('')}
     </div>
-  `).join('');
+ `;
+  }).join('');
 }
 
 function renderApprovals(state: SidebarState): string {
   const pending = state.pendingApprovals;
+  const hasPending = pending.length > 0;
   // Aggregate counts by agent type
-  const agentColors: Record<string, string> = {
-    'claude-code': '#f5a623', 'claude-code-hook': '#f5a623',
-    'codex': '#4fc1ff', 'opencode': '#5c9cf5',
+  const agentColorClass: Record<string, string> = {
+    'claude-code': 'c-orange', 'claude-code-hook': 'c-orange',
+    'codex': 'c-green', 'opencode': 'c-blue',
   };
   const agentCounts: Record<string, number> = {};
   for (const a of pending) {
     const key = a.agentType || 'claude-code';
     agentCounts[key] = (agentCounts[key] || 0) + 1;
   }
-  const badgesHtml = Object.entries(agentCounts).map(([type, count]) =>
-    `<span class="agent-badge" style="background:${agentColors[type] || '#888'}">${count}</span>`
-  ).join('');
+  const badgesHtml = hasPending ? Object.entries(agentCounts).map(([type, count]) =>
+    `<span class="agent-badge ${agentColorClass[type] || 'c-orange'}">${count}</span>`
+  ).join('') : '';
 
   return `<div class="card">
     <div class="card-header">
@@ -409,7 +413,7 @@ export function renderPairingContent(state: SidebarState): string {
           <div class="paired-title">${i18n(state.lang, 'Paired', '已配对')}</div>
           <div class="paired-sub">${platName}</div>
         </div>
-        <button class="btn btn-sm btn-danger" data-action="unpairDevice" style="margin-left:auto">${i18n(state.lang, 'Unpair', '重新配对')}</button>
+        <button class="btn btn-sm btn-attached" data-action="unpairDevice" style="margin-left:auto">${i18n(state.lang, 'Unpair', '取消配对')}</button>
       </div>
     </div>`;
   }
@@ -1017,13 +1021,22 @@ body{
 .agent-badge{
   display:inline-flex;align-items:center;justify-content:center;
   width:18px;height:18px;border-radius:50%;
-  color:#fff;font-size:10px;font-weight:700;line-height:1;
+  font-size:10px;font-weight:700;line-height:1;
 }
+.agent-badge.c-orange{background:rgba(245,166,35,.15);color:#f5a623}
+.agent-badge.c-green{background:rgba(46,204,113,.15);color:#2ecc71}
+.agent-badge.c-blue{background:rgba(92,156,245,.15);color:#5c9cf5}
 .agent-count-dot{
   display:inline-flex;align-items:center;justify-content:center;
   width:16px;height:16px;border-radius:50%;
-  color:#fff;font-size:9px;font-weight:700;line-height:1;margin-right:4px;
+  font-size:9px;font-weight:700;line-height:1;margin-right:4px;
 }
+.agent-count-dot.c-orange{background:rgba(245,166,35,.15);color:#f5a623}
+.agent-count-dot.c-green{background:rgba(46,204,113,.15);color:#2ecc71}
+.agent-count-dot.c-blue{background:rgba(92,156,245,.15);color:#5c9cf5}
+.approval-agent.c-orange{color:#f5a623}
+.approval-agent.c-green{color:#2ecc71}
+.approval-agent.c-blue{color:#5c9cf5}
 
 /* ═══════════════════════════════════════════════
    ROW
@@ -1100,8 +1113,12 @@ body{
 .approval-item{
   display:flex;align-items:center;justify-content:space-between;gap:6px;
   padding:4px 8px;margin-left:4px;
-  border-left:2px solid #f5a623;
+  border-left:2px solid var(--vscode-badge-background,#333);
   overflow:hidden;
+}
+.approval-session.c-orange .approval-item{border-left-color:#f5a623}
+.approval-session.c-green .approval-item{border-left-color:#2ecc71}
+.approval-session.c-blue .approval-item{border-left-color:#5c9cf5}
 }
 .approval-body{display:flex;align-items:center;gap:6px;flex:1;min-width:0}
 .approval-summary{font-size:11px;color:var(--vscode-foreground,#e8e8f0);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
