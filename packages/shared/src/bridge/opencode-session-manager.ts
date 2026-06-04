@@ -117,8 +117,15 @@ export class OpenCodeSessionManager {
     this._stopped = false;
     this._reconnectDelay = INITIAL_RECONNECT_DELAY;
 
-    // Restore previously attached opencode session IDs from disk.
-    for (const session of loadAttachedSessions()) {
+    // Restore only sessions that still exist in the current local OpenCode server.
+    // A stale temp file must not create ghost sessions on the relay after VS Code reloads.
+    const storedSessions = loadAttachedSessions();
+    const activeSessionIds = await this.fetchOpenCodeSessionIds();
+    const restorableSessions = storedSessions.filter((session) => activeSessionIds.has(session.localSessionId));
+    if (restorableSessions.length !== storedSessions.length) {
+      saveAttachedSessions(restorableSessions);
+    }
+    for (const session of restorableSessions) {
       this.bridge.addOpenCodeAttachedSession(session.localSessionId);
       if (session.serverSessionId) {
         this.opencodeSessions.add(session.serverSessionId);
@@ -156,6 +163,27 @@ export class OpenCodeSessionManager {
       this.registerSession(localId, serverId);
       saveAttachedSessions([...loadAttachedSessions(), { localSessionId: localId, serverSessionId: serverId }]);
     });
+  }
+
+  private async fetchOpenCodeSessionIds(): Promise<Set<string>> {
+    try {
+      const resp = await fetch(`${this.opencodeBaseUrl}/session`);
+      if (!resp.ok) return new Set();
+      const sessions = await resp.json() as unknown;
+      if (!Array.isArray(sessions)) return new Set();
+      return new Set(sessions
+        .map((session) => {
+          if (typeof session === 'string') return session;
+          if (session && typeof session === 'object') {
+            const id = (session as Record<string, unknown>).id;
+            return typeof id === 'string' ? id : '';
+          }
+          return '';
+        })
+        .filter((id) => id.length > 0));
+    } catch {
+      return new Set();
+    }
   }
 
   async detachSession(localSessionId: string, knownServerSessionId?: string): Promise<boolean> {

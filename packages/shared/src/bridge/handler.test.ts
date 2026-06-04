@@ -1,5 +1,5 @@
 import { EventEmitter } from 'node:events';
-import { appendFileSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -20,6 +20,11 @@ function createTranscriptFixture(sessionId: string, title: string): string {
 
 function appendTranscriptLine(tmpDir: string, sessionId: string, line: unknown): void {
   appendFileSync(join(tmpDir, 'projects', 'test-project', `${sessionId}.jsonl`), JSON.stringify(line) + '\n');
+}
+
+function cleanupOpenCodeAttachedStorage(): void {
+  const path = join(tmpdir(), 'codekey-opencode-attached.json');
+  if (existsSync(path)) rmSync(path);
 }
 
 function createCodexSessionFixture(sessionId: string): string {
@@ -128,14 +133,19 @@ describe('ApprovalBridge canonical sessions', () => {
   });
 
   it('registers OpenCode attach mappings so phone commands route to OpenCode', async () => {
-    const relay = new FakeRelay();
-    const bridge = new ApprovalBridge(relay as any);
-    const manager = new OpenCodeSessionManager('http://127.0.0.1:1', bridge);
+    cleanupOpenCodeAttachedStorage();
+    try {
+      const relay = new FakeRelay();
+      const bridge = new ApprovalBridge(relay as any);
+      const manager = new OpenCodeSessionManager('http://127.0.0.1:1', bridge);
 
-    await manager.attachSession('ses_local_a');
+      await manager.attachSession('ses_local_a');
 
-    expect(manager.ownsSession('server-ses_local_a')).toBe(true);
-    expect(bridge.getAttachedSessionIds()).toContain('ses_local_a');
+      expect(manager.ownsSession('server-ses_local_a')).toBe(true);
+      expect(bridge.getAttachedSessionIds()).toContain('ses_local_a');
+    } finally {
+      cleanupOpenCodeAttachedStorage();
+    }
   });
 
   it('skips command queue for resumed Codex server sessions', async () => {
@@ -423,7 +433,7 @@ describe('ApprovalBridge canonical sessions', () => {
     }
   });
 
-  it('reconcileAttachedSessions removes stale transcript sessions absent from relay response', async () => {
+  it('reconcileAttachedSessions re-registers transcript sessions absent from relay response', async () => {
     const relay = new FakeRelay();
     const bridge = new ApprovalBridge(relay as any);
 
@@ -438,13 +448,47 @@ describe('ApprovalBridge canonical sessions', () => {
 
     await bridge.reconcileAttachedSessions();
 
-    // stale-session should be removed (not in relay response)
-    expect(bridge.getAttachedSessionIds()).not.toContain('stale-session');
-    // fresh-session should remain (in relay response)
+    // stale-session should be restored if the relay lost it during reconnect cleanup.
+    expect(bridge.getAttachedSessionIds()).toContain('stale-session');
     expect(bridge.getAttachedSessionIds()).toContain('fresh-session');
-    // transcriptAttachedIds should be pruned to match relay
+
     const ids = Array.from((bridge as any).transcriptAttachedIds);
-    expect(ids).toEqual(['fresh-session']);
+    expect(ids).toEqual(expect.arrayContaining(['fresh-session', 'stale-session']));
+
+    const registerMsg = relay.sent
+      .map(m => JSON.parse(m))
+      .find((m: any) => m.type === 'register_session' && m.payload.claudeSessionId === 'stale-session');
+    expect(registerMsg).toBeDefined();
+  });
+
+  it('reconcileAttachedSessions restores lost transcript sessions and backfills events', async () => {
+    const tmpDir = createTranscriptFixture('lost-session', 'User prompt');
+    appendTranscriptLine(tmpDir, 'lost-session', {
+      type: 'assistant',
+      timestamp: '2026-06-04T12:00:00Z',
+      message: { role: 'assistant', content: [{ type: 'text', text: 'Recovered assistant reply' }] },
+    });
+    process.env.CLAUDE_CONFIG_DIR = tmpDir;
+    try {
+      const relay = new FakeRelay();
+      const bridge = new ApprovalBridge(relay as any);
+
+      (bridge as any).transcriptAttachedIds.add('lost-session');
+      await bridge.reconcileAttachedSessions();
+      await new Promise(resolve => setImmediate(resolve));
+
+      expect(bridge.getAttachedSessionIds()).toContain('lost-session');
+      const events = relay.sent
+        .map(m => JSON.parse(m))
+        .filter((m: any) => m.type === 'event');
+      expect(events.some((m: any) => m.payload.eventType === 'user_prompt')).toBe(true);
+      expect(events.some((m: any) =>
+        m.payload.eventType === 'task_complete'
+        && m.payload.data.summary === 'Recovered assistant reply',
+      )).toBe(true);
+    } finally {
+      delete process.env.CLAUDE_CONFIG_DIR;
+    }
   });
 
   it('_registerOnRelay uses tab label as metadata.title when windowLabels has matching entry', async () => {
@@ -649,6 +693,74 @@ describe('ApprovalBridge canonical sessions', () => {
         });
 
         await (bridge as any).syncClaudeTranscript('claude-a', 'server-claude-a');
+
+        const duplicateTaskEvents = relay.sent.slice(beforeCount)
+          .map(m => JSON.parse(m))
+          .filter((m: any) => m.type === 'event' && m.payload.eventType === 'task_complete');
+        expect(duplicateTaskEvents.length).toBe(0);
+      } finally {
+        delete process.env.CLAUDE_CONFIG_DIR;
+      }
+    });
+
+    it('does not duplicate assistant text already sent by task_complete hook', async () => {
+      const tmpDir = createTranscriptFixture('claude-a', 'First prompt');
+      process.env.CLAUDE_CONFIG_DIR = tmpDir;
+      try {
+        const relay = new FakeRelay();
+        const bridge = new ApprovalBridge(relay as any);
+
+        await bridge.attachClaudeSession('claude-a');
+        await flushAsync();
+
+        await bridge.handleHookEvent({
+          eventType: 'task_complete',
+          claudeSessionId: 'claude-a',
+          data: { type: 'task_complete', summary: 'Same assistant text', summaryShort: 'Same assistant text' },
+        });
+
+        const beforeCount = relay.sent.length;
+        appendTranscriptLine(tmpDir, 'claude-a', {
+          type: 'assistant',
+          timestamp: '2026-06-04T01:02:03.000Z',
+          message: { role: 'assistant', content: [{ type: 'text', text: 'Same assistant text' }] },
+        });
+
+        await (bridge as any).syncClaudeTranscript('claude-a', 'server-claude-a');
+
+        const duplicateTaskEvents = relay.sent.slice(beforeCount)
+          .map(m => JSON.parse(m))
+          .filter((m: any) => m.type === 'event' && m.payload.eventType === 'task_complete');
+        expect(duplicateTaskEvents.length).toBe(0);
+      } finally {
+        delete process.env.CLAUDE_CONFIG_DIR;
+      }
+    });
+
+    it('does not duplicate task_complete hook after transcript sync sent the same text', async () => {
+      const tmpDir = createTranscriptFixture('claude-a', 'First prompt');
+      process.env.CLAUDE_CONFIG_DIR = tmpDir;
+      try {
+        const relay = new FakeRelay();
+        const bridge = new ApprovalBridge(relay as any);
+
+        await bridge.attachClaudeSession('claude-a');
+        await flushAsync();
+
+        appendTranscriptLine(tmpDir, 'claude-a', {
+          type: 'assistant',
+          timestamp: '2026-06-04T01:02:03.000Z',
+          message: { role: 'assistant', content: [{ type: 'text', text: 'Same assistant text' }] },
+        });
+
+        await (bridge as any).syncClaudeTranscript('claude-a', 'server-claude-a');
+
+        const beforeCount = relay.sent.length;
+        await bridge.handleHookEvent({
+          eventType: 'task_complete',
+          claudeSessionId: 'claude-a',
+          data: { type: 'task_complete', summary: 'Same assistant text', summaryShort: 'Same assistant text' },
+        });
 
         const duplicateTaskEvents = relay.sent.slice(beforeCount)
           .map(m => JSON.parse(m))

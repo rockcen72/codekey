@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { EventEmitter } from 'node:events';
-import { existsSync, rmSync } from 'node:fs';
+import { existsSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { ApprovalBridge } from '../bridge/handler.js';
@@ -730,6 +730,35 @@ describe('OpenCodeSessionManager event handling', () => {
   });
 
   describe('server.connected', () => {
+    it('does not restore attached sessions missing from the current OpenCode session list', async () => {
+      writeFileSync(attachedStoragePath, JSON.stringify([
+        { localSessionId: 'ses_local_a', serverSessionId: 'server-ses_local_a' },
+      ]), 'utf-8');
+
+      const originalFetch = globalThis.fetch;
+      try {
+        globalThis.fetch = async (input: string | URL | Request) => {
+          const url = typeof input === 'string' ? input : input.toString();
+          if (url.endsWith('/session')) {
+            return {
+              ok: true,
+              json: async () => [{ id: 'real-session' }],
+            } as Response;
+          }
+          return originalFetch(input);
+        };
+        vi.spyOn(manager as any, 'connectSSE').mockResolvedValue(undefined);
+
+        await manager.start();
+
+        expect(bridge.getAttachedSessionIds()).not.toContain('ses_local_a');
+        expect(manager.ownsSession('server-ses_local_a')).toBe(false);
+      } finally {
+        globalThis.fetch = originalFetch;
+        manager.stop();
+      }
+    });
+
     it('does not push existing OpenCode sessions to relay automatically', async () => {
       const originalFetch = globalThis.fetch;
       try {

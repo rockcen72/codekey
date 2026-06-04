@@ -1230,7 +1230,18 @@ export class ApprovalBridge {
       (relayMsg.payload as Record<string, unknown>).sessionLabel = label;
     }
 
-    this.relay.sendEvent(serverSessionId, relayMsg);
+    let shouldForwardRelayEvent = true;
+    if (body.eventType === 'task_complete' && data.type === 'task_complete' && data.summary.trim()) {
+      shouldForwardRelayEvent = !this.markAssistantTextSent(claudeSessionId, data.summary);
+      if (!shouldForwardRelayEvent) {
+        console.error('[bridge] ignoring duplicate assistant completion text (event=%s session=%s)',
+          body.eventType, claudeSessionId);
+      }
+    }
+
+    if (shouldForwardRelayEvent) {
+      this.relay.sendEvent(serverSessionId, relayMsg);
+    }
 
     // Clear pending approvals only when CC actually finishes a turn
     // (task_complete) for THIS session. A task_complete means CC ran (or the
@@ -1390,6 +1401,13 @@ export class ApprovalBridge {
     }, 2_000);
     timer.unref?.();
     this.claudeTranscriptSyncTimers.set(claudeSessionId, timer);
+  }
+
+  private restoreTranscriptAttachedSession(claudeSessionId: string, serverSessionId: string): void {
+    this.sessions.set(claudeSessionId, serverSessionId);
+    this.transcriptAttachedIds.add(claudeSessionId);
+    if (!this.primarySessionId) this.primarySessionId = serverSessionId;
+    this.startClaudeTranscriptSync(claudeSessionId, serverSessionId);
   }
 
   private stopClaudeTranscriptSync(claudeSessionId: string): void {
@@ -1707,25 +1725,25 @@ export class ApprovalBridge {
 
         // Add/renew transcript-attached sessions from relay
         for (const [csid, ssid] of newEntries) {
-          this.sessions.set(csid, ssid);
-          if (!this.primarySessionId) this.primarySessionId = ssid;
-          this.startClaudeTranscriptSync(csid, ssid);
+          this.restoreTranscriptAttachedSession(csid, ssid);
         }
 
         // Replace transcriptAttachedIds with the relay's view
         this.transcriptAttachedIds = newAttached;
 
-        resolve();
-
         // Re-register any previously-attached sessions that the relay lost
         // (e.g. finished during WS disconnect cleanup). This is a best-effort
         // recovery so the mini program can see and interact with these sessions.
+        const restorePromises: Promise<void>[] = [];
         for (const csid of prevAttached) {
           if (!newAttached.has(csid)) {
             console.error('[bridge] reconcile: re-registering lost session %s', csid);
-            this.ensureSession(csid, undefined, 'transcript_attach').catch((err) => {
+            const restore = this.ensureSession(csid, undefined, 'transcript_attach').then((ssid) => {
+              this.restoreTranscriptAttachedSession(csid, ssid);
+            }).catch((err) => {
               console.error('[bridge] reconcile: re-register failed for %s: %s', csid, err);
             });
+            restorePromises.push(restore);
           }
         }
 
@@ -1740,6 +1758,8 @@ export class ApprovalBridge {
             });
           }
         }
+
+        Promise.all(restorePromises).finally(() => resolve());
       };
 
       this.relay.once('attached_sessions', handler);
@@ -1749,14 +1769,19 @@ export class ApprovalBridge {
       setTimeout(() => {
         if (!responded) {
           this.relay.off('attached_sessions', handler);
+          const restorePromises: Promise<void>[] = [];
           for (const csid of prevAttached) {
             console.error('[bridge] reconcile: timeout, re-registering session %s', csid);
-            this.ensureSession(csid, undefined, 'transcript_attach').catch((err) => {
+            const restore = this.ensureSession(csid, undefined, 'transcript_attach').then((ssid) => {
+              this.restoreTranscriptAttachedSession(csid, ssid);
+            }).catch((err) => {
               console.error('[bridge] reconcile: re-register failed for %s: %s', csid, err);
             });
+            restorePromises.push(restore);
           }
+          Promise.all(restorePromises).finally(() => resolve());
+          return;
         }
-        resolve();
       }, 5_000);
     }).catch(() => {});
   }
