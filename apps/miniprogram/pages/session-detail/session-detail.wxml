@@ -18,7 +18,7 @@
 
     <block wx:for="{{chatMessages}}" wx:key="id">
       <!-- System markers (e.g. session idle) -->
-      <view wx:if="{{item.type === 'system'}}" class="marker-wrap">
+      <view wx:if="{{item.type === 'system'}}" class="marker-wrap" id="msg-{{item.id}}">
         <view class="timeline-marker">
           <text>{{item.content}}</text>
         </view>

@@ -230,7 +230,8 @@ Page({
       }
       const priority: Record<string, number> = {
         user_prompt: 0,
-        approval_required: 1,
+        command_started: 1,
+        approval_required: 2,
       };
       return (priority[a.type] ?? 2) - (priority[b.type] ?? 2);
     });
@@ -299,6 +300,32 @@ Page({
           agentClass: 'unknown',
           kindBadge: '',
           senderName: '',
+        });
+        continue;
+      }
+
+      if (e.type === 'command_started') {
+        messages.push({
+          id: e.id,
+          type: 'ai',
+          side: 'left',
+          content: '电脑端已接收，正在交给 Agent 处理...',
+          displayTime: time,
+          typeLabel: '正在处理',
+          isTaskComplete: false,
+          command: '',
+          summary: '电脑端已接收，正在交给 Agent 处理...',
+          risk_level: '',
+          riskText: '',
+          pending: false,
+          decision: '',
+          decisionText: '',
+          canApprove: false,
+          eventId: e.id,
+          accent: 'pending',
+          agentClass,
+          kindBadge: 'RUNNING',
+          senderName: agentName,
         });
         continue;
       }
@@ -712,11 +739,37 @@ Page({
       payload: { sessionId: this.data.sessionId, action: 'write_stdin', data: text },
     });
 
+    const localStatusId = 'local-command-status-' + Date.now();
+    const messages = [...this.data.chatMessages, {
+      id: localStatusId,
+      type: 'system',
+      side: 'left',
+      content: '已发送，等待电脑端接收...',
+      displayTime: this.formatTime(new Date().toISOString()),
+      typeLabel: '',
+      isTaskComplete: false,
+      command: '',
+      summary: '',
+      risk_level: '',
+      riskText: '',
+      pending: false,
+      decision: '',
+      decisionText: '',
+      canApprove: false,
+      eventId: localStatusId,
+      accent: 'neutral',
+      agentClass: 'unknown',
+      kindBadge: '',
+      senderName: '',
+    } as ChatMessage];
+
     this.setData({
       commandText: '',
       canSendCommand: false,
+      chatMessages: messages,
+      scrollToId: 'msg-' + localStatusId,
     });
-    wx.showToast({ title: '指令已发送', icon: 'success' });
+    wx.showToast({ title: '已发送，等待电脑端接收', icon: 'none', duration: 1500 });
   },
 
   // ── Navigation ──
