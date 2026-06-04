@@ -201,17 +201,17 @@ export function renderApprovalsContent(state: SidebarState): string {
   }
 
   const agentColors: Record<string, string> = {
-    'claude-code': '#orange', 'claude-code-hook': 'orange',
+    'claude-code': '#f5a623', 'claude-code-hook': '#f5a623',
     'codex': '#4fc1ff', 'opencode': '#5c9cf5',
   };
 
   return Object.entries(groups).map(([sid, g]) => `
     <div class="approval-session">
       <div class="approval-header">
-        <span class="approval-dot" style="color:${agentColors[g.agentType] || '#888'}">●</span>
-        <span class="approval-agent">${h(g.agent)}</span>
-        <span class="tag orange">${g.items.length} pending</span>
-      </div>
+        <span class="approval-agent" style="color:${agentColors[g.agentType] || '#888'}">
+          <span class="agent-count-dot" style="background:${agentColors[g.agentType] || '#888'}">${g.items.length}</span>
+          ${h(g.agent)}
+        </span>
       ${g.items.map(item => {
         const rCls = item.risk === 'high' || item.risk === 'critical' ? 'risk-high' : item.risk === 'medium' ? 'risk-medium' : 'risk-low';
         const showCmd = item.toolName === 'Bash' && item.command !== item.summary;
@@ -230,13 +230,27 @@ export function renderApprovalsContent(state: SidebarState): string {
 
 function renderApprovals(state: SidebarState): string {
   const pending = state.pendingApprovals;
+  // Aggregate counts by agent type
+  const agentColors: Record<string, string> = {
+    'claude-code': '#f5a623', 'claude-code-hook': '#f5a623',
+    'codex': '#4fc1ff', 'opencode': '#5c9cf5',
+  };
+  const agentCounts: Record<string, number> = {};
+  for (const a of pending) {
+    const key = a.agentType || 'claude-code';
+    agentCounts[key] = (agentCounts[key] || 0) + 1;
+  }
+  const badgesHtml = Object.entries(agentCounts).map(([type, count]) =>
+    `<span class="agent-badge" style="background:${agentColors[type] || '#888'}">${count}</span>`
+  ).join('');
+
   return `<div class="card">
     <div class="card-header">
       <span class="card-label">
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
-        Approvals
+        ${i18n(state.lang, 'Approvals', '审批卡')}
       </span>
-      <span class="badge${pending.length > 0 ? ' orange' : ''}" id="approvalsBadge">${pending.length} pending</span>
+      <span class="approval-badges" id="approvalsBadge">${badgesHtml}</span>
     </div>
     <div id="approvalsContent">${renderApprovalsContent(state)}</div>
   </div>`;
@@ -587,8 +601,8 @@ ${renderSubscribe()}
         if (ab) { ab.textContent = d.agentCount + ' ' + T('active', '活跃'); ab.className = 'badge' + (d.agentCount > 0 ? ' green' : ''); }
       }
       if (d.approvalCount !== undefined) {
-        var apb = document.getElementById('approvalsBadge');
-        if (apb) { apb.textContent = d.approvalCount + ' pending'; apb.className = 'badge' + (d.approvalCount > 0 ? ' orange' : ''); }
+        // approvalsBadge is now innerHTML-managed by renderApprovals, so just
+        // trigger a re-render by swapping the full card (already done above).
       }
       // Update device status tag
       if (d.deviceStatus !== undefined) {
@@ -997,6 +1011,19 @@ body{
 .badge.orange{background:rgba(245,166,35,.12);color:#f5a623}
 .session-hidden{display:none}
 .session-show-more{padding:4px 12px;text-align:center}
+
+/* Agent count badges in approval header */
+.approval-badges{display:flex;gap:4px;align-items:center}
+.agent-badge{
+  display:inline-flex;align-items:center;justify-content:center;
+  width:18px;height:18px;border-radius:50%;
+  color:#fff;font-size:10px;font-weight:700;line-height:1;
+}
+.agent-count-dot{
+  display:inline-flex;align-items:center;justify-content:center;
+  width:16px;height:16px;border-radius:50%;
+  color:#fff;font-size:9px;font-weight:700;line-height:1;margin-right:4px;
+}
 
 /* ═══════════════════════════════════════════════
    ROW
