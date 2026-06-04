@@ -43,6 +43,8 @@ export class BridgeStatusService {
   private _healthTimer?: ReturnType<typeof setInterval>;
   private _startedAt = 0;
   private _windowRegistered = false;
+  private _healthInFlight = false;
+  private _healthFailures = 0;
 
   static getInstance(): BridgeStatusService {
     if (!BridgeStatusService._instance) {
@@ -141,6 +143,7 @@ export class BridgeStatusService {
   }
 
   private _spawnBundled(): void {
+    this._healthFailures = 0;
     const bridgeEntry = path.join(BridgeStatusService._extensionPath, 'dist', 'bridge-entry.cjs');
     if (!fs.existsSync(bridgeEntry)) {
       log(`[CodeKey] bridge-entry.js not found at ${bridgeEntry}`);
@@ -202,6 +205,12 @@ export class BridgeStatusService {
       this._stopHealthCheck();
       this._startedAt = 0;
       if (code !== 0) log(`[CodeKey] bridge exited with code ${code}`);
+      if (this._healthFailures >= 3) {
+        log('[CodeKey] restarting bundled bridge after health-check failure');
+        this._update({ bridge: 'connecting' });
+        this._spawnBundled();
+        return;
+      }
       this._update({ bridge: code === 0 ? 'stopped' : 'error' });
     });
 
@@ -292,9 +301,12 @@ export class BridgeStatusService {
 
   private async _checkHealth(): Promise<void> {
     const GRACE_MS = 8000;
+    if (this._healthInFlight) return;
+    this._healthInFlight = true;
     try {
-      const resp = await fetch(`${this.getBridgeUrl()}/v1/health`);
+      const resp = await fetch(`${this.getBridgeUrl()}/v1/health`, { signal: AbortSignal.timeout(2000) });
       if (resp.ok) {
+        this._healthFailures = 0;
         const body = await resp.json() as { relay?: string; mpOnline?: boolean };
         const relay = (body.relay ?? 'disconnected') as BridgeState['relay'];
         const mpOnline = body.mpOnline ?? false;
@@ -310,15 +322,23 @@ export class BridgeStatusService {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ windowId: process.env.CODEKEY_WINDOW_ID || '' }),
+            signal: AbortSignal.timeout(2000),
           }).catch(() => {});
         }
       } else if (Date.now() - this._startedAt > GRACE_MS) {
         this._update({ bridge: 'error' });
       }
     } catch {
+      this._healthFailures++;
       if (Date.now() - this._startedAt > GRACE_MS && this._state.bridge !== 'stopped') {
         this._update({ bridge: this._process ? 'error' : 'stopped' });
       }
+      if (this._process && this._healthFailures >= 3) {
+        log('[CodeKey] bridge health check timed out repeatedly, restarting bundled bridge');
+        this._process.kill();
+      }
+    } finally {
+      this._healthInFlight = false;
     }
   }
 

@@ -34,6 +34,7 @@ const AGENT_DISPLAY_NAMES: Record<string, string> = {
 
 const POLL_MS = 5000;
 const APPROVAL_POLL_MS = 1000;
+const BRIDGE_FETCH_TIMEOUT_MS = 2000;
 
 interface BridgePendingApproval {
   id: string;
@@ -65,6 +66,9 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
   private _pairingWs?: WebSocket;
   private _pairingTimeout?: ReturnType<typeof setTimeout>;
   private _opencodeAttachInFlight = new Set<string>();
+  private _pushInFlight = false;
+  private _pushQueued = false;
+  private _approvalPollInFlight = false;
 
   constructor(private _context: vscode.ExtensionContext) {}
 
@@ -91,8 +95,10 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
    *  of the CC permission dialog instead of 0–5s. */
   private async _pollBridgeApprovals(): Promise<void> {
     if (!this._view) return;
+    if (this._approvalPollInFlight) return;
+    this._approvalPollInFlight = true;
     try {
-      const resp = await fetch(`${this._bridgeService.getBridgeUrl()}/v1/pending-approvals`);
+      const resp = await this._bridgeFetch(`${this._bridgeService.getBridgeUrl()}/v1/pending-approvals`);
       if (!resp.ok) {
         // Endpoint missing → old bridge. Stop polling, fall back to relay path.
         if (resp.status === 404) {
@@ -112,13 +118,15 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       this._pushState().catch(err => log(`_pushState (approval-driven) failed: ${err?.stack || err}`));
     } catch {
       // bridge unreachable, leave previous state
+    } finally {
+      this._approvalPollInFlight = false;
     }
   }
 
   /** Fetch active claudeSessionIds from bridge (sessions with CC tabs). */
   private async _fetchActiveSessionIds(): Promise<Set<string>> {
     try {
-      const resp = await fetch(`${this._bridgeService.getBridgeUrl()}/v1/active-sessions`);
+      const resp = await this._bridgeFetch(`${this._bridgeService.getBridgeUrl()}/v1/active-sessions`);
       if (!resp.ok) return new Set();
       const body = await resp.json() as { active?: string[] };
       return new Set(body.active ?? []);
@@ -155,7 +163,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
   /** Auto-detach a session (called when user closes the CC terminal). */
   private async _autoDetachSession(claudeSessionId: string): Promise<void> {
     try {
-      const res = await fetch(`${this._bridgeService.getBridgeUrl()}/v1/detach-session`, {
+      const res = await this._bridgeFetch(`${this._bridgeService.getBridgeUrl()}/v1/detach-session`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ claudeSessionId }),
@@ -217,7 +225,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
 
   private async fetchRecentClaudeSessions(): Promise<SidebarState['claudeSessions']> {
     try {
-      const res = await fetch(`${this._bridgeService.getBridgeUrl()}/v1/claude-sessions/recent?limit=50`);
+      const res = await this._bridgeFetch(`${this._bridgeService.getBridgeUrl()}/v1/claude-sessions/recent?limit=50`);
       if (!res.ok) return [];
       const body = await res.json() as { ok: boolean; sessions?: any[] };
       return (body.ok ? body.sessions ?? [] : []).map((s: any) => ({
@@ -233,7 +241,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
 
   private async attachClaudeSession(sessionId: string): Promise<void> {
     try {
-      const res = await fetch(`${this._bridgeService.getBridgeUrl()}/v1/claude-sessions/attach`, {
+      const res = await this._bridgeFetch(`${this._bridgeService.getBridgeUrl()}/v1/claude-sessions/attach`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ sessionId }),
@@ -255,6 +263,11 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
 
   private async _pushState(): Promise<void> {
     if (!this._view) return;
+    if (this._pushInFlight) {
+      this._pushQueued = true;
+      return;
+    }
+    this._pushInFlight = true;
     try {
       await this._pushStateInner();
     } catch (err: any) {
@@ -263,7 +276,20 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         this._view.webview.html = `<!DOCTYPE html><html><body style="background:#0f0f18;color:#e8e8f0;padding:20px;font-family:sans-serif;font-size:12px"><h3 style="color:#f74d4d">CodeKey error</h3><pre style="white-space:pre-wrap;word-break:break-word;font-size:11px">${String(err?.stack || err).replace(/&/g,'&amp;').replace(/</g,'&lt;')}</pre></body></html>`;
         this._firstPush = false;
       }
+    } finally {
+      this._pushInFlight = false;
+      if (this._pushQueued) {
+        this._pushQueued = false;
+        void this._pushState();
+      }
     }
+  }
+
+  private _bridgeFetch(url: string, init: RequestInit = {}): Promise<Response> {
+    return fetch(url, {
+      ...init,
+      signal: init.signal ?? AbortSignal.timeout(BRIDGE_FETCH_TIMEOUT_MS),
+    });
   }
 
   private async _pushStateInner(): Promise<void> {
@@ -413,7 +439,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     let canDetach = false;
     let attachedSessions: string[] = [];
     try {
-      const healthResp = await fetch(`${this._bridgeService.getBridgeUrl()}/v1/health`);
+      const healthResp = await this._bridgeFetch(`${this._bridgeService.getBridgeUrl()}/v1/health`);
       if (healthResp.ok) {
         const health = await healthResp.json() as { supports?: string[] };
         canDetach = health.supports?.includes('detach-session') ?? false;
@@ -422,7 +448,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
 
     if (canDetach) {
       try {
-        const attResp = await fetch(`${this._bridgeService.getBridgeUrl()}/v1/attached-sessions`);
+        const attResp = await this._bridgeFetch(`${this._bridgeService.getBridgeUrl()}/v1/attached-sessions`);
         if (attResp.ok) {
           const attBody = await attResp.json() as { attached?: string[] };
           attachedSessions = attBody.attached ?? [];
@@ -528,7 +554,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     // cleaned up, or session in a different project directory.
     try {
       const windowId = vscode.env.sessionId;
-      const resp = await fetch(`${this._bridgeService.getBridgeUrl()}/v1/window-active-session?windowId=${encodeURIComponent(windowId)}`);
+      const resp = await this._bridgeFetch(`${this._bridgeService.getBridgeUrl()}/v1/window-active-session?windowId=${encodeURIComponent(windowId)}`);
       if (resp.ok) {
         const body = await resp.json() as { claudeSessionId?: string | null };
         const activeCsid = body.claudeSessionId;
@@ -550,7 +576,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     // ── Codex Resume sessions ───────────────────────────
     try {
       const wsPath = vscode.workspace.workspaceFolders?.[0]?.uri?.fsPath || '';
-      const codexResp = await fetch(`${this._bridgeService.getBridgeUrl()}/v1/codex-sessions${wsPath ? `?cwd=${encodeURIComponent(wsPath)}` : ''}`);
+      const codexResp = await this._bridgeFetch(`${this._bridgeService.getBridgeUrl()}/v1/codex-sessions${wsPath ? `?cwd=${encodeURIComponent(wsPath)}` : ''}`);
       if (codexResp.ok) {
         const codexBody = await codexResp.json() as { sessions?: any[] };
         if (codexBody.sessions) {
@@ -575,7 +601,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
 
     // ── OpenCode sessions ───────────────────────────────
     try {
-      const ocResp = await fetch(`${this._bridgeService.getBridgeUrl()}/v1/opencode-sessions`);
+      const ocResp = await this._bridgeFetch(`${this._bridgeService.getBridgeUrl()}/v1/opencode-sessions`);
       if (ocResp.ok) {
         const ocBody = await ocResp.json() as { sessions?: any[] };
         if (ocBody.sessions) {
@@ -673,7 +699,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         vscode.commands.executeCommand('codekey.pairDevice');
         break;
       case 'relayReconnect':
-        fetch(`${this._bridgeService.getBridgeUrl()}/v1/relay-reconnect`, { method: 'POST' }).catch(() => {});
+        this._bridgeFetch(`${this._bridgeService.getBridgeUrl()}/v1/relay-reconnect`, { method: 'POST' }).catch(() => {});
         vscode.window.showInformationMessage('Relay reconnecting...');
         break;
       case 'install-opencode':
@@ -715,7 +741,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
           const ocUrl = attached
             ? `${this._bridgeService.getBridgeUrl()}/v1/opencode-sessions/detach`
             : `${this._bridgeService.getBridgeUrl()}/v1/opencode-sessions/attach`;
-          fetch(ocUrl, {
+          this._bridgeFetch(ocUrl, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ sessionId, title: msg.title || '', serverSessionId: msg.serverSessionId || '' }),
@@ -744,7 +770,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
           const url = msg.attached
             ? `${this._bridgeService.getBridgeUrl()}/v1/codex-sessions/stop`
             : `${this._bridgeService.getBridgeUrl()}/v1/codex-sessions/resume`;
-          fetch(url, {
+          this._bridgeFetch(url, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ sessionId: msg.sessionId }),
@@ -763,7 +789,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
           // local list with the button flipped to "Attach". Only the bridge's
           // attachedSessions list changes, which is the single source of truth
           // for the `attached` flag on each session.
-          fetch(`${this._bridgeService.getBridgeUrl()}/v1/detach-session`, {
+          this._bridgeFetch(`${this._bridgeService.getBridgeUrl()}/v1/detach-session`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ claudeSessionId: msg.sessionId }),
@@ -778,7 +804,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         }
         break;
       case 'detachSession':
-        fetch(`${this._bridgeService.getBridgeUrl()}/v1/detach-session`, {
+        this._bridgeFetch(`${this._bridgeService.getBridgeUrl()}/v1/detach-session`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ claudeSessionId: msg.sessionId }),
@@ -1054,7 +1080,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
 
   private async _handleOpenCodePreview(sessionId: string): Promise<void> {
     try {
-      const resp = await fetch(`${this._bridgeService.getBridgeUrl()}/v1/opencode-sessions/preview?id=${encodeURIComponent(sessionId)}`);
+      const resp = await this._bridgeFetch(`${this._bridgeService.getBridgeUrl()}/v1/opencode-sessions/preview?id=${encodeURIComponent(sessionId)}`);
       if (!resp.ok) throw new Error(`Bridge returned ${resp.status}`);
       const body = await resp.json() as { entries?: { role: string; text: string; timestamp: string; index: number }[] };
       this._view?.webview.postMessage({

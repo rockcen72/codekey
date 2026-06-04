@@ -122,7 +122,7 @@ export function renderDeviceContent(state: SidebarState): string {
   const serverLabel = serverConnected ? i18n(state.lang, "Online", "已连接") : i18n(state.lang, "Offline", "未连接");
   const hasPhone = state.deviceStatus !== 'unpaired';
   const mpOnline = state.deviceStatus === 'paired' && state.bridge.mpOnline;
-  const mpDot = dot(mpOnline ? 'green' : 'gray');
+  const mpDot = dot(mpOnline ? 'green' : 'dim-green');
   const mpLabel = mpOnline
     ? i18n(state.lang, "Online", "已连接")
     : hasPhone
@@ -979,6 +979,7 @@ body{
 .dot.orange{background:#f5a623;box-shadow:0 0 6px rgba(245,166,35,.4)}
 .dot.red{background:#f74d4d;box-shadow:0 0 6px rgba(247,77,77,.4)}
 .dot.gray{background:#50506e;box-shadow:none}
+.dot.dim-green{background:rgba(46,204,113,.35);box-shadow:none}
 .dot.white{background:#f0f0f5;box-shadow:0 0 6px rgba(240,240,245,.35)}
 .dot.purple{background:#9d6cff;box-shadow:0 0 6px rgba(157,108,255,.4)}
 .dot.pulse::after{

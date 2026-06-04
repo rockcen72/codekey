@@ -14,6 +14,7 @@ import { whichBinary, binaryName, needsShellForScript } from '@codekey/shared/br
 // bridge is local-only and the queue is normally empty, so the extra
 // traffic is negligible (~5 requests/sec per VS Code window).
 const POLL_MS = 200;
+const RESUME_TERMINAL_INITIAL_SEND_DELAY_MS = 1200;
 
 /**
  * Polls the bridge for pending commands from the phone.
@@ -235,19 +236,28 @@ export class CommandRelayService {
           // already has an interactive CC running they want to interleave with).
           term.sendText(cmd.text, true);
         } else if (claudeBinary && cmd.claudeSessionId) {
-          // Phone-pushed commands: use spawn --resume --print. Serialise per
-          // session so two concurrent phone prompts don't race each other.
+          // First phone prompt stays on stable --print. After it completes, we
+          // prewarm a hidden interactive resume terminal so later prompts can
+          // skip cold spawn + transcript-load cost without risking first-input loss.
           const key = cmd.sessionId || cmd.claudeSessionId;
           const previous = this._inFlightSpawns.get(key) ?? Promise.resolve();
-          const task = previous.then(() =>
-            this._executeCommand(cmd.claudeSessionId!, cmd.text, claudeBinary, cmd.cwd).then((result) => {
+          const task = previous.then(async () => {
+            if (this._hasActiveResumeTerminal(cmd.claudeSessionId!)) {
+              await this._sendToResumeTerminal(cmd.sessionId || cmd.claudeSessionId || '', cmd.claudeSessionId!, cmd.text, cmd.cwd, claudeBinary);
+              return;
+            }
+            await this._executeCommand(cmd.claudeSessionId!, cmd.text, claudeBinary, cmd.cwd).then((result) => {
               if (result.code !== 0) {
                 this._reportCommandError(cmd.sessionId || cmd.claudeSessionId || '', cmd.claudeSessionId!, result);
+              } else {
+                this._prewarmResumeTerminal(cmd.claudeSessionId!, cmd.cwd, claudeBinary);
               }
             }).catch((err) => {
               this._reportCommandError(cmd.sessionId || cmd.claudeSessionId || '', cmd.claudeSessionId!, { code: -1, stderr: String(err), durationMs: 0 });
-            })
-          );
+            });
+          }).catch((err) => {
+            this._reportCommandError(cmd.sessionId || cmd.claudeSessionId || '', cmd.claudeSessionId!, { code: -1, stderr: String(err), durationMs: 0 });
+          });
           const tracked = task.finally(() => {
             if (this._inFlightSpawns.get(key) === tracked) this._inFlightSpawns.delete(key);
           });
@@ -257,6 +267,38 @@ export class CommandRelayService {
     } catch {
       // bridge not reachable — skip this cycle
     }
+  }
+
+  private _hasActiveResumeTerminal(sessionId: string): boolean {
+    const term = this._resumeTerminals.get(sessionId);
+    if (term && vscode.window.terminals.includes(term)) return true;
+    if (term) this._resumeTerminals.delete(sessionId);
+    return false;
+  }
+
+  private _prewarmResumeTerminal(
+    sessionId: string,
+    cwd: string | undefined,
+    binary: { path: string; args: string[] },
+  ): void {
+    if (this._hasActiveResumeTerminal(sessionId)) return;
+    log('[command-relay] prewarming resume terminal for session=%s', sessionId.slice(0, 8));
+    const term = vscode.window.createTerminal({
+      name: `CodeKey: ${sessionId.slice(0, 8)}`,
+      cwd: cwd ?? vscode.workspace.workspaceFolders?.[0]?.uri?.fsPath,
+      shellPath: binary.path,
+      shellArgs: [...binary.args, '--resume', sessionId],
+      env: { CODEKEY_WINDOW_ID: vscode.env.sessionId },
+      hideFromUser: true,
+    });
+    this._resumeTerminals.set(sessionId, term);
+
+    const closeListener = vscode.window.onDidCloseTerminal((closed) => {
+      if (closed === term) {
+        this._resumeTerminals.delete(sessionId);
+        closeListener.dispose();
+      }
+    });
   }
 
   /** Find the trusted Claude Code terminal. Stored ref first, then strict-name scan. */
@@ -286,11 +328,12 @@ export class CommandRelayService {
    * commands (CC stays in interactive mode waiting for input).
    */
   private _sendToResumeTerminal(
+    serverSessionId: string,
     sessionId: string,
     text: string,
     cwd: string | undefined,
     binary: { path: string; args: string[] },
-  ): void {
+  ): Promise<void> {
     // Reuse existing terminal for this session
     let term = this._resumeTerminals.get(sessionId);
     if (term && !vscode.window.terminals.includes(term)) {
@@ -326,31 +369,40 @@ export class CommandRelayService {
 
     if (isNewTerminal) {
       // Give CC time to load the session transcript and enter its read loop
-      // before writing the first command. Newer / larger transcripts take longer.
-      log('[command-relay] new terminal, delaying sendText by 5s for session=%s', sessionId.slice(0, 8));
-      setTimeout(() => {
+      // before writing the first command. Keeping this short makes the first
+      // mobile prompt feel responsive while still avoiding lost input.
+      log('[command-relay] new terminal, delaying sendText by %dms for session=%s',
+        RESUME_TERMINAL_INITIAL_SEND_DELAY_MS, sessionId.slice(0, 8));
+      return new Promise((resolve) => {
+        setTimeout(() => {
         if (!term || !vscode.window.terminals.includes(term)) {
           log('[command-relay] sendText ABORT: terminal for session=%s no longer exists', sessionId.slice(0, 8));
+          this._reportCommandError(serverSessionId, sessionId, { code: -1, stderr: 'Claude resume terminal disappeared before prompt delivery', durationMs: RESUME_TERMINAL_INITIAL_SEND_DELAY_MS });
+          resolve();
           return;
         }
         log('[command-relay] sendText → terminal: session=%s text=%s (terminal state=%s exitStatus=%s)',
           sessionId.slice(0, 8), text.slice(0, 60),
           term.state, JSON.stringify(term.exitStatus));
         term.sendText(text, true);
+        resolve();
         // If the CC process exited (e.g. --resume failed), surface the failure.
         setTimeout(() => {
           if (!vscode.window.terminals.includes(term)) {
             log('[command-relay] POST-CHECK: terminal for session=%s is GONE (CC exited? data may have been lost)', sessionId.slice(0, 8));
+            this._reportCommandError(serverSessionId, sessionId, { code: -1, stderr: 'Claude resume terminal exited after prompt delivery', durationMs: 2000 });
           } else {
             log('[command-relay] POST-CHECK: terminal for session=%s still alive (state=%s)', sessionId.slice(0, 8), term.state);
           }
         }, 2000);
-      }, 5000);
+        }, RESUME_TERMINAL_INITIAL_SEND_DELAY_MS);
+      });
     } else {
       log('[command-relay] sendText → terminal: session=%s text=%s (terminal state=%s exitStatus=%s)',
         sessionId.slice(0, 8), text.slice(0, 60),
         term!.state, JSON.stringify(term!.exitStatus));
       term!.sendText(text, true);
+      return Promise.resolve();
     }
   }
 
