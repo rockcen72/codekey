@@ -2,7 +2,7 @@ import { EventEmitter } from 'node:events';
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ApprovalBridge } from './handler.js';
 import { OpenCodeSessionManager } from './opencode-session-manager.js';
 
@@ -712,5 +712,205 @@ describe('ApprovalBridge canonical sessions', () => {
       // Count should be unchanged — setPendingLabel should no-op
       expect(relay.sent.length).toBe(beforeCount);
     });
+  });
+});
+
+describe('ApprovalBridge hook dedup cleanup', () => {
+  it('cleanupHookDedupFingerprints removes entries older than TTL and keeps recent ones', () => {
+    const relay = new FakeRelay();
+    const bridge = new ApprovalBridge(relay as any);
+
+    const now = Date.now();
+    const fps = (bridge as any)._forwardedHookFingerprints as Map<string, number>;
+    fps.set('fp-1', now - 25 * 60 * 60 * 1000); // 25h old — expire
+    fps.set('fp-2', now - 23 * 60 * 60 * 1000); // 23h old — keep (within 24h TTL)
+    fps.set('fp-3', now - 1 * 60 * 60 * 1000);  // 1h old — keep
+
+    const removed = bridge.cleanupHookDedupFingerprints(now);
+
+    expect(removed).toBe(1);
+    expect(fps.has('fp-1')).toBe(false);
+    expect(fps.has('fp-2')).toBe(true);
+    expect(fps.has('fp-3')).toBe(true);
+  });
+
+  it('cleanupHookDedupFingerprints returns 0 when no entries are expired', () => {
+    const relay = new FakeRelay();
+    const bridge = new ApprovalBridge(relay as any);
+
+    const now = Date.now();
+    const fps = (bridge as any)._forwardedHookFingerprints as Map<string, number>;
+    fps.set('fp-recent', now - 1000);
+
+    const removed = bridge.cleanupHookDedupFingerprints(now);
+
+    expect(removed).toBe(0);
+    expect(fps.size).toBe(1);
+  });
+
+  it('cleanupHookDedupFingerprints handles empty map', () => {
+    const relay = new FakeRelay();
+    const bridge = new ApprovalBridge(relay as any);
+
+    const removed = bridge.cleanupHookDedupFingerprints(Date.now());
+
+    expect(removed).toBe(0);
+  });
+
+  it('dispose stops background timer and clears the interval reference', () => {
+    const relay = new FakeRelay();
+    const bridge = new ApprovalBridge(relay as any);
+
+    (bridge as any).ensureHookDedupCleanup();
+    expect((bridge as any)._hookDedupTimer).toBeDefined();
+
+    bridge.dispose();
+
+    expect((bridge as any)._hookDedupTimer).toBeUndefined();
+  });
+
+  it('ensureHookDedupCleanup is idempotent (does not create duplicate timers)', () => {
+    const relay = new FakeRelay();
+    const bridge = new ApprovalBridge(relay as any);
+
+    (bridge as any).ensureHookDedupCleanup();
+    const first = (bridge as any)._hookDedupTimer;
+    (bridge as any).ensureHookDedupCleanup();
+    const second = (bridge as any)._hookDedupTimer;
+
+    expect(first).toBe(second);
+
+    bridge.dispose();
+  });
+});
+
+describe('ApprovalBridge pendingDeactivations race handling', () => {
+  it('activation failure cleans up stale pendingDeactivations marker', async () => {
+    const relay = new FakeRelay();
+    const bridge = new ApprovalBridge(relay as any);
+
+    // Stale marker: deactivate happened before activation could complete
+    (bridge as any).pendingDeactivations.add('window-1');
+
+    // Force activation to fail (returns null)
+    vi.spyOn(bridge as any, '_activateOnRelay').mockResolvedValue(null);
+
+    const result = await bridge.activateSession('window-1');
+
+    expect(result).toBeNull();
+    expect((bridge as any).pendingDeactivations.has('window-1')).toBe(false);
+  });
+
+  it('activation success with pending deactivate sends deactivate and does not register session', async () => {
+    const relay = new FakeRelay();
+    const bridge = new ApprovalBridge(relay as any);
+
+    (bridge as any).pendingDeactivations.add('window-1');
+    vi.spyOn(bridge as any, '_activateOnRelay').mockResolvedValue('server-sess-1');
+
+    const result = await bridge.activateSession('window-1');
+
+    expect(result).toBeNull();
+    // deactivate_session sent to relay
+    const sentRaw = relay.sent;
+    expect(sentRaw.some((s) => s.includes('deactivate_session') && s.includes('server-sess-1'))).toBe(true);
+    // marker consumed
+    expect((bridge as any).pendingDeactivations.has('window-1')).toBe(false);
+    // session NOT registered
+    expect((bridge as any).windowSessions.has('window-1')).toBe(false);
+  });
+
+  it('activation success without pending deactivate registers session normally', async () => {
+    const relay = new FakeRelay();
+    const bridge = new ApprovalBridge(relay as any);
+
+    vi.spyOn(bridge as any, '_activateOnRelay').mockResolvedValue('server-sess-2');
+
+    const result = await bridge.activateSession('window-2');
+
+    expect(result).toBe('server-sess-2');
+    expect((bridge as any).windowSessions.get('window-2')).toBe('server-sess-2');
+    expect((bridge as any).pendingDeactivations.has('window-2')).toBe(false);
+  });
+});
+
+describe('ApprovalBridge pendingPhoneDeliveryCount cleanup paths', () => {
+  function setupPendingCount(bridge: ApprovalBridge, sessionId: string) {
+    (bridge as any).pendingPhoneDeliveryCount.set(sessionId, 3);
+  }
+
+  it('deactivateSession clears pendingPhoneDeliveryCount', async () => {
+    const relay = new FakeRelay();
+    const bridge = new ApprovalBridge(relay as any);
+
+    (bridge as any).windowSessions.set('window-1', 'server-1');
+    setupPendingCount(bridge, 'server-1');
+
+    await bridge.deactivateSession('window-1');
+
+    expect((bridge as any).pendingPhoneDeliveryCount.has('server-1')).toBe(false);
+  });
+
+  it('deactivateByWindow clears pendingPhoneDeliveryCount for matching windows', () => {
+    const relay = new FakeRelay();
+    const bridge = new ApprovalBridge(relay as any);
+
+    (bridge as any).windowSessions.set('window-1', 'server-1');
+    setupPendingCount(bridge, 'server-1');
+
+    bridge.deactivateByWindow('window-1');
+
+    expect((bridge as any).pendingPhoneDeliveryCount.has('server-1')).toBe(false);
+  });
+
+  it('session_deactivated relay event clears pendingPhoneDeliveryCount', () => {
+    const relay = new FakeRelay();
+    const bridge = new ApprovalBridge(relay as any);
+
+    setupPendingCount(bridge, 'server-1');
+
+    relay.emit('session_deactivated', { sessionId: 'server-1' });
+
+    expect((bridge as any).pendingPhoneDeliveryCount.has('server-1')).toBe(false);
+  });
+
+  it('deactivateAll clears all pendingPhoneDeliveryCount entries', async () => {
+    const relay = new FakeRelay();
+    const bridge = new ApprovalBridge(relay as any);
+
+    (bridge as any).windowSessions.set('window-1', 'server-1');
+    (bridge as any).windowSessions.set('window-2', 'server-2');
+    setupPendingCount(bridge, 'server-1');
+    setupPendingCount(bridge, 'server-2');
+
+    await bridge.deactivateAll();
+
+    expect((bridge as any).pendingPhoneDeliveryCount.size).toBe(0);
+  });
+
+  it('deactivateAll cleans up pendingPhoneDeliveryCount even with empty windowSessions', async () => {
+    const relay = new FakeRelay();
+    const bridge = new ApprovalBridge(relay as any);
+
+    // Simulate: phone claim succeeded but no window session was created
+    setupPendingCount(bridge, 'server-orphan');
+
+    await bridge.deactivateAll();
+
+    expect((bridge as any).pendingPhoneDeliveryCount.has('server-orphan')).toBe(false);
+  });
+
+  it('deactivateAll stops hook dedup timer even with empty windowSessions', async () => {
+    const relay = new FakeRelay();
+    const bridge = new ApprovalBridge(relay as any);
+
+    // Lazy-start the timer (simulate prior hook event)
+    (bridge as any).ensureHookDedupCleanup();
+    expect((bridge as any)._hookDedupTimer).toBeDefined();
+
+    // No window sessions exist
+    await bridge.deactivateAll();
+
+    expect((bridge as any)._hookDedupTimer).toBeUndefined();
   });
 });

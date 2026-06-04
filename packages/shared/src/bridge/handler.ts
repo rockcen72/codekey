@@ -127,7 +127,9 @@ export class ApprovalBridge {
   // CC --resume replays historical hook events. Track fingerprints
   // of forwarded events to prevent re-sending old task_complete etc.
   private static readonly HOOK_DEDUP_TTL_MS = 24 * 60 * 60 * 1000;
+  private static readonly HOOK_DEDUP_CLEANUP_MS = 60 * 60 * 1000; // run cleanup every 1h
   private _forwardedHookFingerprints = new Map<string, number>(); // fingerprint → forwardedAt
+  private _hookDedupTimer?: ReturnType<typeof setInterval>;
 
   // ── Phone command dedup ─────────────────────────────────────
   private static readonly PHONE_COMMAND_DEDUP_MS = 10 * 60 * 1000;
@@ -393,6 +395,8 @@ export class ApprovalBridge {
       const p = payload as { sessionId: string };
       if (!p.sessionId) return;
 
+      this.pendingPhoneDeliveryCount.delete(p.sessionId);
+
       const deactivatedClaudeSessionIds: string[] = [];
 
       // Remove from sessions map by serverSessionId
@@ -446,7 +450,12 @@ export class ApprovalBridge {
     const promise = this._activateOnRelay(windowId, sessionLabel).then((sessionId) => {
       this.windowInFlightSessions.delete(windowId);
 
-      if (!sessionId) return null;
+      if (!sessionId) {
+        // C1: activation failed/timeout — pendingDeactivations marker is now stale
+        // (no session to deactivate, no future activation will read it).
+        this.pendingDeactivations.delete(windowId);
+        return null;
+      }
 
       // If deactivation was requested while activation was in-flight, deactivate now.
       // This handles the race: tab opens → activation starts → tab closes → activation completes.
@@ -549,6 +558,7 @@ export class ApprovalBridge {
     this.windowLabels.delete(windowId);
     this.activeWindows.delete(windowId);
     this.claimedTabSessions.delete(windowId);
+    this.pendingPhoneDeliveryCount.delete(sessionId);
     if (this.primarySessionId === sessionId) {
       this.primarySessionId = null;
     }
@@ -570,6 +580,7 @@ export class ApprovalBridge {
         this.windowLabels.delete(wid);
         this.activeWindows.delete(wid);
         this.claimedTabSessions.delete(wid);
+        this.pendingPhoneDeliveryCount.delete(sid);
         for (const [csid, ssid] of this.sessions) {
           if (ssid === sid) this.sessions.delete(csid);
         }
@@ -584,17 +595,22 @@ export class ApprovalBridge {
   /** Deactivate all sessions (fire-and-forget). Called when parent process exits. */
   async deactivateAll(): Promise<void> {
     const entries = Array.from(this.windowSessions.entries());
-    if (entries.length === 0) return;
 
-    for (const [, sessionId] of entries) {
-      this.relay.sendRaw(JSON.stringify({
-        type: 'deactivate_session',
-        payload: { sessionId },
-      }));
+    // Always run cleanup, even when no window sessions exist:
+    // - hook dedup timer may have been lazy-started by handleHookEvent
+    // - pendingPhoneDeliveryCount may hold entries from /v1/pending-commands/claim
+    //   triggered by phone prompts that never created a window session
+    if (entries.length > 0) {
+      for (const [, sessionId] of entries) {
+        this.relay.sendRaw(JSON.stringify({
+          type: 'deactivate_session',
+          payload: { sessionId },
+        }));
+      }
+
+      // Give WS messages time to flush
+      await new Promise((r) => setTimeout(r, 500));
     }
-
-    // Give WS messages time to flush
-    await new Promise((r) => setTimeout(r, 500));
 
     // Clear all caches
     this.windowSessions.clear();
@@ -606,6 +622,41 @@ export class ApprovalBridge {
     this.windowToTabIds.clear();
     this.claimedTabSessions.clear();
     this.pendingDeactivations.clear();
+    this.pendingPhoneDeliveryCount.clear();
+    this.dispose();
+  }
+
+  /** Lazy: start background hook-dedup cleanup timer on first hook event. */
+  private ensureHookDedupCleanup(): void {
+    if (this._hookDedupTimer) return;
+    this._hookDedupTimer = setInterval(() => {
+      this.cleanupHookDedupFingerprints(Date.now());
+    }, ApprovalBridge.HOOK_DEDUP_CLEANUP_MS);
+    this._hookDedupTimer.unref?.();
+  }
+
+  /** Drop hook fingerprint entries older than HOOK_DEDUP_TTL_MS. Returns count removed. */
+  cleanupHookDedupFingerprints(now: number): number {
+    const cutoff = now - ApprovalBridge.HOOK_DEDUP_TTL_MS;
+    let removed = 0;
+    for (const [fp, ts] of this._forwardedHookFingerprints) {
+      if (ts < cutoff) {
+        this._forwardedHookFingerprints.delete(fp);
+        removed++;
+      }
+    }
+    if (removed > 0) {
+      console.error('[bridge] hook dedup cleanup: removed %d expired entries', removed);
+    }
+    return removed;
+  }
+
+  /** Stop background timers. Tests + parent-exit path call this. */
+  dispose(): void {
+    if (this._hookDedupTimer) {
+      clearInterval(this._hookDedupTimer);
+      this._hookDedupTimer = undefined;
+    }
   }
 
   /** Push a label update to the relay for a specific claudeSessionId.
@@ -1163,6 +1214,7 @@ export class ApprovalBridge {
         body.eventType, claudeSessionId);
       return;
     }
+    this.ensureHookDedupCleanup();
     this._forwardedHookFingerprints.set(hookFp, Date.now());
     // Attach per-window identifiers so the server can associate this session
     // with the correct VSCode window and display the correct label.

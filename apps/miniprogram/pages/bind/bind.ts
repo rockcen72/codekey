@@ -12,15 +12,16 @@ Page({
 
   onLoad(query: any) {
     const code = query.code || '';
-    this.setData({ code });
-    this.confirmBind(code);
+    const platform: 'wechat' | 'feishu' = query.platform === 'feishu' ? 'feishu' : 'wechat';
+    this.setData({ code, platform });
+    this.confirmBind(code, platform);
   },
 
-  async confirmBind(code: string) {
+  async confirmBind(code: string, platform: 'wechat' | 'feishu') {
     this.setData({ status: 'binding', errorMsg: '' });
     try {
       const api = createApi(getServerUrl());
-      const result = await api.confirmCode(code);
+      const result = await api.confirmCode(code, platform);
       saveAuth(result.clientToken, result.deviceId);
       app.destroyWs();
       app.initWs();

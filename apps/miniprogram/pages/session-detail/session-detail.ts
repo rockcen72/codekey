@@ -146,8 +146,11 @@ Page({
       }
     };
 
+    this._onAuthFailedBound = () => { wx.redirectTo({ url: '/pages/login/login' }); };
+
     app.onWsEvent('event_push', this._onEventPushBound);
     app.onWsEvent('session_deactivated', this._onSessionDeactivatedBound);
+    app.onWsEvent('auth_failed', this._onAuthFailedBound);
     app.onWsEvent('ws_connected', this._onWsConnectedBound);
     app.onWsEvent('ws_disconnected', this._onWsDisconnectedBound);
     app.onWsEvent('device_offline', this._onDeviceOfflineBound);
@@ -162,6 +165,7 @@ Page({
   },
 
   unsubscribeWs() {
+    if (this._onAuthFailedBound) app.offWsEvent('auth_failed', this._onAuthFailedBound);
     if (this._onEventPushBound) app.offWsEvent('event_push', this._onEventPushBound);
     if (this._onSessionDeactivatedBound) app.offWsEvent('session_deactivated', this._onSessionDeactivatedBound);
     if (this._onWsConnectedBound) app.offWsEvent('ws_connected', this._onWsConnectedBound);

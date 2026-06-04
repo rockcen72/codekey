@@ -99,10 +99,23 @@ async function main(): Promise<void> {
     const ocPort = discoverOpenCodePort();
     ocUrl = `http://127.0.0.1:${ocPort}`;
     opencodeManager = new OpenCodeSessionManager(ocUrl, bridge);
-    opencodeManager.start().catch((err: Error) => {
-      console.error('[bridge-entry] OpenCode SSE connect failed:', err);
-    });
-    console.error('[bridge-entry] OpenCode integration started on port %d', ocPort);
+    const startOpenCodeWithRetry = async (maxRetries = 5) => {
+      for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        try {
+          await opencodeManager!.start();
+          console.error('[bridge-entry] OpenCode integration connected');
+          return;
+        } catch (err) {
+          console.error('[bridge-entry] OpenCode SSE connect failed (attempt %d/%d):', attempt, maxRetries, err);
+          if (attempt < maxRetries) {
+            await new Promise(r => setTimeout(r, Math.min(1000 * 2 ** attempt, 30000)));
+          }
+        }
+      }
+      console.error('[bridge-entry] OpenCode SSE connect exhausted retries, giving up');
+    };
+    startOpenCodeWithRetry();
+    console.error('[bridge-entry] OpenCode integration starting on port %d', ocPort);
   } catch {
     console.error('[bridge-entry] opencode CLI not found, skipping OpenCode integration');
   }
@@ -178,6 +191,13 @@ async function main(): Promise<void> {
 
   process.on('SIGINT', () => { clearInterval(parentTimer); clearInterval(reconcileTimer); clearInterval(pruneTimer); close(); relay.close(); process.exit(0); });
   process.on('SIGTERM', () => { clearInterval(parentTimer); clearInterval(reconcileTimer); clearInterval(pruneTimer); close(); relay.close(); process.exit(0); });
+
+  process.on('uncaughtException', (err) => {
+    console.error('[bridge-entry] uncaught exception:', err);
+  });
+  process.on('unhandledRejection', (reason) => {
+    console.error('[bridge-entry] unhandled rejection:', reason);
+  });
 }
 
 main().catch((err) => {

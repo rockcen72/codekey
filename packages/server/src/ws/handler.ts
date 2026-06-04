@@ -878,9 +878,10 @@ export function wsHandler(sql: postgres.Sql) {
         return;
       }
 
-      const tok = rows[0] as { token_type: string };
+      const tok = rows[0] as { token_type: string; label: string };
       tokenType = tok.token_type;
       authed = true;
+      const clientLabel = tok.label || '';
 
       if (tok.token_type === 'device') {
         const client: WsClient = { socket, deviceId, tokenType: 'device' };
@@ -962,8 +963,9 @@ export function wsHandler(sql: postgres.Sql) {
         }
         clientClients.get(deviceId)!.add(client);
         const bridge = pcClients.get(deviceId);
+        const platform = clientLabel.includes('feishu') ? 'feishu' : 'wechat';
         if (bridge && bridge.socket.readyState === bridge.socket.OPEN) {
-          bridge.socket.send(JSON.stringify({ type: 'mp_online' }));
+          bridge.socket.send(JSON.stringify({ type: 'mp_online', platform }));
         }
         socket.on('close', () => {
           const clients = clientClients.get(deviceId);
@@ -973,7 +975,7 @@ export function wsHandler(sql: postgres.Sql) {
             clientClients.delete(deviceId);
             const bridge = pcClients.get(deviceId);
             if (bridge && bridge.socket.readyState === bridge.socket.OPEN) {
-              bridge.socket.send(JSON.stringify({ type: 'mp_offline' }));
+              bridge.socket.send(JSON.stringify({ type: 'mp_offline', platform }));
             }
           }
           }

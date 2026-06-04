@@ -12,6 +12,11 @@ import {
   createPing,
 } from '../index.js';
 
+interface PendingEntry<T> {
+  data: T;
+  ts: number;
+}
+
 export class RelayClient extends EventEmitter {
   private ws: WebSocket | null = null;
   private deviceId: string;
@@ -23,9 +28,15 @@ export class RelayClient extends EventEmitter {
   private connectionTimer?: ReturnType<typeof setTimeout>;
   private reconnectAttempt = 0;
   private intentionalClose = false;
-  private pendingEvents: WsMessage[] = [];
-  private pendingRaw: string[] = [];
+  private pendingEvents: PendingEntry<WsMessage>[] = [];
+  private pendingRaw: PendingEntry<string>[] = [];
   private lastEventId: string | null = null;
+
+  /** Drop queued messages older than this on flushPending / new enqueue. */
+  private static readonly PENDING_TTL_MS = 5 * 60 * 1000;
+
+  /** Hard cap on pending queue size after TTL eviction. */
+  private static readonly PENDING_MAX = 100;
 
   /** Expose relay WS connection state for health reporting. */
   get status(): 'connected' | 'connecting' | 'disconnected' {
@@ -129,10 +140,10 @@ export class RelayClient extends EventEmitter {
           this.emit('attached_sessions', msg.payload);
         }
         if (msg.type === 'mp_online') {
-          this.emit('mp_online');
+          this.emit('mp_online', (msg as any).payload?.platform || 'wechat');
         }
         if (msg.type === 'mp_offline') {
-          this.emit('mp_offline');
+          this.emit('mp_offline', (msg as any).payload?.platform || 'wechat');
         }
         if (msg.type === 'command') {
           this.emit('command', msg.payload);
@@ -191,8 +202,8 @@ export class RelayClient extends EventEmitter {
     if (this.ws?.readyState === WebSocket.OPEN) {
       this.ws.send(json);
     } else {
-      this.pendingRaw.push(json);
-      if (this.pendingRaw.length > 100) this.pendingRaw.shift();
+      this.pendingRaw.push({ data: json, ts: Date.now() });
+      this.evictOldPending();
     }
   }
 
@@ -200,9 +211,16 @@ export class RelayClient extends EventEmitter {
     if (this.ws?.readyState === WebSocket.OPEN) {
       this.ws.send(serializeMessage(msg));
     } else {
-      this.pendingEvents.push(msg);
-      if (this.pendingEvents.length > 100) this.pendingEvents.shift();
+      this.pendingEvents.push({ data: msg, ts: Date.now() });
+      this.evictOldPending();
     }
+  }
+
+  /** Drop entries older than TTL; cap queue at PENDING_MAX. */
+  private evictOldPending(): void {
+    const cutoff = Date.now() - RelayClient.PENDING_TTL_MS;
+    this.pendingRaw = this.pendingRaw.filter((e) => e.ts >= cutoff).slice(-RelayClient.PENDING_MAX);
+    this.pendingEvents = this.pendingEvents.filter((e) => e.ts >= cutoff).slice(-RelayClient.PENDING_MAX);
   }
 
   close(): void {
@@ -223,15 +241,16 @@ export class RelayClient extends EventEmitter {
   }
 
   private flushPending(): void {
-    for (const raw of this.pendingRaw) {
+    this.evictOldPending();
+    for (const e of this.pendingRaw) {
       if (this.ws?.readyState === WebSocket.OPEN) {
-        this.ws.send(raw);
+        this.ws.send(e.data);
       }
     }
     this.pendingRaw = [];
-    for (const msg of this.pendingEvents) {
+    for (const e of this.pendingEvents) {
       if (this.ws?.readyState === WebSocket.OPEN) {
-        this.ws.send(serializeMessage(msg));
+        this.ws.send(serializeMessage(e.data));
       }
     }
     this.pendingEvents = [];

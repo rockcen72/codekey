@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import type postgres from 'postgres';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { deviceTokenAuth } from '../auth/middleware.js';
-import { pairingClients } from '../ws/connection-registry.js';
+import { clientClients, pairingClients } from '../ws/connection-registry.js';
 import { rateLimit } from '../middleware/rate-limit.js';
 
 export function deviceRoutes(sql: postgres.Sql) {
@@ -73,8 +73,11 @@ export function deviceRoutes(sql: postgres.Sql) {
     fastify.post('/devices/confirm', {
       preHandler: rateLimit({ windowMs: 60_000, max: 30, keyPrefix: 'confirm' }),
     }, async (req, reply) => {
-      const { code } = req.body as { code: string };
+      const { code, platform } = req.body as { code: string; platform?: string };
       if (!code) return reply.code(400).send({ error: 'code required' });
+      if (platform !== undefined && platform !== 'feishu' && platform !== 'wechat') {
+        return reply.code(400).send({ error: 'invalid platform' });
+      }
 
       const codeHash = createHash('sha256').update(code).digest('hex');
 
@@ -91,9 +94,10 @@ export function deviceRoutes(sql: postgres.Sql) {
       // Create client token (short-lived, for mini program)
       const clientToken = randomUUID();
       const clientTokenHash = createHash('sha256').update(clientToken).digest('hex');
+      const clientLabel = platform === 'feishu' ? 'feishu-miniprogram' : 'wechat-miniprogram';
       await sql`
         INSERT INTO device_tokens (device_id, token_type, token_hash, label, expires_at)
-        VALUES (${record.device_id}, 'client', ${clientTokenHash}, 'wechat-miniprogram', now() + interval '30 days')
+        VALUES (${record.device_id}, 'client', ${clientTokenHash}, ${clientLabel}, now() + interval '30 days')
       `;
 
       // Create device token (long-lived, for PC)
@@ -133,7 +137,21 @@ export function deviceRoutes(sql: postgres.Sql) {
       if (id !== deviceAuth.deviceId) {
         return reply.code(403).send({ error: 'forbidden' });
       }
+      // Revoke all tokens so mini programs get 401 on next API call
+      await sql`UPDATE device_tokens SET revoked = true WHERE device_id = ${id}`;
       await sql`DELETE FROM devices WHERE id = ${id}`;
+
+      // Close all mini program WS connections — they'll see auth_failed
+      const mpList = clientClients.get(id);
+      if (mpList) {
+        for (const mp of mpList) {
+          if (mp.socket.readyState === mp.socket.OPEN) {
+            mp.socket.send(JSON.stringify({ type: 'auth_failed', code: 'DEVICE_DELETED' }));
+            mp.socket.close(4001, 'device deleted');
+          }
+        }
+        clientClients.delete(id);
+      }
       return { success: true };
     });
   };

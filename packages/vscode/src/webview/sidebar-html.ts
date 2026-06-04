@@ -44,6 +44,8 @@ export interface SidebarState {
   deviceSecret?: string;
   feishuAppId?: string;
   pairing?: PairingState;
+  pairingPlatform?: string;
+  lang?: string;
 }
 
 export interface ClaudeSessionItem {
@@ -65,6 +67,8 @@ export interface ClaudeSessionItem {
 }
 
 // ── Helpers ──────────────────────────────────────────────
+/** Simple i18n: returns Chinese when lang starts with zh */
+function i18n(lang: string | undefined, en: string, zh: string): string { return lang && lang.indexOf("zh") === 0 && zh ? zh : en; }
 
 function h(s: string | undefined | null): string {
   if (s == null) return '';
@@ -115,28 +119,22 @@ function renderBrandHeader(): string {
 export function renderDeviceContent(state: SidebarState): string {
   const serverConnected = state.bridge.relay === 'connected';
   const serverDot = dot(serverConnected ? 'green' : 'red');
-  const serverLabel = serverConnected ? 'Connected' : 'Disconnected';
+  const serverLabel = serverConnected ? i18n(state.lang, "Online", "已连接") : i18n(state.lang, "Offline", "未连接");
   const hasPhone = state.deviceStatus !== 'unpaired';
   const mpOnline = state.deviceStatus === 'paired' && state.bridge.mpOnline;
   const mpDot = dot(mpOnline ? 'green' : 'gray');
-  const mpLabel = mpOnline ? 'Phone Online' : hasPhone ? 'Phone Offline' : '';
-  return `<div class="row" style="cursor:pointer" data-action="relayReconnect" title="Click to reconnect"><span class="row-label">Server</span><span class="row-val">${serverDot}${serverLabel}</span></div>
-    ${mpLabel ? `<div class="row"><span class="row-label">Phone</span><span class="row-val">${mpDot}${mpLabel}</span></div>` : ''}`;
+  const mpLabel = mpOnline ? i18n(state.lang, "Online", "已连接") : hasPhone ? i18n(state.lang, "Offline", "未连接") : '';
+  return `<div class="row" style="cursor:pointer" data-action="relayReconnect" title="Click to reconnect"><span class="row-label">${i18n(state.lang, "Server", "服务器")}</span><span class="row-val">${serverDot}${serverLabel}</span></div>
+    ${mpLabel ? `<div class="row"><span class="row-label">${i18n(state.lang, "Phone", "移动端")}</span><span class="row-val">${mpDot}${mpLabel}</span></div>` : ''}`;
 }
 
 function renderDevice(state: SidebarState): string {
-  const { deviceStatus } = state;
-  const paired = deviceStatus === 'paired';
-  const offline = deviceStatus === 'offline';
-  const statusDot = paired ? dot('green') : offline ? dot('red pulse') : dot('orange pulse');
-  const statusLabel = paired ? 'Online' : offline ? 'Offline' : 'Not paired';
   return `<div class="card">
     <div class="card-header">
       <span class="card-label">
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="2" width="16" height="20" rx="2"/><line x1="12" y1="18" x2="12.01" y2="18"/></svg>
-        Device
+        ${i18n(state.lang, "Device", "设备")}
       </span>
-      <span class="tag ${paired ? 'green' : offline ? 'red' : 'orange'}" id="deviceStatusTag">${statusDot}${statusLabel}</span>
     </div>
     <div id="deviceContent">${renderDeviceContent(state)}</div>
   </div>`;
@@ -150,7 +148,7 @@ const AGENT_DOT_CLASS: Record<string, string> = {
 };
 
 export function renderAgentsContent(state: SidebarState): string {
-  if (state.agents.length === 0) return '<div class="empty-state">No agents configured</div>';
+  if (state.agents.length === 0) return `<div class="empty-state">${i18n(state.lang, 'No agents configured', '无代理配置')}</div>`;
   return state.agents.map(a => {
     const isActive = a.runtimeStatus === 'active';
     const activeColor = AGENT_DOT_CLASS[a.id] || 'green';
@@ -158,16 +156,11 @@ export function renderAgentsContent(state: SidebarState): string {
     const integOk = a.integrationStatus === 'enabled';
     let modeHtml = '';
     if (a.canInstall) {
-      modeHtml = `<a class="agent-install" data-action="install-opencode">Install</a>`;
+      modeHtml = `<a class="agent-install" data-action="install-opencode">${i18n(state.lang, 'Install', '安装')}</a>`;
     } else if (!integOk) {
-      modeHtml = a.id === 'codex' ? `<a class="agent-install" data-action="toggle-codex-hook">Install Hook</a>` : 'Reinstall CodeKey';
+      modeHtml = a.id === 'codex' ? `<a class="agent-install" data-action="toggle-codex-hook">${i18n(state.lang, 'Install Hook', '安装钩子')}</a>` : i18n(state.lang, 'Not connected', '未连接');
     } else {
-      const modeLinks: Record<string, string> = {
-        'claude-code': 'Hook',
-        'codex': `<a class="agent-install" data-action="toggle-codex-hook">Hook</a>`,
-        'opencode': 'Plugin + SDK',
-      };
-      modeHtml = modeLinks[a.id] || 'Ready';
+      modeHtml = i18n(state.lang, 'Connected', '已连接');
     }
     return `<div class="agent-item">
       <div class="agent-title-row">
@@ -186,9 +179,9 @@ function renderAgents(state: SidebarState): string {
     <div class="card-header">
       <span class="card-label">
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a4 4 0 1 0 0 8 4 4 0 0 0 0-8z"/><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/></svg>
-        Agents
+        ${i18n(state.lang, "Agents", "编程助手")}
       </span>
-      <span class="badge${active > 0 ? ' green' : ''}" id="agentsBadge">${active} active</span>
+      <span class="badge${active > 0 ? ' green' : ''}" id="agentsBadge">${active} ${i18n(state.lang, "active", "活跃")}</span>
     </div>
     <div id="agentsContent">${renderAgentsContent(state)}</div>
   </div>`;
@@ -527,12 +520,12 @@ function generateQrSvg(text: string, size: number = 200): string {
       if (matrix[r][c] === 1) {
         const x = (c + margin) * scale;
         const y = (r + margin) * scale;
-        rects.push(`<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${scale.toFixed(1)}" height="${scale.toFixed(1)}"/>`);
+        rects.push(`<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${scale.toFixed(1)}" height="${scale.toFixed(1)}" fill="#fff"/>`);
       }
     }
   }
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${size} ${size}" width="${size}" height="${size}" shape-rendering="crispEdges">
-<rect width="${size}" height="${size}" fill="#fff"/>
+<rect width="${size}" height="${size}" fill="var(--vscode-sideBar-background,#0f0f18)"/>
 ${rects.join('\n')}
 </svg>`;
 }
@@ -542,14 +535,16 @@ export function renderPairingContent(state: SidebarState): string {
   const isPaired = state.deviceStatus === 'paired';
   const isWaiting = p?.status === 'waiting';
   const method = p?.method || 'code';
-  const codeDigits = p?.code || '--- ---';
+  const codeDigits = p?.code || '--------';
   const codeExpires = p?.expiresAt || 0;
-  const platform = p?.platform || 'wechat';
+  const platform = p?.platform || state.pairingPlatform || 'wechat';
   const isFeishu = platform === 'feishu';
   const feishuAppId = state.feishuAppId || '';
   const hasFeishu = !!feishuAppId;
   const hasPartialCreds = !!(state.deviceId || state.deviceSecret);
-  const platName = isFeishu ? 'Feishu' : 'WeChat';
+  const wechatName = i18n(state.lang, 'WeChat', '微信');
+  const feishuName = i18n(state.lang, 'Feishu', '飞书');
+  const platName = isFeishu ? feishuName : wechatName;
 
   // When paired, collapse to a compact connected card (no code/QR clutter)
   if (isPaired) {
@@ -559,10 +554,10 @@ export function renderPairingContent(state: SidebarState): string {
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
         </div>
         <div class="paired-text">
-          <div class="paired-title">Connected via ${platName}</div>
-          <div class="paired-sub">${platName} Mini Program</div>
+          <div class="paired-title">${i18n(state.lang, 'Paired', '已配对')}</div>
+          <div class="paired-sub">${platName}</div>
         </div>
-        <button class="btn btn-sm btn-danger" data-action="unpairDevice" style="margin-left:auto">Unpair</button>
+        <button class="btn btn-sm btn-danger" data-action="unpairDevice" style="margin-left:auto">${i18n(state.lang, 'Unpair', '重新配对')}</button>
       </div>
     </div>`;
   }
@@ -570,16 +565,16 @@ export function renderPairingContent(state: SidebarState): string {
   // Generate both QR SVGs so JS can switch client-side without round-trip
   const wechatQrSvg = p?.code ? generateQrSvg(p.code, 160) : '';
   const feishuQrSvg = p?.code && feishuAppId
-    ? generateQrSvg(`feishu://app/${feishuAppId}/pages/login/login?code=${p.code}`, 160)
+    ? generateQrSvg(`feishu://app/${feishuAppId}/pages/login/login?code=${p.code}&platform=feishu`, 160)
     : '';
   const hasQr = !!(wechatQrSvg || feishuQrSvg);
 
   const feishuToggleHtml = hasFeishu ? `<div class="platform-toggle">
-    <div class="plat-opt${platform === 'wechat' ? ' active' : ''}" data-platform="wechat">
+    <div class="plat-opt${platform === 'wechat' ? i18n(state.lang, " active", " 活跃") : ''}" data-platform="wechat">
       <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 22H5a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v16a2 2 0 0 1-2 2h-4m-4 0v-4m0 4h4m0-4H9m0 0v-6a4 4 0 0 1 6-3.3"/></svg>
       WeChat
     </div>
-    <div class="plat-opt${platform === 'feishu' ? ' active' : ''}" data-platform="feishu">
+    <div class="plat-opt${platform === 'feishu' ? i18n(state.lang, " active", " 活跃") : ''}" data-platform="feishu">
       <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
       Feishu
     </div>
@@ -591,23 +586,20 @@ export function renderPairingContent(state: SidebarState): string {
       <div class="method-header" data-toggle="code">
         <div class="method-radio"></div>
         <div>
-          <div class="method-label">Code Pairing</div>
-          <div class="method-hint">Enter this code in your <span class="plat-label">${platName}</span> Mini Program</div>
+          <div class="method-label">${i18n(state.lang, 'Code Pairing', '配对码')}</div>
+          <div class="method-hint">${i18n(state.lang, 'Enter this pairing code in the mini program', '在移动端小程序中输入此配对码')}</div>
         </div>
       </div>
       <div class="method-body" style="${method === 'code' ? 'max-height:300px;padding:0 10px 12px' : ''}">
         <div class="code-display-wrap">
           <div class="code-digits" id="codeDigits" data-expires="${codeExpires}">${h(codeDigits)}</div>
-          <div class="code-timer" id="codeTimer">Code expires in <span id="countdown">5:00</span></div>
+          <div class="code-timer" id="codeTimer">${i18n(state.lang, 'Code expires in ', '配对码')}<span id="countdown">5:00</span>${i18n(state.lang, '', '后过期')}</div>
           <div class="code-actions">
             <button class="btn btn-sm btn-ghost" data-action="regeneratePairingCode">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
-              Regenerate
+              ${i18n(state.lang, 'Regenerate', '重新生成')}
             </button>
-            ${hasPartialCreds ? '<button class="btn btn-sm btn-ghost" data-action="unpairDevice">Reset</button>' : ''}
-          </div>
-          <div class="pairing-status ${isPaired ? 'success' : isWaiting ? 'waiting' : ''}" id="pairingStatus">
-            ${isPaired ? `Connected via ${platName}` : isWaiting ? (p?.statusText || 'Waiting for scan...') : 'Generate a code to pair'}
+            ${hasPartialCreds ? `<button class="btn btn-sm btn-ghost" data-action="unpairDevice">${i18n(state.lang, 'Reset', '重置')}</button>` : ''}
           </div>
         </div>
       </div>
@@ -616,26 +608,18 @@ export function renderPairingContent(state: SidebarState): string {
       <div class="method-header" data-toggle="qr">
         <div class="method-radio"></div>
         <div>
-          <div class="method-label">QR Scan</div>
-          <div class="method-hint">Scan with <span class="plat-label">${platName}</span> to pair instantly</div>
+          <div class="method-label">${i18n(state.lang, 'QR Code', '二维码')}</div>
+          <div class="method-hint">${i18n(state.lang, 'Scan to pair in mini program', '在小程序内扫码配对')}</div>
         </div>
       </div>
       <div class="method-body" style="${method === 'qr' ? 'max-height:300px;padding:0 10px 12px' : ''}">
-        <div class="qr-layout">
-          <div class="qr-visual" id="qrVisual">
+        <div style="text-align:center">
+          <div id="qrVisual">
             ${!hasQr
-              ? '<div style="width:160px;height:160px;display:flex;align-items:center;justify-content:center;color:#50506e;font-size:12px">Generate a code first</div>'
-              : `<div id="qrWechat" style="display:${isFeishu ? 'none' : 'block'}">${wechatQrSvg}</div>`
-                + (feishuQrSvg ? `<div id="qrFeishu" style="display:${isFeishu ? 'block' : 'none'}">${feishuQrSvg}</div>` : '')
+              ? `<div style="width:160px;height:160px;display:inline-flex;align-items:center;justify-content:center;color:#50506e;font-size:12px">${i18n(state.lang, 'Generate a code first', '请先生成配对码')}</div>`
+              : `<div id="qrWechat" style="display:${isFeishu ? 'none' : 'inline-block'}">${wechatQrSvg}</div>`
+                + (feishuQrSvg ? `<div id="qrFeishu" style="display:${isFeishu ? 'inline-block' : 'none'}">${feishuQrSvg}</div>` : '')
             }
-          </div>
-          <div class="qr-side">
-            <div class="hint">Scan with your <strong>${platName} Mini Program</strong></div>
-            <div class="qr-bottom">
-              <div class="qr-status ${isPaired ? 'success' : ''}" id="qrStatus">
-                ${isPaired ? 'Paired successfully!' : 'Generate a code first'}
-              </div>
-            </div>
           </div>
         </div>
       </div>
@@ -644,16 +628,12 @@ export function renderPairingContent(state: SidebarState): string {
 }
 
 function renderPairing(state: SidebarState): string {
-  const { deviceStatus, pairing } = state;
-  const isPaired = deviceStatus === 'paired';
-  const pn = pairing?.platform === 'feishu' ? 'Feishu' : 'WeChat';
   return `<div class="card pairing-card">
     <div class="card-header">
       <span class="card-label">
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="M12 5l7 7-7 7"/></svg>
-        Pairing
+        ${i18n(state.lang, 'Pairing', '配对')}
       </span>
-      <span class="tag ${isPaired ? 'green' : 'orange'}" id="pairingHeaderTag">${isPaired ? '<span class="dot green"></span>' + pn : '<span class="dot orange pulse"></span>' + pn}</span>
     </div>
     <div id="pairingContent">${renderPairingContent(state)}</div>
   </div>`;
@@ -665,7 +645,7 @@ const NONCE = 'ck2026sid';
 
 export function renderSidebar(state: SidebarState): string {
   return `<!DOCTYPE html>
-<html lang="en">
+<html lang="${(state.lang || "") || 'en'}">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -683,6 +663,9 @@ ${renderSubscribe()}
 <script nonce="${NONCE}">
 (function() {
   var api = acquireVsCodeApi();
+	  var lang = document.documentElement.lang || 'en';
+	  function T(en, zh) { return lang.indexOf('zh') === 0 && zh ? zh : en; }
+	  api.T = T;
 
   // Pairing data injected from extension host state
   var PD = ${JSON.stringify({
@@ -763,7 +746,7 @@ ${renderSubscribe()}
       // Update badges
       if (d.agentCount !== undefined) {
         var ab = document.getElementById('agentsBadge');
-        if (ab) { ab.textContent = d.agentCount + ' active'; ab.className = 'badge' + (d.agentCount > 0 ? ' green' : ''); }
+        if (ab) { ab.textContent = d.agentCount + ' ' + T('active', '活跃'); ab.className = 'badge' + (d.agentCount > 0 ? ' green' : ''); }
       }
       if (d.approvalCount !== undefined) {
         var apb = document.getElementById('approvalsBadge');
@@ -773,19 +756,9 @@ ${renderSubscribe()}
       if (d.deviceStatus !== undefined) {
         var ds = document.getElementById('deviceStatusTag');
         if (ds) {
-          if (d.deviceStatus === 'paired') { ds.textContent = '● Online'; ds.className = 'tag green'; }
-          else if (d.deviceStatus === 'offline') { ds.textContent = '● Offline'; ds.className = 'tag red'; }
-          else { ds.textContent = '● Not paired'; ds.className = 'tag orange'; }
-        }
-      }
-      // Update pairing header
-      if (d.paired !== undefined) {
-        var pt = document.getElementById('pairingHeaderTag');
-        if (pt) {
-          var _pn = 'WeChat';
-          try { var _sp = sessionStorage.getItem('pairingPlatform'); if (_sp) _pn = _sp === 'feishu' ? 'Feishu' : 'WeChat'; } catch(e) {}
-          if (d.paired) { pt.innerHTML = '<span class="dot green"></span>' + _pn; pt.className = 'tag green'; }
-          else { pt.innerHTML = '<span class="dot orange pulse"></span>' + _pn; pt.className = 'tag orange'; }
+          var statusText = T(i18n(state.lang, "Online", "在线"), '在线'); var offlineText = T(i18n(state.lang, "Offline", "离线"), '离线'); var unpairedText = T(i18n(state.lang, "Not paired", "未配对"), '未配对'); if (d.deviceStatus === 'paired') { ds.textContent = '● ' + statusText; ds.className = 'tag green'; }
+          else if (d.deviceStatus === 'offline') { ds.textContent = '● ' + offlineText; ds.className = 'tag red'; }
+          else { ds.textContent = '● ' + unpairedText; ds.className = 'tag orange'; }
         }
       }
       // Update PD so openPairingWs uses fresh data
@@ -861,11 +834,6 @@ ${renderSubscribe()}
       if (qrF) qrF.style.display = isFeishu ? 'block' : 'none';
       var name = isFeishu ? 'Feishu' : 'WeChat';
       document.querySelectorAll('.plat-label').forEach(function(el) { el.textContent = name; });
-      // Update header badge (only when not paired)
-      var pt = document.getElementById('pairingHeaderTag');
-      if (pt && !/green/.test(pt.className)) {
-        pt.innerHTML = '<span class="dot orange pulse"></span>' + name;
-      }
       try { sessionStorage.setItem('pairingPlatform', platform); } catch(e) {}
       return;
     }
@@ -948,11 +916,6 @@ ${renderSubscribe()}
     if (qrF) qrF.style.display = isFeishu ? 'block' : 'none';
     var name = isFeishu ? 'Feishu' : 'WeChat';
     document.querySelectorAll('.plat-label').forEach(function(el) { el.textContent = name; });
-    // Update header tag if not paired (when paired, extension host sends correct text)
-    var pt = document.getElementById('pairingHeaderTag');
-    if (pt && !/green/.test(pt.className)) {
-      pt.innerHTML = '<span class="dot orange pulse"></span>' + name;
-    }
   }
 
   // Restore agent filter on load + after each re-render
@@ -1390,11 +1353,12 @@ body{
 .method-option.active .method-body{max-height:300px;padding:0 10px 12px}
 .code-display-wrap{text-align:center;padding:8px 0 4px}
 .code-digits{
-  font-family:Georgia,'Times New Roman',serif;font-weight:800;
-  font-size:32px;letter-spacing:.15em;
+  font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;font-weight:700;
+  font-size:26px;letter-spacing:.08em;
   color:var(--vscode-textLink-foreground,#00ffe0);
   text-shadow:0 0 30px rgba(0,255,224,.12);
-  line-height:1.1;
+  line-height:1.2;
+  word-break:break-all;
 }
 @keyframes codePop{0%{transform:scale(.8);opacity:0}50%{transform:scale(1.05)}100%{transform:scale(1);opacity:1}}
 .code-digits.pop{animation:codePop .3s cubic-bezier(.4,0,.2,1)}

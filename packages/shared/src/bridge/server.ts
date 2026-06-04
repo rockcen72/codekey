@@ -90,8 +90,9 @@ function readJsonBody(
 
 export function startBridgeServer(bridge: ApprovalBridge, port = 3001, source = 'cli', onShutdown?: () => void, startedAt?: number, bridgeConfig?: BridgeConfig, codexResumeManager?: CodexResumeManager, opencodeManager?: OpenCodeSessionManager): Promise<{ close: () => Promise<void>; port: number }> {
   let mpOnline = false;
-  bridge.relay.on('mp_online', () => { mpOnline = true; });
-  bridge.relay.on('mp_offline', () => { mpOnline = false; });
+  let mpPlatform = 'wechat';
+  bridge.relay.on('mp_online', (platform?: string) => { mpOnline = true; mpPlatform = platform || 'wechat'; });
+  bridge.relay.on('mp_offline', (platform?: string) => { mpOnline = false; });
   const codexRelay = new CodexRelay(bridge.relay);
   const pendingCodexHookRequests = new Map<string, Promise<CodexHookResponse>>();
   const server = createServer((req, res) => handleRequest(req, res, bridge, source, onShutdown, startedAt, bridgeConfig, codexRelay, codexResumeManager, opencodeManager, pendingCodexHookRequests, () => mpOnline));
@@ -619,7 +620,9 @@ function handleRequest(req: IncomingMessage, res: ServerResponse, bridge: Approv
         const input = body;
         // Route telemetry events through the SSE handler to forward to relay
         if (opencodeManager && input.type && input.properties) {
-          opencodeManager.handleSSEEvent(input).catch(() => {});
+          opencodeManager.handleSSEEvent(input).catch((err) => {
+            console.error('[bridge] opencode SSE event error:', err);
+          });
         }
       } catch {
         // best-effort, don't fail
@@ -1028,11 +1031,7 @@ function handleRequest(req: IncomingMessage, res: ServerResponse, bridge: Approv
       .catch((err) => {
         res.writeHead(500, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ ok: false, error: String(err) }));
-      }).catch((err: Error) => {
-      if (err?.message === 'payload too large') return;
-      res.writeHead(400, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ ok: false, error: 'invalid payload' }));
-    });
+      });
     return;
   }
 

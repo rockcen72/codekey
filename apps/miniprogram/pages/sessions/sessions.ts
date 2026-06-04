@@ -81,6 +81,8 @@ Page({
     app.onWsEvent('session_label_updated', this._onFetchSessionsBound);
     app.onWsEvent('ws_connected', this._onWsConnectedBound);
     app.onWsEvent('ws_disconnected', this._onWsDisconnectedBound);
+    this._onAuthFailedBound = () => { wx.redirectTo({ url: '/pages/login/login' }); };
+    app.onWsEvent('auth_failed', this._onAuthFailedBound);
     app.onWsEvent('device_offline', this._onDeviceOfflineBound);
     app.onWsEvent('device_online', this._onDeviceOnlineBound);
 
@@ -93,6 +95,7 @@ Page({
     if (this._onEventPushBound) app.offWsEvent('event_push', this._onEventPushBound);
     if (this._onWsConnectedBound) app.offWsEvent('ws_connected', this._onWsConnectedBound);
     if (this._onWsDisconnectedBound) app.offWsEvent('ws_disconnected', this._onWsDisconnectedBound);
+    if (this._onAuthFailedBound) app.offWsEvent('auth_failed', this._onAuthFailedBound);
     if (this._onDeviceOfflineBound) app.offWsEvent('device_offline', this._onDeviceOfflineBound);
     if (this._onDeviceOnlineBound) app.offWsEvent('device_online', this._onDeviceOnlineBound);
     if (this._onFetchSessionsBound) {

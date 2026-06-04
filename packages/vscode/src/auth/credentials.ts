@@ -9,6 +9,7 @@ export interface Credentials {
   deviceSecret: string;
   deviceToken?: string;
   relayUrl: string;
+  platform?: 'wechat' | 'feishu';
 }
 
 function credentialsPath(): string {
@@ -31,6 +32,7 @@ export function loadCredentials(): Credentials | null {
       // must decide what to do. Do NOT fall back to a hardcoded IP here;
       // that's a security regression (P1-1).
       relayUrl: typeof parsed.relayUrl === 'string' ? parsed.relayUrl : '',
+      platform: parsed.platform || undefined,
     };
   } catch {
     return null;

@@ -22,7 +22,8 @@ function request<T>(method: HttpMethod, url: string, data?: any): Promise<T> {
         if (res.statusCode === 401) {
           clearAuth();
           wx.redirectTo({ url: '/pages/login/login' });
-          reject(new Error('unauthorized'));
+          // Resolve with empty data to prevent caller error loops
+          resolve([] as any);
           return;
         }
         if (res.statusCode >= 400) {
@@ -76,8 +77,8 @@ export function createApi(serverUrl: string) {
   const api = serverUrl.endsWith('/api/v1') ? serverUrl : `${serverUrl}/api/v1`;
 
   return {
-    confirmCode(code: string): Promise<ConfirmResult> {
-      return request<ConfirmResult>('POST', `${api}/devices/confirm`, { code });
+    confirmCode(code: string, platform: 'wechat' | 'feishu' = 'wechat'): Promise<ConfirmResult> {
+      return request<ConfirmResult>('POST', `${api}/devices/confirm`, { code, platform });
     },
 
     getSessions(): Promise<Session[]> {

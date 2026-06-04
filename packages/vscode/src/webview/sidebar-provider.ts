@@ -603,6 +603,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     } catch { /* bridge unreachable */ }
 
     const state: SidebarState = {
+      lang: vscode.env.language,
       deviceStatus,
       phoneName: 'WeChat Mini Program',
       bridge,
@@ -615,6 +616,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       deviceId: creds?.deviceId,
       deviceSecret: creds?.deviceSecret,
       feishuAppId: vscode.workspace.getConfiguration('codekey').get<string>('feishuAppId', ''),
+      pairingPlatform: creds?.platform,
       pairing: this._pairingState,
     };
 
@@ -1001,6 +1003,8 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     if (creds) {
       if (deviceId) creds.deviceId = deviceId;
       creds.deviceToken = token;
+      const platform = this._pairingState?.platform;
+      if (platform === 'feishu' || platform === 'wechat') creds.platform = platform;
       const { saveCredentials } = await import('../auth/credentials.js');
       saveCredentials(creds);
       BridgeStatusService.getInstance().restart();
