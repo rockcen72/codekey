@@ -363,6 +363,7 @@ export class OpenCodeSessionManager {
     switch (event.type) {
       case 'server.connected':
         return;
+      case 'permission.asked':
       case 'permission.updated':
         return this.onPermissionUpdated(event.properties);
       case 'permission.replied':
@@ -385,13 +386,13 @@ export class OpenCodeSessionManager {
   // ── Permission handling ─────────────────────────────────
 
   private async onPermissionUpdated(props: Record<string, unknown>): Promise<void> {
-    const requestID = props.id as string;
+    const requestID = (props.id || props.requestID || props.permissionID) as string;
     const sessionID = props.sessionID as string;
-    const permissionType = props.type as string;
+    const permissionType = (props.type || props.permission) as string;
     const title = props.title as string;
     const metadata = (props.metadata as Record<string, unknown>) ?? {};
 
-    if (!requestID || !sessionID) return;
+    if (!requestID || !sessionID || !permissionType) return;
 
     const serverSessionId = await this.ensureRelaySession(sessionID);
 
@@ -643,13 +644,20 @@ export class OpenCodeSessionManager {
     if (!entry) return false;
 
     try {
-      const response = decision === 'approve' ? 'once' : 'reject';
-      const resp = await fetch(`${this.opencodeBaseUrl}/session/${entry.localSessionID}/permissions/${entry.requestID}`, {
+      const reply = decision === 'approve' ? 'once' : 'reject';
+      const resp = await fetch(`${this.opencodeBaseUrl}/permission/${encodeURIComponent(entry.requestID)}/reply`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ response }),
+        body: JSON.stringify({ reply }),
       });
-      if (!resp.ok) throw new Error(`OpenCode reply returned ${resp.status}`);
+      if (resp.status === 404 || resp.status === 410) {
+        const legacyResp = await fetch(`${this.opencodeBaseUrl}/session/${encodeURIComponent(entry.localSessionID)}/permissions/${encodeURIComponent(entry.requestID)}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ response: reply }),
+        });
+        if (!legacyResp.ok) throw new Error(`OpenCode reply returned ${legacyResp.status}`);
+      } else if (!resp.ok) throw new Error(`OpenCode reply returned ${resp.status}`);
     } catch (err) {
       this.bridge.sendErrorToRelay(entry.serverSessionId, `审批回写失败: ${err}`);
       return true;

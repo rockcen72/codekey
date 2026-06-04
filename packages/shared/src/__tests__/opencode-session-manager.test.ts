@@ -61,7 +61,31 @@ describe('OpenCodeSessionManager event handling', () => {
     if (existsSync(attachedStoragePath)) rmSync(attachedStoragePath);
   });
 
-  describe('permission.updated', () => {
+  describe('permission.asked/updated', () => {
+    it('creates approval from OpenCode permission.asked event', async () => {
+      const permissionEvent = {
+        type: 'permission.asked',
+        properties: {
+          id: 'perm-asked',
+          permission: 'Bash',
+          sessionID: 'oc-session-asked',
+          messageID: 'msg-asked',
+          metadata: { command: 'npm test' },
+          time: { created: Date.now() },
+        },
+      };
+
+      await (manager as any).handleSSEEvent(permissionEvent);
+
+      expect(manager.ownsSession('server-oc-session-asked')).toBe(true);
+
+      const pending = bridge.getPendingApprovals();
+      expect(pending.length).toBe(1);
+      expect(pending[0].agentType).toBe('opencode');
+      expect(pending[0].command).toBe('npm test');
+      expect(pending[0].toolName).toBe('Bash');
+    });
+
     it('creates approval from Permission object', async () => {
       const permissionEvent = {
         type: 'permission.updated',
@@ -115,6 +139,37 @@ describe('OpenCodeSessionManager event handling', () => {
       const pending = bridge.getPendingApprovals();
       expect(pending.length).toBe(1);
       expect(pending[0].summary).toBe('Edit file: src/main.ts');
+    });
+
+    it('replies to OpenCode approvals through the current permission endpoint', async () => {
+      const originalFetch = globalThis.fetch;
+      const fetchSpy = vi.fn(async () => ({ ok: true }) as Response);
+      globalThis.fetch = fetchSpy as any;
+      try {
+        await (manager as any).handleSSEEvent({
+          type: 'permission.asked',
+          properties: {
+            id: 'perm-reply',
+            permission: 'Bash',
+            sessionID: 'oc-session-reply',
+            metadata: { command: 'npm test' },
+            time: { created: Date.now() },
+          },
+        });
+
+        const handled = await manager.handleApprovalForward('oc-perm:perm-reply', 'approve');
+
+        expect(handled).toBe(true);
+        expect(fetchSpy).toHaveBeenCalledWith(
+          'http://127.0.0.1:4096/permission/perm-reply/reply',
+          expect.objectContaining({
+            method: 'POST',
+            body: JSON.stringify({ reply: 'once' }),
+          }),
+        );
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
     });
   });
 
