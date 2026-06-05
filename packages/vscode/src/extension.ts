@@ -12,6 +12,7 @@ import { startOpenCodeTerminal } from './commands/start-opencode.js';
 import { SidebarProvider } from './webview/sidebar-provider.js';
 import { CommandRelayService } from './services/command-relay.js';
 import { BridgeStatusService } from './services/bridge-status.js';
+import { CodexApprovalNoticeService } from './services/codex-approval-notice.js';
 import { SessionStore } from './services/session-store.js';
 import { log, setVerbose, isVerbose } from './log.js';
 import { secureFetch } from './util/secure-fetch.js';
@@ -80,6 +81,10 @@ export function activate(context: vscode.ExtensionContext) {
   const commandRelay = new CommandRelayService();
   commandRelay.start();
   context.subscriptions.push(commandRelay);
+
+  const codexApprovalNotice = new CodexApprovalNoticeService();
+  codexApprovalNotice.start();
+  context.subscriptions.push(codexApprovalNotice);
 
   // Auto-bind: if VS Code already has a Claude Code terminal, attach to it
   const existingTerm = findExistingClaudeTerminal();

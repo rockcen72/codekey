@@ -29,6 +29,7 @@ docs/superpowers/
 
 # Images / screenshots
 *.png
+apps/miniprogram/assets/
 
 # Logs
 *.log
