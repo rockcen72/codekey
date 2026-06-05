@@ -227,24 +227,31 @@ export class BridgeStatusService {
     this._startHealthCheck();
   }
 
-  /** Stop the bridge process. Tries graceful /v1/shutdown first, falls back to force-kill. */
-  async stop(): Promise<void> {
+  /** Stop the bridge process. Tries graceful /v1/shutdown first.
+   *  With force=true, replace the bridge even if it reports active windows. */
+  async stop(options: { force?: boolean } = {}): Promise<void> {
     // Try graceful shutdown first
     try {
       const windowId = process.env.CODEKEY_WINDOW_ID || '';
-      await fetch(`${this.getBridgeUrl()}/v1/shutdown`, {
+      const resp = await fetch(`${this.getBridgeUrl()}/v1/shutdown`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ windowId }),
         signal: AbortSignal.timeout(3000),
       });
-      this._process = null;
-      this._myPid = null;
-      this._stopHealthCheck();
-      this._update({ bridge: 'stopped' });
-      return;
+      if (resp.ok) {
+        this._process = null;
+        this._myPid = null;
+        this._stopHealthCheck();
+        this._update({ bridge: 'stopped' });
+        return;
+      }
+      const msg = await resp.text().catch(() => '');
+      log(`[CodeKey] graceful shutdown refused (${resp.status})${msg ? `: ${msg}` : ''}`);
+      if (!options.force) return;
     } catch {
-      log('[CodeKey] graceful shutdown failed, falling back to kill');
+      log('[CodeKey] graceful shutdown failed');
+      if (!options.force && !this._process) return;
     }
 
     // Kill owned process by handle
@@ -258,6 +265,7 @@ export class BridgeStatusService {
     }
 
     // Adopted bridge: force-kill by port
+    if (!options.force) return;
     this._forceKillBridgeOnPort();
     this._stopHealthCheck();
     this._update({ bridge: 'stopped' });
@@ -283,7 +291,7 @@ export class BridgeStatusService {
   }
 
   restart(): void {
-    this.stop().then(() => this.ensureStarted());
+    this.stop({ force: true }).then(() => this.ensureStarted());
   }
 
   dispose(): void {
