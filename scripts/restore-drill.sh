@@ -35,9 +35,10 @@ BACKUP_DIR="/opt/codekey-backups"
 KEY_FILE="/etc/codekey/backup.key"
 TMP_SQL=$(mktemp /tmp/codekey-restore.XXXXXX.sql)
 TMP_DB=codekey_restore_test
-LOG_DIR=/tmp/codekey-restore-logs
-
-mkdir -p "${LOG_DIR}"
+# mktemp -d so we never collide with another run and the EXIT trap
+# can rm -rf the whole thing. Pre-existing dir would leak log files
+# across runs and accumulate schema/error context indefinitely.
+LOG_DIR=$(mktemp -d /tmp/codekey-restore-logs.XXXXXX)
 chmod 700 "${LOG_DIR}"
 
 # Per-command log files so we never pipe critical psql/pg_dump output
@@ -52,8 +53,8 @@ LOG_DT_RESTORE="${LOG_DIR}/dt-restore.log"
 LOG_COUNT_PROD="${LOG_DIR}/count-prod.log"
 LOG_COUNT_RESTORE="${LOG_DIR}/count-restore.log"
 
-# ALWAYS clean up: plaintext SQL, temp DB, and any log files left
-# behind. Run on EXIT regardless of success/failure.
+# ALWAYS clean up: plaintext SQL, temp DB, and the per-run log dir.
+# Run on EXIT regardless of success/failure.
 cleanup() {
   local rc=$?
   if [ -f "${TMP_SQL}" ]; then
@@ -63,6 +64,10 @@ cleanup() {
   # Drop the temp DB only if it exists; ignore errors so cleanup is
   # idempotent and never blocks the real rc from propagating.
   docker exec codekey-pg psql -U codekey -d postgres -c "DROP DATABASE IF EXISTS ${TMP_DB};" >/dev/null 2>&1 || true
+  if [ -d "${LOG_DIR}" ]; then
+    rm -rf "${LOG_DIR}"
+    echo "removed log dir ${LOG_DIR}" >&2
+  fi
   exit $rc
 }
 trap cleanup EXIT
