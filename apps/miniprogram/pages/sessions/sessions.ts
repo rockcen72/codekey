@@ -1,5 +1,6 @@
 import { type Session, createApi } from '../../services/api';
 import { getServerUrl } from '../../services/storage';
+import { getSubscription, type UsageSnapshot } from '../../services/subscription';
 
 const app = getApp<any>();
 
@@ -46,10 +47,24 @@ Page({
     activeTab: 'all',
     agentTabs: [{ key: 'all', label: 'All' }] as { key: string; label: string }[],
     _swipedSessionId: null as string | null,
+    // Subscription pill (top bar) — mirrors the data shape used in
+    // pages/settings/settings.ts so the same quota_exceeded
+    // listener can drive a refetch on any page. The pill is hidden
+    // for unauthenticated / load_failed — those users can still
+    // reach settings via the gear icon.
+    subTier: 'unauthenticated' as 'paid' | 'trial' | 'free' | 'unauthenticated' | 'load_failed',
+    subPlan: null as string | null,
+    subDaysRemaining: null as number | null,
+    subUsage: null as UsageSnapshot | null,
+    subQuotaState: 'hidden' as 'hidden' | 'normal' | 'approaching' | 'exhausted',
+    subQuotaPercent: 0,
+    subPillText: '' as string,
+    subPillClass: '' as string,
   },
 
   onShow() {
     this.fetchSessions();
+    this.fetchSubscription();
     this.subscribeWs();
     this._startPolling();
   },
@@ -74,6 +89,7 @@ Page({
     this._onWsDisconnectedBound = () => this.setData({ wsConnected: false });
     this._onDeviceOfflineBound = () => { this.setData({ deviceOnline: false }); this._updateConnectedStates(false); };
     this._onDeviceOnlineBound = () => { this.setData({ deviceOnline: true }); this._updateConnectedStates(true); };
+    this._onQuotaExceededBound = () => { this.fetchSubscription(); };
 
     app.onWsEvent('event_push', this._onEventPushBound);
     app.onWsEvent('session_registered', this._onFetchSessionsBound);
@@ -85,6 +101,7 @@ Page({
     app.onWsEvent('auth_failed', this._onAuthFailedBound);
     app.onWsEvent('device_offline', this._onDeviceOfflineBound);
     app.onWsEvent('device_online', this._onDeviceOnlineBound);
+    app.onWsEvent('quota_exceeded', this._onQuotaExceededBound);
 
     if (app.globalData.wsConnected !== this.data.wsConnected) {
       this.setData({ wsConnected: app.globalData.wsConnected });
@@ -98,6 +115,7 @@ Page({
     if (this._onAuthFailedBound) app.offWsEvent('auth_failed', this._onAuthFailedBound);
     if (this._onDeviceOfflineBound) app.offWsEvent('device_offline', this._onDeviceOfflineBound);
     if (this._onDeviceOnlineBound) app.offWsEvent('device_online', this._onDeviceOnlineBound);
+    if (this._onQuotaExceededBound) app.offWsEvent('quota_exceeded', this._onQuotaExceededBound);
     if (this._onFetchSessionsBound) {
       app.offWsEvent('session_registered', this._onFetchSessionsBound);
       app.offWsEvent('session_deactivated', this._onFetchSessionsBound);
@@ -109,6 +127,7 @@ Page({
     this._onWsDisconnectedBound = undefined;
     this._onDeviceOfflineBound = undefined;
     this._onDeviceOnlineBound = undefined;
+    this._onQuotaExceededBound = undefined;
   },
 
   _startPolling() { this._stopPolling(); this._pollTimer = setInterval(() => this.fetchSessions(), 10_000); },
@@ -208,6 +227,72 @@ Page({
 
   openSession(e: any) { this._closeAllSwipes(); wx.navigateTo({ url: '/pages/session-detail/session-detail?id=' + e.currentTarget.dataset.id }); },
   goToSettings() { wx.navigateTo({ url: '/pages/settings/settings' }); },
+  goToSettingsFromPill() { this.goToSettings(); },
+
+  async fetchSubscription() {
+    // Pulls the per-user subscription so the top-bar pill can
+    // render the current tier / quota state. Same shape as the
+    // settings page, so we get the same normal/approaching/
+    // exhausted cutoffs. Silently no-ops on auth/network failure
+    // — the pill just stays hidden, which is correct.
+    try {
+      const sub = await getSubscription();
+      const tier = sub.tier;
+      const daysRemaining = sub.expiresAt
+        ? Math.ceil((new Date(sub.expiresAt).getTime() - Date.now()) / 86_400_000)
+        : null;
+      const usage = tier === 'free' ? sub.usage : null;
+      const subQuotaState: 'hidden' | 'normal' | 'approaching' | 'exhausted' = !usage
+        ? 'hidden'
+        : usage.used >= usage.limit
+          ? 'exhausted'
+          : usage.used >= Math.floor(usage.limit * 0.8)
+            ? 'approaching'
+            : 'normal';
+      const subQuotaPercent = usage
+        ? Math.min(100, Math.round((usage.used / usage.limit) * 100))
+        : 0;
+      const subPillText = this._buildSubPillText(tier, sub.plan, daysRemaining, usage, subQuotaState);
+      const subPillClass = `sub-pill-${subQuotaState === 'hidden' ? 'tier-' + tier : subQuotaState}`;
+      this.setData({
+        subTier: tier,
+        subPlan: sub.plan,
+        subDaysRemaining: daysRemaining,
+        subUsage: usage,
+        subQuotaState,
+        subQuotaPercent,
+        subPillText,
+        subPillClass,
+      });
+    } catch (err) {
+      console.warn('[sessions] fetchSubscription failed:', err);
+    }
+  },
+
+  _buildSubPillText(
+    tier: 'paid' | 'trial' | 'free',
+    plan: string | null,
+    daysRemaining: number | null,
+    usage: UsageSnapshot | null,
+    quotaState: 'hidden' | 'normal' | 'approaching' | 'exhausted',
+  ): string {
+    // Compact text for the top-bar pill (≤ 8 Chinese chars or
+    // ~12 Latin chars). Tapping the pill opens settings.
+    if (tier === 'paid') {
+      const planLabel = plan === 'yearly' ? '年付' : plan === 'monthly' ? '月付' : (plan || 'Pro');
+      return `Pro · ${planLabel}`;
+    }
+    if (tier === 'trial') {
+      if (daysRemaining != null && daysRemaining > 0) return `试用 · ${daysRemaining}天`;
+      if (daysRemaining === 0) return '试用 · 今天到期';
+      return '试用中';
+    }
+    // free
+    if (quotaState === 'exhausted') return 'Free · 已用完';
+    if (quotaState === 'approaching') return 'Free · 接近上限';
+    if (quotaState === 'normal' && usage) return `Free · ${usage.used}/${usage.limit}`;
+    return 'Free';
+  },
 
   formatTime(iso: string): string {
     if (!iso) return '';

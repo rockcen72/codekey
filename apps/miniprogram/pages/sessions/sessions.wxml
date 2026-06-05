@@ -5,6 +5,16 @@
       <text class="brand-sub">CodeKey AI 远程控制</text>
     </view>
     <view class="top-actions">
+      <!-- Subscription pill (P4.1). Hidden when not authenticated
+           or when the server call failed — those users can still
+           reach settings via the gear icon. -->
+      <view
+        wx:if="{{subTier !== 'unauthenticated' && subTier !== 'load_failed'}}"
+        class="sub-pill {{subPillClass}}"
+        bindtap="goToSettingsFromPill"
+      >
+        <text>{{subPillText}}</text>
+      </view>
       <view class="conn-pill {{wsConnected ? 'online' : 'offline'}}">
         <view class="conn-dot"></view>
         <text>{{wsConnected ? '已连接' : '离线'}}</text>
@@ -57,7 +67,7 @@
             <view class="card-top">
               <view class="card-title-row">
                 <text class="session-title ellipsis">{{item.displayTitle}}</text>
-                <text class="agent-chip">{{agentLabel(item.agent_type)}}</text>
+                <text class="agent-chip">{{item.displayAgentLabel}}</text>
               </view>
               <view class="card-time-wrap">
                 <text class="session-time">{{item.displayTime}}</text>

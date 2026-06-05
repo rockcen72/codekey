@@ -23,6 +23,33 @@
 .icon-btn-wrap { width: 44rpx; height: 44rpx; display: flex; align-items: center; justify-content: center; border-radius: var(--ck-radius-full); border: 1rpx solid var(--ck-border); background: var(--ck-surface); }
 .icon-btn { font-size: 26rpx; color: var(--ck-muted); }
 
+/* ── Subscription pill (top bar, P4.1) ──
+   Shape mirrors .conn-pill; tappable → opens settings.
+   5 visual variants driven by subQuotaState + subTier:
+     paid / trial      → blue tint  (.sub-pill-tier-paid, .sub-pill-tier-trial)
+     free + normal     → neutral    (.sub-pill-normal, .sub-pill-tier-free)
+     free + approaching → amber     (.sub-pill-approaching)
+     free + exhausted  → red        (.sub-pill-exhausted) */
+.sub-pill {
+  height: 44rpx;
+  display: flex;
+  align-items: center;
+  padding: 0 14rpx;
+  border-radius: var(--ck-radius-full);
+  font-size: 22rpx;
+  font-weight: 600;
+  white-space: nowrap;
+  max-width: 220rpx;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sub-pill-tier-paid,
+.sub-pill-tier-trial { color: var(--ck-primary); background: rgba(37, 99, 235, 0.08); border: 1rpx solid rgba(37, 99, 235, 0.25); }
+.sub-pill-tier-free,
+.sub-pill-normal { color: var(--ck-muted); background: var(--ck-surface); border: 1rpx solid var(--ck-border); }
+.sub-pill-approaching { color: var(--ck-warning); background: rgba(217, 119, 6, 0.08); border: 1rpx solid rgba(217, 119, 6, 0.30); }
+.sub-pill-exhausted { color: var(--ck-danger); background: rgba(220, 38, 38, 0.08); border: 1rpx solid rgba(220, 38, 38, 0.30); }
+
 /* ── Agent tabs ── */
 
 .tabs-scroll { padding: 4rpx 28rpx 12rpx; white-space: nowrap; }
