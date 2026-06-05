@@ -22,6 +22,7 @@ function userRequest<T>(method: HttpMethod, url: string, data?: any): Promise<T>
       method,
       url,
       data,
+      timeout: 10000,
       header: {
         'Content-Type': 'application/json',
         ...(token ? { 'Authorization': `Bearer ${token}` } : {}),

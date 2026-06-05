@@ -27,6 +27,7 @@ function userRequest<T>(method: HttpMethod, url: string, data?: any): Promise<T>
       method,
       url,
       data,
+      timeout: 10000,
       header: {
         'Content-Type': 'application/json',
         ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
@@ -51,6 +52,7 @@ function publicRequest<T>(method: HttpMethod, url: string, data?: any): Promise<
       method,
       url,
       data,
+      timeout: 10000,
       header: { 'Content-Type': 'application/json' },
       success(res: any) {
         if (res.statusCode >= 400) {

@@ -104,7 +104,7 @@ Page({
             filteredSessions: this.data.filteredSessions.map(fadePatch),
           });
           delete _summaryTimers[payload.sessionId!];
-        }, 6000);
+        }, 12000);
       } else {
         this.fetchSessions();
       }

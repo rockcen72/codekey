@@ -120,7 +120,7 @@
 .card-time-wrap { display: flex; align-items: center; gap: 6rpx; flex-shrink: 0; }
 .session-time { font-size: 20rpx; color: var(--ck-subtle); white-space: nowrap; }
 .session-subtitle { display: block; margin-top: 6rpx; font-size: 24rpx; color: var(--ck-muted); }
-.session-summary { display: block; min-height: 30rpx; margin-top: 4rpx; font-size: 22rpx; color: var(--ck-text); line-height: 1.4; overflow: hidden; transition: opacity 0.8s ease; }
+.session-summary { display: block; min-height: 36rpx; margin-top: 6rpx; font-size: 26rpx; color: var(--ck-text); line-height: 1.4; overflow: hidden; transition: opacity 0.8s ease; }
 .sv { opacity: 1; }
 .sh { opacity: 0; }
 .card-footer { display: flex; align-items: center; gap: 8rpx; margin-top: 12rpx; }

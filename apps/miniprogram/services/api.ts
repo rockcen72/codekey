@@ -14,6 +14,7 @@ function request<T>(method: HttpMethod, url: string, data?: any): Promise<T> {
       method,
       url,
       data,
+      timeout: 10000,
       header: {
         'Content-Type': 'application/json',
         ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
@@ -82,7 +83,7 @@ export function createApi(serverUrl: string) {
     },
 
     getSessions(): Promise<Session[]> {
-      return request<Session[]>('GET', `${api}/sessions`);
+      return request<Session[]>('GET', `${api}/sessions?history=1`);
     },
 
     getSession(id: string): Promise<Session> {
