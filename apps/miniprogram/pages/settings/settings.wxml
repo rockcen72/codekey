@@ -18,9 +18,13 @@
       <text class="label">当前为 Free</text>
       <text class="value">本月初级版</text>
     </view>
-    <view class="info-row" wx:else>
+    <view class="info-row" wx:elif="{{tier === 'unauthenticated'}}">
       <text class="label">未登录</text>
       <text class="value">配对设备后查看</text>
+    </view>
+    <view class="info-row" wx:elif="{{tier === 'load_failed'}}">
+      <text class="label">加载失败</text>
+      <text class="value">返回重试</text>
     </view>
 
     <view class="redeem-row">
@@ -36,7 +40,7 @@
         class="redeem-btn"
         bindtap="submitRedeem"
         loading="{{redeemBusy}}"
-        disabled="{{redeemBusy || !redeemInput}}"
+        disabled="{{redeemBusy || !redeemInput || tier === 'unauthenticated'}}"
       >兑换</button>
     </view>
   </view>

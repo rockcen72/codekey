@@ -4,7 +4,7 @@ import { createHash } from 'node:crypto';
 import { userTokenAuth } from '../auth/user-middleware.js';
 import { signUserJwt } from '../auth/jwt.js';
 import { rateLimit } from '../middleware/rate-limit.js';
-import { MVP_PRODUCT } from '../services/subscription/index.js';
+import { MVP_PRODUCT, invalidateEntitlement } from '../services/subscription/index.js';
 
 /**
  * Auth routes — Phase 1 of the subscription system.
@@ -200,11 +200,21 @@ export function authRoutes(sql: postgres.Sql) {
       // makes this a no-op on subsequent claims — the trial window
       // is set at first bind and never extended. (To extend, the
       // user redeems a code via /api/v1/redeem.)
-      await sql`
+      const trialInserted = await sql<{ user_id: number }[]>`
         INSERT INTO trial_claims (user_id, product)
         VALUES (${userId}, ${MVP_PRODUCT})
         ON CONFLICT (user_id, product) DO NOTHING
+        RETURNING user_id
       `;
+
+      // Invalidate the entitlement cache whenever a new trial row
+      // is actually written. Without this, a user who calls
+      // /subscription BEFORE claim-device would see tier='free'
+      // for up to 30s after the trial is granted, and the mini
+      // program would not show the "Pro 试用中" card. (Review #7/#10.)
+      if (trialInserted[0]) {
+        invalidateEntitlement(userId, MVP_PRODUCT);
+      }
 
       return {
         success: true,

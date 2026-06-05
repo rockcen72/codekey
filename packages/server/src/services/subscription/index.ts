@@ -11,6 +11,14 @@
 //                    send an approval?") from hammering the DB. The cache is
 //                    process-local and best-effort: stale reads for up to 30s
 //                    are acceptable; correctness comes from the DB writes.
+//
+// Important: redeemCode() must be called OUTSIDE any caller-provided
+// transaction. The product-mismatch path throws a sentinel error to
+// roll back the internal transaction; if the caller is wrapping the
+// call in a larger transaction, that throw will propagate and roll
+// back the outer transaction too. The HTTP routes are the only
+// callers and they do not wrap, so the current call sites are safe;
+// do not introduce a wrapper without auditing this. (Review #3.)
 
 import type postgres from "postgres";
 import { CODE_PREFIX, generateRedeemCode } from "./codes.js";
@@ -18,14 +26,19 @@ import { type Entitlement, type Tier, resolveTier } from "./tier.js";
 
 const ENTITLEMENT_CACHE_TTL_MS = 30_000;
 
-export const MVP_PRODUCT = "codekey" as const;
+export const MVP_PRODUCT = 'codekey' as const;
 export type Product = typeof MVP_PRODUCT;
 const VALID_PRODUCTS: readonly Product[] = [MVP_PRODUCT];
 
 export function isValidProduct(p: string): p is Product {
-	return (VALID_PRODUCTS as readonly string[]).includes(p);
+  return (VALID_PRODUCTS as readonly string[]).includes(p);
 }
 
+// Process-local LRU-free TTL cache, keyed by `${userId}:${product}`.
+// Single-instance deployments are fine; horizontally-scaled
+// deployments would let different instances serve stale-but-different
+// entitlements for up to 30s. Acceptable for Phase 2; revisit if/when
+// we add a second relay instance. (Review #5.)
 const cache = new Map<string, { value: Entitlement; expiresAt: number }>();
 
 function cacheKey(userId: number, product: string): string {

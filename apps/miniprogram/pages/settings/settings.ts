@@ -1,12 +1,19 @@
 import { getDeviceId, clearAuth, getUserToken } from '../../services/storage';
-import { getSubscription, redeemCode, type SubscriptionStatus, type Tier } from '../../services/subscription';
+import { getSubscription, redeemCode, type Tier } from '../../services/subscription';
 import { ensureUserToken } from '../../services/auth';
 
 const app = getApp<any>();
 
+// UI state for the subscription card. 'paid' / 'trial' / 'free'
+// mirror the server's Entitlement.tier; 'unauthenticated' and
+// 'load_failed' are local-only states we surface so the user can
+// tell the difference between "not logged in yet" and "the server
+// call failed" (review #17).
+type SubscriptionUiState = Tier | 'unauthenticated' | 'load_failed';
+
 interface PageData {
   deviceId: string;
-  tier: Tier | 'unknown';
+  tier: SubscriptionUiState;
   plan: string;
   expiresAt: string; // formatted for display, or ''
   redeemInput: string;
@@ -17,7 +24,7 @@ interface PageData {
 Page({
   data: {
     deviceId: '',
-    tier: 'unknown',
+    tier: 'unauthenticated',
     plan: '',
     expiresAt: '',
     redeemInput: '',
@@ -66,13 +73,14 @@ Page({
     try {
       await ensureUserToken();
     } catch (err) {
-      // Not logged in / no device yet — just hide the subscription
-      // section. The user can pair a device first to enable it.
-      this.setData({ tier: 'unknown', loaded: true });
+      // Not logged in (no clientToken yet, or the user is not
+      // bound to this device) — surface as unauthenticated so the
+      // UI can show "未登录" instead of a generic error.
+      this.setData({ tier: 'unauthenticated', loaded: true });
       return;
     }
     if (!getUserToken()) {
-      this.setData({ tier: 'unknown', loaded: true });
+      this.setData({ tier: 'unauthenticated', loaded: true });
       return;
     }
     try {
@@ -85,7 +93,10 @@ Page({
       });
     } catch (err) {
       console.warn('[settings] getSubscription failed:', err);
-      this.setData({ tier: 'unknown', loaded: true });
+      // Server reachable (we have a token) but the call failed —
+      // most likely a network blip. Tell the user it's a load
+      // failure, not an auth issue, so they know to retry.
+      this.setData({ tier: 'load_failed', loaded: true });
     }
   },
 

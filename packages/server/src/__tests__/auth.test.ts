@@ -428,4 +428,167 @@ describeDb('Auth API (Phase 1)', () => {
     });
     expect(res.statusCode).toBe(400);
   });
+
+  // ── trial_claims auto-grant on claim-device ───────────────
+
+  it('claim-device: inserts a 14-day trial_claims row on first bind', async () => {
+    // Setup: device + client token + user (login)
+    const pair = await app.inject({
+      method: 'POST',
+      url: '/api/v1/devices/pair',
+      payload: { deviceSecretHash: 'f'.repeat(64), deviceName: 'claim-pc-trial' },
+    });
+    const { code, deviceId } = JSON.parse(pair.payload);
+    cleanupDeviceIds.push(deviceId);
+
+    const confirm = await app.inject({
+      method: 'POST',
+      url: '/api/v1/devices/confirm',
+      payload: { code },
+    });
+    const { clientToken } = JSON.parse(confirm.payload);
+
+    const openid = `trial-user-${Date.now()}-${Math.random()}`;
+    const login = await app.inject({
+      method: 'POST',
+      url: '/api/v1/auth/wx-login',
+      payload: { code: 'lt', provider: 'wechat', openid },
+    });
+    const { token, userId } = JSON.parse(login.payload);
+    cleanupUserIds.push(userId);
+
+    // Before claim: no trial row
+    const [before] = await sql<{ count: number }[]>`
+      SELECT COUNT(*)::int AS count FROM trial_claims
+      WHERE user_id = ${userId} AND product = 'codekey'
+    `;
+    expect(before.count).toBe(0);
+
+    // Claim
+    const claim = await app.inject({
+      method: 'POST',
+      url: '/api/v1/auth/claim-device',
+      headers: { authorization: `Bearer ${token}` },
+      payload: { clientToken },
+    });
+    expect(claim.statusCode).toBe(200);
+
+    // After claim: exactly one trial row, expires_at ≈ started_at + 14 days
+    const [trial] = await sql<{ started_at: Date; expires_at: Date }[]>`
+      SELECT started_at, expires_at FROM trial_claims
+      WHERE user_id = ${userId} AND product = 'codekey'
+    `;
+    expect(trial).toBeDefined();
+    const fourteenDaysMs = 14 * 86_400_000;
+    const span = trial.expires_at.getTime() - trial.started_at.getTime();
+    // Allow ±60s drift for SQL DEFAULT now() computed at INSERT time.
+    expect(Math.abs(span - fourteenDaysMs)).toBeLessThan(60_000);
+  });
+
+  it('claim-device: does not re-insert trial_claims on same-user re-claim', async () => {
+    const pair = await app.inject({
+      method: 'POST',
+      url: '/api/v1/devices/pair',
+      payload: { deviceSecretHash: 'g'.repeat(64), deviceName: 'claim-pc-trial-2' },
+    });
+    const { code, deviceId } = JSON.parse(pair.payload);
+    cleanupDeviceIds.push(deviceId);
+
+    const confirm = await app.inject({
+      method: 'POST',
+      url: '/api/v1/devices/confirm',
+      payload: { code },
+    });
+    const { clientToken } = JSON.parse(confirm.payload);
+
+    const openid = `trial-replay-${Date.now()}-${Math.random()}`;
+    const login = await app.inject({
+      method: 'POST',
+      url: '/api/v1/auth/wx-login',
+      payload: { code: 'lr', provider: 'wechat', openid },
+    });
+    const { token, userId } = JSON.parse(login.payload);
+    cleanupUserIds.push(userId);
+
+    // First claim: trial row created
+    const claim1 = await app.inject({
+      method: 'POST',
+      url: '/api/v1/auth/claim-device',
+      headers: { authorization: `Bearer ${token}` },
+      payload: { clientToken },
+    });
+    expect(claim1.statusCode).toBe(200);
+
+    // Re-claim (same user, same device): must NOT create a second trial row
+    const claim2 = await app.inject({
+      method: 'POST',
+      url: '/api/v1/auth/claim-device',
+      headers: { authorization: `Bearer ${token}` },
+      payload: { clientToken },
+    });
+    expect(claim2.statusCode).toBe(200);
+
+    const [row] = await sql<{ count: number }[]>`
+      SELECT COUNT(*)::int AS count FROM trial_claims
+      WHERE user_id = ${userId} AND product = 'codekey'
+    `;
+    expect(row.count).toBe(1);
+  });
+
+  it('claim-device: invalidates entitlement cache so /subscription reflects the new trial', async () => {
+    // This is the load-bearing test for review #7/#10. Without the
+    // invalidateEntitlement() call in claim-device, the user's
+    // cached 'free' entitlement (from a prior /subscription call)
+    // would survive the trial insert for up to 30s — so the next
+    // /subscription would still return 'free' and the mini program's
+    // "Pro 试用中" card would be wrong.
+    const pair = await app.inject({
+      method: 'POST',
+      url: '/api/v1/devices/pair',
+      payload: { deviceSecretHash: 'h'.repeat(64), deviceName: 'claim-pc-cache' },
+    });
+    const { code, deviceId } = JSON.parse(pair.payload);
+    cleanupDeviceIds.push(deviceId);
+
+    const confirm = await app.inject({
+      method: 'POST',
+      url: '/api/v1/devices/confirm',
+      payload: { code },
+    });
+    const { clientToken } = JSON.parse(confirm.payload);
+
+    const openid = `cache-test-${Date.now()}-${Math.random()}`;
+    const login = await app.inject({
+      method: 'POST',
+      url: '/api/v1/auth/wx-login',
+      payload: { code: 'lc', provider: 'wechat', openid },
+    });
+    const { token, userId } = JSON.parse(login.payload);
+    cleanupUserIds.push(userId);
+
+    // Prime the cache: /subscription with no trial yet → tier='free'
+    const sub1 = await app.inject({
+      method: 'GET',
+      url: '/api/v1/subscription',
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect(JSON.parse(sub1.payload).tier).toBe('free');
+
+    // Claim-device inserts trial_claims AND must invalidate the cache
+    const claim = await app.inject({
+      method: 'POST',
+      url: '/api/v1/auth/claim-device',
+      headers: { authorization: `Bearer ${token}` },
+      payload: { clientToken },
+    });
+    expect(claim.statusCode).toBe(200);
+
+    // /subscription now must reflect the trial (no 30s wait)
+    const sub2 = await app.inject({
+      method: 'GET',
+      url: '/api/v1/subscription',
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect(JSON.parse(sub2.payload).tier).toBe('trial');
+  });
 });
