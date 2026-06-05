@@ -113,6 +113,7 @@
 .card-time-wrap { display: flex; align-items: center; gap: 6rpx; flex-shrink: 0; }
 .session-time { font-size: 20rpx; color: var(--ck-subtle); white-space: nowrap; }
 .session-subtitle { display: block; margin-top: 6rpx; font-size: 24rpx; color: var(--ck-muted); }
+.session-summary { display: block; margin-top: 4rpx; font-size: 22rpx; color: var(--ck-primary); opacity: 0.85; }
 .card-footer { display: flex; align-items: center; gap: 8rpx; margin-top: 12rpx; }
 .session-id { font-size: 18rpx; color: var(--ck-subtle); }
 

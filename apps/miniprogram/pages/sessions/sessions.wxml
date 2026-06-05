@@ -74,6 +74,7 @@
               </view>
             </view>
             <text class="session-subtitle ellipsis">{{item.displaySubtitle}}</text>
+            <text class="session-summary ellipsis" wx:if="{{item.lastSummary}}">{{item.lastSummary}}</text>
             <view class="card-footer">
               <text class="session-id mono" wx:if="{{item.displayClaudeId}}">{{item.displayClaudeId}}</text>
               <view wx:if="{{item.hasPending}}" class="pending-badge">

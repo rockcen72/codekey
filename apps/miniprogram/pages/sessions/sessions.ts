@@ -77,13 +77,19 @@ Page({
 
   subscribeWs() {
     app.initWs();
-    this._onEventPushBound = (payload: any) => {
-      if (payload.eventType === 'task_complete') {
+    this._onEventPushBound = async (payload: any) => {
+      if (payload.eventType === 'task_complete' && payload.sessionId) {
         const summary = payload.summaryShort || payload.summary || '';
         const snippet = summary.length > 80 ? summary.slice(0, 80) + '...' : summary;
-        wx.showToast({ title: '任务完成: ' + snippet, icon: 'none', duration: 3000 });
+        await this.fetchSessions().catch(() => {});
+        const patch = (s: any) => s.id === payload.sessionId ? { ...s, lastSummary: snippet } : s;
+        this.setData({
+          sessions: this.data.sessions.map(patch),
+          filteredSessions: this.data.filteredSessions.map(patch),
+        });
+      } else {
+        this.fetchSessions();
       }
-      this.fetchSessions();
     };
     this._onFetchSessionsBound = () => this.fetchSessions();
     this._onWsConnectedBound = () => { this.setData({ wsConnected: true }); this.fetchSessions(); };
