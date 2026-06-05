@@ -165,6 +165,77 @@ export async function initDb(url: string) {
     CREATE INDEX IF NOT EXISTS idx_device_bindings_user_id ON device_bindings(user_id) WHERE unbound_at IS NULL
   `;
 
+  // ── Subscription system (Phase 2: redeem codes + trial) ────
+
+  // redeem_codes: pre-generated, one-shot redemption codes. Only
+  // the SHA-256 of the plaintext is stored — the plaintext is shown
+  // to the user exactly once (at mint time) and never again.
+  await sql`
+    CREATE TABLE IF NOT EXISTS redeem_codes (
+      code_hash     VARCHAR(64)  PRIMARY KEY,
+      product       VARCHAR(32)  NOT NULL,
+      plan          VARCHAR(16)  NOT NULL,
+      duration_days INTEGER      NOT NULL,
+      status        VARCHAR(16)  NOT NULL DEFAULT 'unused',
+      code_prefix   VARCHAR(8),
+      code_last4    VARCHAR(4),
+      batch_id      VARCHAR(32),
+      note          VARCHAR(128),
+      used_at       TIMESTAMPTZ,
+      used_by       BIGINT       REFERENCES users(id),
+      created_at    TIMESTAMPTZ  NOT NULL DEFAULT now()
+    )
+  `;
+  await sql`CREATE INDEX IF NOT EXISTS idx_rc_product_status ON redeem_codes(product, status)`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_rc_batch ON redeem_codes(batch_id)`;
+
+  // user_subscriptions: one row per (user, product). Source describes
+  // how the subscription was acquired; status (active/expired) is
+  // derived from expires_at > now().
+  await sql`
+    CREATE TABLE IF NOT EXISTS user_subscriptions (
+      user_id     BIGINT       NOT NULL REFERENCES users(id),
+      product     VARCHAR(32)  NOT NULL,
+      plan        VARCHAR(16),
+      expires_at  TIMESTAMPTZ  NOT NULL,
+      source      VARCHAR(24),
+      updated_at  TIMESTAMPTZ  NOT NULL DEFAULT now(),
+      PRIMARY KEY (user_id, product)
+    )
+  `;
+
+  // redeem_logs: append-only audit of every redemption attempt that
+  // actually changed expires_at. Failed attempts (invalid/used code)
+  // are not logged here — those are visible via 4xx metrics.
+  await sql`
+    CREATE TABLE IF NOT EXISTS redeem_logs (
+      id                BIGSERIAL    PRIMARY KEY,
+      code_hash         VARCHAR(64)  NOT NULL,
+      user_id           BIGINT       NOT NULL REFERENCES users(id),
+      product           VARCHAR(32)  NOT NULL,
+      plan              VARCHAR(16),
+      duration_days     INTEGER,
+      before_expires_at TIMESTAMPTZ,
+      after_expires_at  TIMESTAMPTZ,
+      created_at        TIMESTAMPTZ  NOT NULL DEFAULT now()
+    )
+  `;
+  await sql`CREATE INDEX IF NOT EXISTS idx_rl_created ON redeem_logs(created_at)`;
+
+  // trial_claims: one row per (user, product) at most. Inserted
+  // exactly once on the user's first successful claim-device, and
+  // never again (ON CONFLICT DO NOTHING). The 14-day window is
+  // encoded in the DEFAULT below; getEntitlement() reads it directly.
+  await sql`
+    CREATE TABLE IF NOT EXISTS trial_claims (
+      user_id     BIGINT       NOT NULL REFERENCES users(id),
+      product     VARCHAR(32)  NOT NULL,
+      started_at  TIMESTAMPTZ  NOT NULL DEFAULT now(),
+      expires_at  TIMESTAMPTZ  NOT NULL DEFAULT now() + interval '14 days',
+      PRIMARY KEY (user_id, product)
+    )
+  `;
+
   console.log('Database migrations complete');
   return sql;
 }

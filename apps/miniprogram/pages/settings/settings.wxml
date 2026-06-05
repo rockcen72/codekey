@@ -4,6 +4,43 @@
     <text class="title">设置</text>
   </view>
 
+  <view class="section" wx:if="{{loaded}}">
+    <text class="section-title">订阅</text>
+    <view class="info-row" wx:if="{{tier === 'paid'}}">
+      <text class="label">Pro 已开通</text>
+      <text class="value">有效期至 {{expiresAt}}</text>
+    </view>
+    <view class="info-row" wx:elif="{{tier === 'trial'}}">
+      <text class="label">Pro 试用中</text>
+      <text class="value">{{expiresAt}} 到期</text>
+    </view>
+    <view class="info-row" wx:elif="{{tier === 'free'}}">
+      <text class="label">当前为 Free</text>
+      <text class="value">本月初级版</text>
+    </view>
+    <view class="info-row" wx:else>
+      <text class="label">未登录</text>
+      <text class="value">配对设备后查看</text>
+    </view>
+
+    <view class="redeem-row">
+      <input
+        class="redeem-input"
+        placeholder="输入兑换码 (CK-XXXX-XXXX-XXXX)"
+        value="{{redeemInput}}"
+        bindinput="onRedeemInput"
+        maxlength="20"
+        confirm-type="done"
+      />
+      <button
+        class="redeem-btn"
+        bindtap="submitRedeem"
+        loading="{{redeemBusy}}"
+        disabled="{{redeemBusy || !redeemInput}}"
+      >兑换</button>
+    </view>
+  </view>
+
   <view class="section">
     <text class="section-title">已绑定设备</text>
     <view class="info-row">
