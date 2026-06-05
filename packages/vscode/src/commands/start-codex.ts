@@ -1,6 +1,13 @@
 import * as vscode from 'vscode';
 import { existsSync } from 'node:fs';
-import { CodexAppServerClient, type ServerRequestMessage, detectPlatform } from '@codekey/shared/bridge';
+import {
+  CodexAppServerClient,
+  type InputQuestion,
+  type ServerRequestMessage,
+  detectPlatform,
+  formatInputRequiredEvent,
+  parseInputReply,
+} from '@codekey/shared/bridge';
 import { resolveCodexBinaryForVSCode } from '../services/codex-binary-resolver.js';
 import { BridgeStatusService } from '../services/bridge-status.js';
 import { log, debug } from '../log.js';
@@ -47,6 +54,7 @@ export async function startCodexSession(context: vscode.ExtensionContext): Promi
     return;
   }
 
+  const pendingInputs = new Map<string, InputQuestion[]>();
   const client = new CodexAppServerClient({
     binarySearch: {
       configuredPath: binaryPath,
@@ -70,11 +78,17 @@ export async function startCodexSession(context: vscode.ExtensionContext): Promi
       }).catch(err => debug('[Codex] failed to register approval with bridge:', err));
     },
     onInput: (req: ServerRequestMessage) => {
-      debug('[Codex] input request (MVP: not wired to mini program, empty response sent):', req.id);
-      vscode.window.showWarningMessage('Codex needs input — check the Codex terminal');
-      client.respondInput(req.id, {});
+      const card = formatInputRequiredEvent(req, 'codex');
+      const correlationId = String(req.id);
+      pendingInputs.set(correlationId, card.questions);
+      fetch(`${bridgeUrl()}/v1/codex/event`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ eventType: 'input_required', data: card }),
+      }).catch(err => debug('[Codex] failed to register input request with bridge:', err));
     },
     onExpired: (reqId, reason) => {
+      pendingInputs.delete(String(reqId));
       log('[Codex] request expired:', reqId, reason);
     },
   });
@@ -145,8 +159,19 @@ export async function startCodexSession(context: vscode.ExtensionContext): Promi
         // Poll decisions (approval responses)
         const decResp = await fetch(`${bridgeUrl()}/v1/codex/decisions`);
         if (decResp.ok) {
-          const { decisions } = await decResp.json() as { decisions: { correlationId: string; decision: string }[] };
+          const { decisions } = await decResp.json() as {
+            decisions: { correlationId: string; decision: string; message?: string }[];
+          };
           for (const d of decisions) {
+            const pendingInputQuestions = pendingInputs.get(d.correlationId);
+            if (pendingInputQuestions) {
+              if (d.decision === 'reply') {
+                client.respondInput(d.correlationId, parseInputReply(d.message || '', pendingInputQuestions));
+                pendingInputs.delete(d.correlationId);
+                debug('[Codex] applied input reply:', d.correlationId);
+              }
+              continue;
+            }
             const codexDecision = d.decision === 'approve' ? 'approve' as const : d.decision === 'deny' ? 'deny' as const : 'pause' as const;
             client.respondApproval(d.correlationId, codexDecision);
             debug('[Codex] applied decision:', d.correlationId, d.decision);
@@ -175,6 +200,7 @@ export async function startCodexSession(context: vscode.ExtensionContext): Promi
     context.subscriptions.push({
       dispose: () => {
         clearInterval(pollTimer);
+        pendingInputs.clear();
         client.stop();
       },
     });
