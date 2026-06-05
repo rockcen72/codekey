@@ -62,11 +62,11 @@
         <view class="session-card agent-{{item.agentClass}} {{item.hasPending ? 'has-pending' : ''}} {{item.connected ? 'connected' : ''}}"
               data-id="{{item.id}}"
               bindtap="openSession">
-          <view class="conn-bar {{item.connected ? 'online' : 'offline'}} agent-{{item.agentClass}} {{item._justCompleted ? 'task-pulse' : ''}}"></view>
+          <view class="conn-bar {{item.connected ? 'online' : 'offline'}} agent-{{item.agentClass}}"></view>
           <view class="card-body">
             <view class="card-top">
               <view class="card-title-row">
-                <text class="session-title ellipsis">{{item.displayTitle}}</text>
+                <text class="session-title ellipsis {{item._taskHighlight ? 'title-sweep' : ''}}">{{item.displayTitle}}</text>
                 <text class="agent-chip agent-{{item.agentClass}}">{{item.displayAgentLabel}}</text>
               </view>
               <view class="card-time-wrap">
@@ -74,6 +74,7 @@
               </view>
             </view>
             <text class="session-subtitle ellipsis">{{item.displaySubtitle}}</text>
+            <text class="session-summary ellipsis" wx:if="{{item.lastSummary}}">{{item.lastSummary}}</text>
             <view class="card-footer">
               <text class="session-id mono" wx:if="{{item.displayClaudeId}}">{{item.displayClaudeId}}</text>
               <view wx:if="{{item.hasPending}}" class="pending-badge">

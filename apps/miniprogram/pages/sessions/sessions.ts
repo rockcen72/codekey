@@ -85,9 +85,10 @@ Page({
     app.initWs();
     this._onEventPushBound = async (payload: any) => {
       if (payload.eventType === 'task_complete' && payload.sessionId) {
+        const summary = payload.summaryShort || payload.summary || '';
+        const snippet = summary.length > 80 ? summary.slice(0, 80) + '...' : summary;
         await this.fetchSessions().catch(() => {});
-        // Brief visual pulse on the connector bar — reset the animation
-        const patch = (s: any) => s.id === payload.sessionId ? { ...s, _justCompleted: true } : s;
+        const patch = (s: any) => s.id === payload.sessionId ? { ...s, lastSummary: snippet, _taskHighlight: true } : s;
         this.setData({
           sessions: this.data.sessions.map(patch),
           filteredSessions: this.data.filteredSessions.map(patch),
@@ -96,7 +97,7 @@ Page({
           clearTimeout(_summaryTimers[payload.sessionId]);
         }
         _summaryTimers[payload.sessionId] = setTimeout(() => {
-          const reset = (s: any) => s.id === payload.sessionId ? { ...s, _justCompleted: false } : s;
+          const reset = (s: any) => s.id === payload.sessionId ? { ...s, _taskHighlight: false } : s;
           this.setData({
             sessions: this.data.sessions.map(reset),
             filteredSessions: this.data.filteredSessions.map(reset),
