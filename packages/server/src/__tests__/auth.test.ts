@@ -271,10 +271,12 @@ describeDb('Auth API (Phase 1)', () => {
   });
 
   it('wx-login: concurrent same openid yields exactly one new user', async () => {
-    // Two near-simultaneous requests with the same openid. The CTE +
-    // ON CONFLICT path serialises on the (provider, openid) PK, so
-    // exactly one should report isNew=true and both should return
-    // the same userId.
+    // Two near-simultaneous requests with the same openid. The
+    // transaction + ON CONFLICT fallback path serialises on the
+    // (provider, openid) PK: exactly one transaction's identity
+    // INSERT wins, the other's identity INSERT hits ON CONFLICT
+    // and rolls back its users row. Both callers should observe
+    // the same userId, with exactly one reporting isNew=true.
     const sharedOpenid = `race-${Date.now()}-${Math.random()}`;
 
     const [a, b] = await Promise.all([
@@ -297,6 +299,62 @@ describeDb('Auth API (Phase 1)', () => {
     expect(aBody.userId).toBe(bBody.userId);
     expect([aBody.isNew, bBody.isNew].filter(Boolean).length).toBe(1);
     cleanupUserIds.push(aBody.userId);
+  });
+
+  it('wx-login: repeat logins do not create orphan users rows', async () => {
+    // The early CTE design materialised a fresh users row on every
+    // call (the CTE always inserted, the conflict was only checked
+    // on the auth_identities step). After N repeat logins, the
+    // users table had N orphan rows. The current implementation
+    // SELECTs first and only INSERTs on the first-time path, so N
+    // repeat logins should leave exactly 1 users row + 1 identity
+    // row for the openid.
+    const openid = `no-orphan-${Date.now()}-${Math.random()}`;
+    const REPEATS = 5;
+    let userId: number | undefined;
+
+    for (let i = 0; i < REPEATS; i++) {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/v1/auth/wx-login',
+        payload: { code: `no${i}`, provider: 'wechat', openid },
+      });
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.payload);
+      if (i === 0) {
+        expect(body.isNew).toBe(true);
+        userId = body.userId;
+      } else {
+        expect(body.isNew).toBe(false);
+        expect(body.userId).toBe(userId);
+      }
+    }
+
+    const finalUserId = userId!;
+    cleanupUserIds.push(finalUserId);
+
+    // users: exactly one row for this userId
+    const [userCount] = await sql<{ count: number }[]>`
+      SELECT COUNT(*)::int AS count FROM users WHERE id = ${finalUserId}
+    `;
+    expect(userCount.count).toBe(1);
+
+    // auth_identities: exactly one row for (provider, openid)
+    const [identCount] = await sql<{ count: number }[]>`
+      SELECT COUNT(*)::int AS count
+      FROM auth_identities
+      WHERE provider = 'wechat' AND openid = ${openid}
+    `;
+    expect(identCount.count).toBe(1);
+
+    // Cross-check: no orphan users exist anywhere in the DB.
+    const [orphanCount] = await sql<{ count: number }[]>`
+      SELECT COUNT(*)::int AS count FROM users u
+      WHERE NOT EXISTS (
+        SELECT 1 FROM auth_identities ai WHERE ai.user_id = u.id
+      )
+    `;
+    expect(orphanCount.count).toBe(0);
   });
 
   it('claim-device: 404 on invalid clientToken', async () => {

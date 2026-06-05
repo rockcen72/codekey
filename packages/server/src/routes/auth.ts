@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto';
 import { userTokenAuth } from '../auth/user-middleware.js';
 import { signUserJwt } from '../auth/jwt.js';
 import { rateLimit } from '../middleware/rate-limit.js';
+import { MVP_PRODUCT } from '../services/subscription/index.js';
 
 /**
  * Auth routes — Phase 1 of the subscription system.
@@ -75,45 +76,69 @@ export function authRoutes(sql: postgres.Sql) {
         unionid = wx.unionid;
       }
 
-      // Atomic upsert via a single statement:
-      //   - CTE inserts a fresh users row
-      //   - INSERT into auth_identities either stores the new user_id
-      //     or hits the (provider, openid) PK and does nothing
-      //   - RETURNING is non-empty only on the winner of the race
-      // The CTE's users insert fires even on the loser's path, so a
-      // concurrent login that loses the PK race leaves one orphan
-      // users row. runCleanup() in app.ts reaps those monthly.
+      // First-time vs returning is decided by a quick SELECT, with a
+      // transaction + ON CONFLICT fallback for the very narrow race
+      // where two requests for the same new (provider, openid) both
+      // see "no row" simultaneously. The transaction's loser hits
+      // ON CONFLICT on the identity insert, throws, and the whole
+      // transaction (including its users row) is rolled back — so
+      // we never leave an orphan users row behind. (The earlier CTE
+      // design did: the CTE always materialised a fresh users row
+      // before the conflict check ran.)
       const provider = body.provider === 'feishu' ? 'feishu' : 'wechat';
 
-      const inserted = await sql<{ user_id: number }[]>`
-        WITH new_user AS (
-          INSERT INTO users DEFAULT VALUES RETURNING id
-        )
-        INSERT INTO auth_identities (user_id, provider, openid, unionid)
-        SELECT nu.id, ${provider}, ${openid}, ${unionid ?? null} FROM new_user nu
-        ON CONFLICT (provider, openid) DO NOTHING
-        RETURNING user_id
+      const [existing] = await sql<{ user_id: number }[]>`
+        SELECT user_id FROM auth_identities
+        WHERE provider = ${provider} AND openid = ${openid}
       `;
 
       let userId: number;
       let isNew: boolean;
-      if (inserted[0]) {
-        userId = inserted[0].user_id;
-        isNew = true;
-      } else {
-        const [existing] = await sql<{ user_id: number }[]>`
-          SELECT user_id FROM auth_identities
-          WHERE provider = ${provider} AND openid = ${openid}
-        `;
-        if (!existing) {
-          // Unreachable: if RETURNING is empty the only way is the
-          // ON CONFLICT branch, which means the row existed when we
-          // tried. If it doesn't show up in the follow-up SELECT
-          // either, something deleted it in between; treat as 500.
-          throw new Error('auth_identities row vanished between INSERT and SELECT');
-        }
+      if (existing) {
         userId = existing.user_id;
         isNew = false;
+      } else {
+        try {
+          const result = await sql.begin(async (tx) => {
+            const [u] = await tx<{ id: number }[]>`
+              INSERT INTO users DEFAULT VALUES RETURNING id
+            `;
+            if (!u) throw new Error('users INSERT returned no row');
+            const [ident] = await tx<{ user_id: number }[]>`
+              INSERT INTO auth_identities (user_id, provider, openid, unionid)
+              VALUES (${u.id}, ${provider}, ${openid}, ${unionid ?? null})
+              ON CONFLICT (provider, openid) DO NOTHING
+              RETURNING user_id
+            `;
+            if (!ident) {
+              // Another concurrent request committed first. Throw
+              // to roll back this transaction (which removes the
+              // users row we just inserted) and let the caller
+              // re-read the winner's identity.
+              throw new Error('identity_conflict');
+            }
+            return ident.user_id;
+          });
+          userId = result;
+          isNew = true;
+        } catch (err) {
+          if (err instanceof Error && err.message === 'identity_conflict') {
+            const [winner] = await sql<{ user_id: number }[]>`
+              SELECT user_id FROM auth_identities
+              WHERE provider = ${provider} AND openid = ${openid}
+            `;
+            if (!winner) {
+              // Should be impossible: the winning transaction just
+              // committed. If the row really is gone, something is
+              // deeply wrong (manual delete? bad migration?).
+              throw new Error('auth_identities row vanished after conflict');
+            }
+            userId = winner.user_id;
+            isNew = false;
+          } else {
+            throw err;
+          }
+        }
       }
 
       const token = signUserJwt(userId);
@@ -154,24 +179,38 @@ export function authRoutes(sql: postgres.Sql) {
         ON CONFLICT (device_id) DO NOTHING
         RETURNING device_id
       `;
-      if (inserted[0]) {
-        return { success: true, deviceId };
-      }
+      const isFirstBind = !!inserted[0];
 
       // Conflict: device already has a binding. Read the current
       // owner to decide the response.
-      const [owner] = await sql<{ user_id: number }[]>`
+      const [owner] = isFirstBind ? [] : await sql<{ user_id: number }[]>`
         SELECT user_id FROM device_bindings WHERE device_id = ${deviceId}
       `;
-      if (!owner) {
+      if (!isFirstBind && !owner) {
         // Vanishing race: ON CONFLICT fired but the row is gone.
         // Treat as 500 — the next call will succeed.
         return reply.code(500).send({ error: 'binding_state_inconsistent' });
       }
-      if (owner.user_id === userId) {
-        return { success: true, deviceId, alreadyBound: true };
+      if (!isFirstBind && owner!.user_id !== userId) {
+        return reply.code(403).send({ error: 'device bound to another user' });
       }
-      return reply.code(403).send({ error: 'device bound to another user' });
+
+      // Success path (first bind OR same-user re-claim): auto-claim
+      // a 14-day trial for this (user, product) pair. The ON CONFLICT
+      // makes this a no-op on subsequent claims — the trial window
+      // is set at first bind and never extended. (To extend, the
+      // user redeems a code via /api/v1/redeem.)
+      await sql`
+        INSERT INTO trial_claims (user_id, product)
+        VALUES (${userId}, ${MVP_PRODUCT})
+        ON CONFLICT (user_id, product) DO NOTHING
+      `;
+
+      return {
+        success: true,
+        deviceId,
+        ...(isFirstBind ? {} : { alreadyBound: true }),
+      };
     });
   };
 }
