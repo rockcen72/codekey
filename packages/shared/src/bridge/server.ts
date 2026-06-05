@@ -6,7 +6,7 @@ import { resolve } from 'node:path';
 import { ApprovalBridge, type HookEventBody } from './handler.js';
 import { CodexRelay } from './codex-relay.js';
 import { CodexResumeManager } from './codex-resume-manager.js';
-import type { OpenCodeSessionManager } from './opencode-session-manager.js';
+import { discoverLocalOpenCodeSessions, type OpenCodeSessionManager } from './opencode-session-manager.js';
 import { listRecentClaudeTranscripts, loadConversation } from './claude-transcripts.js';
 
 export interface BridgeConfig {
@@ -642,6 +642,16 @@ function handleRequest(req: IncomingMessage, res: ServerResponse, bridge: Approv
   // Proxies /session from the local OpenCode server (127.0.0.1:4096).
   // Falls back to an empty list when OpenCode is not running.
   if (req.method === 'GET' && url.pathname === '/v1/opencode-sessions') {
+    if (opencodeManager) {
+      opencodeManager.listSessions().then((sessions) => {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: true, sessions }));
+      }).catch(() => {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: true, sessions: discoverLocalOpenCodeSessions() }));
+      });
+      return;
+    }
     const ocUrl = new URL('/session', bridgeConfig?.openCodeUrl || 'http://127.0.0.1:4096');
     console.error('[bridge] opencode-sessions: proxying to %s', ocUrl.href);
     const proxy = httpGet(
@@ -654,10 +664,14 @@ function handleRequest(req: IncomingMessage, res: ServerResponse, bridge: Approv
             const sessions = ocRes.statusCode && ocRes.statusCode < 300 ? JSON.parse(body) as any[] : [];
             console.error('[bridge] opencode-sessions: got %d sessions', sessions.length);
             res.writeHead(200, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ ok: true, sessions }));
+            const byId = new Map(discoverLocalOpenCodeSessions().map((session) => [session.id, session]));
+            for (const session of sessions) {
+              if (session?.id) byId.set(session.id, { ...byId.get(session.id), ...session });
+            }
+            res.end(JSON.stringify({ ok: true, sessions: [...byId.values()] }));
           } catch {
             res.writeHead(200, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ ok: true, sessions: [] }));
+            res.end(JSON.stringify({ ok: true, sessions: discoverLocalOpenCodeSessions() }));
           }
         });
       },
@@ -665,13 +679,13 @@ function handleRequest(req: IncomingMessage, res: ServerResponse, bridge: Approv
     proxy.on('error', (err) => {
       console.error('[bridge] opencode-sessions: proxy failed — %s', err.message);
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ ok: true, sessions: [] }));
+      res.end(JSON.stringify({ ok: true, sessions: discoverLocalOpenCodeSessions() }));
     });
     proxy.on('timeout', () => {
       console.error('[bridge] opencode-sessions: proxy timed out');
       proxy.destroy();
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ ok: true, sessions: [] }));
+      res.end(JSON.stringify({ ok: true, sessions: discoverLocalOpenCodeSessions() }));
     });
     return;
   }
@@ -681,7 +695,7 @@ function handleRequest(req: IncomingMessage, res: ServerResponse, bridge: Approv
     readJsonBody(req, res).then((rawBody) => {
       const body = rawBody as any;
       try {
-        const { sessionId, title } = body;
+        const { sessionId, title, serverSessionId } = body;
         if (!sessionId) { res.writeHead(400); res.end('{}'); return; }
         // Respond immediately — relay registration + history push runs async
         res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -700,14 +714,20 @@ function handleRequest(req: IncomingMessage, res: ServerResponse, bridge: Approv
             }).on('error', () => resolve([])).on('timeout', function(this: any) { this.destroy(); resolve([]); });
           });
         };
-        bridge.attachOpenCodeSession(
-          sessionId,
-          fetchMessages,
-          typeof title === 'string' ? title : undefined,
-          (localId, serverId) => {
-            if (opencodeManager) opencodeManager.registerSession(localId, serverId);
-          },
-        ).catch((err: Error) => {
+        const attach = opencodeManager
+          ? opencodeManager.attachSession(
+              sessionId,
+              typeof title === 'string' ? title : undefined,
+              typeof serverSessionId === 'string' ? serverSessionId : undefined,
+            )
+          : bridge.attachOpenCodeSession(
+              sessionId,
+              fetchMessages,
+              typeof title === 'string' ? title : undefined,
+              undefined,
+              typeof serverSessionId === 'string' ? serverSessionId : undefined,
+            );
+        attach.catch((err: Error) => {
             console.error('[bridge] opencode-attach failed: %s', err.message);
           });
       } catch {
@@ -806,6 +826,28 @@ function handleRequest(req: IncomingMessage, res: ServerResponse, bridge: Approv
 
   if (req.method === 'GET' && url.pathname === '/v1/pending-approvals') {
     const approvals = bridge.getPendingApprovals();
+    // Merge Codex pending entries that aren't in the bridge's list
+    // (Codex uses a separate event path and doesn't register in
+    // pendingByServerEventId).
+    if (codexRelay) {
+      const codexPending = codexRelay.getPendingApprovals();
+      const bridgeIds = new Set(approvals.map(a => a.serverEventId));
+      for (const cp of codexPending) {
+        if (bridgeIds.has(cp.id)) continue;
+        approvals.push({
+          id: cp.id,
+          serverEventId: cp.id,
+          serverSessionId: codexRelay._sessionId() ?? '',
+          claudeSessionId: codexRelay._codexSessionUid() ?? '',
+          agentType: 'codex',
+          command: cp.command,
+          summary: cp.command,
+          toolName: 'Codex',
+          risk: cp.risk as any,
+          createdAt: cp.createdAt,
+        });
+      }
+    }
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ approvals }));
     return;

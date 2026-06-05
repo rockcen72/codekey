@@ -2,10 +2,23 @@ import type { RelayClient } from './relay-client.js';
 
 export class CodexRelay {
   private pendingQueue: { correlationId: string; command: string; risk: string }[] = [];
-  private decisions: { correlationId: string; decision: string }[] = [];
+  private decisions: { correlationId: string; decision: string; message?: string }[] = [];
   private prompts: string[] = [];
   /** Buffered events pushed before session_registered. */
   private pendingEvents: { eventType: string; data: Record<string, unknown> }[] = [];
+  /** Pending approvals + inputs that have been sent to relay but not yet resolved.
+   *  Exposed via getPendingApprovals() so the sidebar shows Codex cards. */
+  private pendingByCorrelationId = new Map<string, {
+    type: 'approval' | 'input';
+    command: string;
+    risk: string;
+    createdAt: number;
+  }>();
+  /** @internal exposed read-only for /v1/pending-approvals merge. */
+  _sessionId(): string | null { return this.sessionId; }
+  /** @internal exposed read-only for /v1/pending-approvals merge. */
+  _codexSessionUid(): string | null { return this.codexSessionUid; }
+
   private sessionId: string | null = null;
   private sessionPending = false;
   /** Resolved when session_registered arrives. */
@@ -19,7 +32,7 @@ export class CodexRelay {
     this.relay = relay;
 
     relay.on('approval_forward', (payload: unknown) => {
-      const fwd = payload as { eventId: string; decision: string; clientEventId?: string | null };
+      const fwd = payload as { eventId: string; decision: string; message?: string; clientEventId?: string | null };
       let correlationId: string | null = null;
       if (fwd.clientEventId && fwd.clientEventId !== fwd.eventId) {
         correlationId = fwd.clientEventId;
@@ -27,7 +40,8 @@ export class CodexRelay {
         correlationId = fwd.eventId;
       }
       if (correlationId) {
-        this.decisions.push({ correlationId, decision: fwd.decision });
+        this.decisions.push({ correlationId, decision: fwd.decision, message: fwd.message });
+        this.pendingByCorrelationId.delete(correlationId);
       }
     });
 
@@ -67,10 +81,25 @@ export class CodexRelay {
     }
   }
 
-  pollDecisions(): { correlationId: string; decision: string }[] {
+  pollDecisions(): { correlationId: string; decision: string; message?: string }[] {
     const r = this.decisions.slice();
     this.decisions = [];
     return r;
+  }
+
+  /** Expose pending approvals/inputs that haven't received a decision yet.
+   *  Used by /v1/pending-approvals so the sidebar includes Codex cards. */
+  getPendingApprovals(): { id: string; command: string; risk: string; createdAt: number }[] {
+    const out: { id: string; command: string; risk: string; createdAt: number }[] = [];
+    const STALE_MS = 10 * 60 * 1000;
+    for (const [id, entry] of this.pendingByCorrelationId) {
+      if (Date.now() - entry.createdAt > STALE_MS) {
+        this.pendingByCorrelationId.delete(id);
+        continue;
+      }
+      out.push({ id, command: entry.command, risk: entry.risk, createdAt: entry.createdAt });
+    }
+    return out;
   }
 
   pollPrompts(): string[] {
@@ -117,6 +146,7 @@ export class CodexRelay {
 
   private _pushApproval(correlationId: string, command: string, risk: string): void {
     if (!this.sessionId) return;
+    this.pendingByCorrelationId.set(correlationId, { type: 'approval', command, risk, createdAt: Date.now() });
     this.relay.sendRaw(JSON.stringify({
       type: 'event',
       payload: {
@@ -131,9 +161,16 @@ export class CodexRelay {
 
   private _sendEvent(eventType: string, data: Record<string, unknown>): void {
     if (!this.sessionId) return;
+    const requestId = eventType === 'input_required' && typeof data.requestId === 'string'
+      ? data.requestId
+      : undefined;
+    if (eventType === 'input_required' && requestId) {
+      const text = typeof data.body === 'string' ? data.body.slice(0, 200) : '';
+      this.pendingByCorrelationId.set(requestId, { type: 'input', command: text, risk: 'medium', createdAt: Date.now() });
+    }
     this.relay.sendRaw(JSON.stringify({
       type: 'event',
-      payload: { sessionId: this.sessionId, eventType, data },
+      payload: { sessionId: this.sessionId, eventType, data, ...(requestId ? { clientEventId: requestId } : {}) },
     }));
   }
 }

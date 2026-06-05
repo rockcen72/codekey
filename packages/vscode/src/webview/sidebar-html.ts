@@ -617,6 +617,18 @@ ${renderSubscribe(state)}
     _lastHtml[id] = html;
     return true;
   }
+  /** Like swap() but replaces the entire element via outerHTML.
+   *  Used when the HTML includes the container itself (e.g. <div id="...">).
+   *  The id MUST be in _lastHtml so it deduplicates correctly. */
+  function replaceById(id, html) {
+    if (html === undefined) return false;
+    if (_lastHtml[id] === html) return false;
+    var el = document.getElementById(id);
+    if (!el) return false;
+    el.outerHTML = html;
+    _lastHtml[id] = html;
+    return true;
+  }
 
   // ── Messages from extension host ───────────────
   window.addEventListener('message', function(e) {
@@ -628,7 +640,7 @@ ${renderSubscribe(state)}
       applySavedPlatform();
       swap('agentsContent', d.agentsHtml);
       swap('approvalsContent', d.approvalsHtml);
-      swap('subscriptionFooter', d.subscriptionHtml);
+      replaceById('subscriptionFooter', d.subscriptionHtml);
       if (swap('sessionsContent', d.sessionsHtml)) applyAgentFilter();
       // Update badges
       if (d.agentCount !== undefined) {
