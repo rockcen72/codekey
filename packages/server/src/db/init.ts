@@ -119,6 +119,52 @@ export async function initDb(url: string) {
     CREATE INDEX IF NOT EXISTS idx_device_tokens_token_hash ON device_tokens(token_hash)
   `;
 
+  // ── Subscription system (Phase 1: account model) ──────────
+
+  // users: central identity record; one row per human, regardless
+  // of how many devices or provider accounts they have bound.
+  await sql`
+    CREATE TABLE IF NOT EXISTS users (
+      id          BIGSERIAL    PRIMARY KEY,
+      created_at  TIMESTAMPTZ  NOT NULL DEFAULT now(),
+      deleted_at  TIMESTAMPTZ
+    )
+  `;
+
+  // auth_identities: 3rd-party login handles (WeChat openid,
+  // Feishu openid, etc). PK is (provider, openid) so the same
+  // user can't accidentally get two rows for the same platform,
+  // and re-login is idempotent.
+  await sql`
+    CREATE TABLE IF NOT EXISTS auth_identities (
+      user_id     BIGINT       NOT NULL REFERENCES users(id),
+      provider    VARCHAR(16)  NOT NULL,
+      openid      VARCHAR(64)  NOT NULL,
+      unionid     VARCHAR(64),
+      created_at  TIMESTAMPTZ  NOT NULL DEFAULT now(),
+      PRIMARY KEY (provider, openid)
+    )
+  `;
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_auth_identities_user_id ON auth_identities(user_id)
+  `;
+
+  // device_bindings: links an existing devices.id (UUID) to a
+  // users.id. One user can bind many devices; one device can
+  // only bind to one user at a time (unbound_at NULL = active).
+  await sql`
+    CREATE TABLE IF NOT EXISTS device_bindings (
+      device_id   UUID         PRIMARY KEY REFERENCES devices(id) ON DELETE CASCADE,
+      user_id     BIGINT       NOT NULL REFERENCES users(id),
+      device_name VARCHAR(128),
+      bound_at    TIMESTAMPTZ  NOT NULL DEFAULT now(),
+      unbound_at  TIMESTAMPTZ
+    )
+  `;
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_device_bindings_user_id ON device_bindings(user_id) WHERE unbound_at IS NULL
+  `;
+
   console.log('Database migrations complete');
   return sql;
 }

@@ -1,5 +1,6 @@
 import { createApi } from '../../services/api';
 import { saveAuth, getServerUrl } from '../../services/storage';
+import { ensureUserToken } from '../../services/auth';
 
 const app = getApp<any>();
 
@@ -23,6 +24,15 @@ Page({
       const api = createApi(getServerUrl());
       const result = await api.confirmCode(code, platform);
       saveAuth(result.clientToken, result.deviceId);
+      // Bind this newly-paired device to the logged-in user. If the
+      // user hasn't logged in to WeChat yet (e.g. mini program opened
+      // first time on the bind page), ensureUserToken will run
+      // wx.login + claim-device in sequence. Non-fatal on failure:
+      // the user can still use the app, the next /api/subscription
+      // call will trigger a re-attempt.
+      ensureUserToken().catch((err) => {
+        console.warn('[bind] ensureUserToken failed:', err);
+      });
       app.destroyWs();
       app.initWs();
       this.setData({ status: 'success' });

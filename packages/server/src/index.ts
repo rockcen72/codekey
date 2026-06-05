@@ -16,6 +16,11 @@ if (!PUBLIC_BASE_URL) {
   console.error('Example: PUBLIC_BASE_URL=https://codekey.tinymoney.cn (used to build pairUrl)');
   process.exit(1);
 }
+if (!process.env.USER_JWT_SECRET || process.env.USER_JWT_SECRET.length < 32) {
+  console.error('FATAL: USER_JWT_SECRET must be set to a string of at least 32 characters');
+  console.error('Example: USER_JWT_SECRET=$(openssl rand -hex 32)');
+  process.exit(1);
+}
 // Validate and normalize (remove trailing slash and path, strictly http/https)
 let normalizedBaseUrl: string;
 {

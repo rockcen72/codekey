@@ -5,6 +5,7 @@ import { WebSocketServer } from 'ws';
 import { deviceRoutes } from './routes/devices.js';
 import { sessionRoutes } from './routes/sessions.js';
 import { auditRoutes } from './routes/audit.js';
+import { authRoutes } from './routes/auth.js';
 import { wsHandler } from './ws/handler.js';
 import { initDb } from './db/init.js';
 import { rateLimit } from './middleware/rate-limit.js';
@@ -74,6 +75,7 @@ export async function buildApp(databaseUrl: string) {
   await app.register(deviceRoutes(sql), { prefix: '/api/v1' });
   await app.register(sessionRoutes(sql), { prefix: '/api/v1' });
   await app.register(auditRoutes(sql), { prefix: '/api/v1' });
+  await app.register(authRoutes(sql), { prefix: '/api/v1' });
 
   // WebSocket
   app.register(async function (fastify) {

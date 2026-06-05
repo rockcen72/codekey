@@ -1,4 +1,5 @@
 import { hasAuth } from '../../services/storage';
+import { ensureUserToken } from '../../services/auth';
 
 Page({
   data: {
@@ -10,7 +11,16 @@ Page({
   onLoad() {
     if (hasAuth()) {
       wx.redirectTo({ url: '/pages/sessions/sessions' });
+      return;
     }
+    // Trigger silent wx-login so the device gets a user_id as soon as
+    // the user is on the login page. claim-device will fail with
+    // NO_CLIENT_TOKEN (no pairing yet) and is retried after /devices/confirm.
+    ensureUserToken().catch((err) => {
+      // Non-fatal: the user might not have granted any permissions yet,
+      // or the network might be down. We still let them scan a code.
+      console.warn('[login] ensureUserToken failed:', err);
+    });
   },
 
   startScan() {
