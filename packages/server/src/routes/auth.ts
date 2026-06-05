@@ -75,27 +75,45 @@ export function authRoutes(sql: postgres.Sql) {
         unionid = wx.unionid;
       }
 
-      // Upsert: look up (provider, openid) → if exists return that user,
-      // else create a fresh user + auth_identity in one transaction.
+      // Atomic upsert via a single statement:
+      //   - CTE inserts a fresh users row
+      //   - INSERT into auth_identities either stores the new user_id
+      //     or hits the (provider, openid) PK and does nothing
+      //   - RETURNING is non-empty only on the winner of the race
+      // The CTE's users insert fires even on the loser's path, so a
+      // concurrent login that loses the PK race leaves one orphan
+      // users row. runCleanup() in app.ts reaps those monthly.
       const provider = body.provider === 'feishu' ? 'feishu' : 'wechat';
 
-      const existing = await sql<{ user_id: number }[]>`
-        SELECT user_id FROM auth_identities
-        WHERE provider = ${provider} AND openid = ${openid}
+      const inserted = await sql<{ user_id: number }[]>`
+        WITH new_user AS (
+          INSERT INTO users DEFAULT VALUES RETURNING id
+        )
+        INSERT INTO auth_identities (user_id, provider, openid, unionid)
+        SELECT nu.id, ${provider}, ${openid}, ${unionid ?? null} FROM new_user nu
+        ON CONFLICT (provider, openid) DO NOTHING
+        RETURNING user_id
       `;
 
       let userId: number;
-      let isNew = false;
-      if (existing[0]) {
-        userId = existing[0].user_id;
-      } else {
+      let isNew: boolean;
+      if (inserted[0]) {
+        userId = inserted[0].user_id;
         isNew = true;
-        const result = await sql<{ id: number }[]>`INSERT INTO users DEFAULT VALUES RETURNING id`;
-        userId = result[0].id;
-        await sql`
-          INSERT INTO auth_identities (user_id, provider, openid, unionid)
-          VALUES (${userId}, ${provider}, ${openid}, ${unionid ?? null})
+      } else {
+        const [existing] = await sql<{ user_id: number }[]>`
+          SELECT user_id FROM auth_identities
+          WHERE provider = ${provider} AND openid = ${openid}
         `;
+        if (!existing) {
+          // Unreachable: if RETURNING is empty the only way is the
+          // ON CONFLICT branch, which means the row existed when we
+          // tried. If it doesn't show up in the follow-up SELECT
+          // either, something deleted it in between; treat as 500.
+          throw new Error('auth_identities row vanished between INSERT and SELECT');
+        }
+        userId = existing.user_id;
+        isNew = false;
       }
 
       const token = signUserJwt(userId);
@@ -105,6 +123,14 @@ export function authRoutes(sql: postgres.Sql) {
     // ── POST /api/v1/auth/claim-device ──────────────────────
     // Binds a single device (the one whose clientToken the caller
     // proves possession of) to the user identified by user_token.
+    //
+    // Atomic via INSERT ... ON CONFLICT DO NOTHING + RETURNING, so
+    // two concurrent claims of the same device both serialise on
+    // the device_id PK and exactly one INSERTs. The loser falls
+    // through to the post-check below, which distinguishes:
+    //   - same user   → 200 (idempotent retry, no error)
+    //   - other user  → 403 (so the mini program can prompt unbind)
+    //   - no row      → 500 (should be impossible after the conflict)
     fastify.post('/auth/claim-device', { preHandler: [userTokenAuth()] }, async (req, reply) => {
       const { clientToken } = (req.body ?? {}) as { clientToken?: string };
       if (!clientToken) return reply.code(400).send({ error: 'clientToken required' });
@@ -122,23 +148,30 @@ export function authRoutes(sql: postgres.Sql) {
       const deviceId = tok.device_id;
       const userId = req.userAuth!.userId;
 
-      const [binding] = await sql<{ device_id: string }[]>`
-        SELECT device_id FROM device_bindings WHERE device_id = ${deviceId}
-      `;
-
-      if (binding) {
-        if (binding.device_id === deviceId) {
-          return reply.code(409).send({ error: 'device already bound' });
-        }
-        return reply.code(403).send({ error: 'device bound to another user' });
-      }
-
-      await sql`
+      const inserted = await sql<{ device_id: string }[]>`
         INSERT INTO device_bindings (device_id, user_id)
         VALUES (${deviceId}, ${userId})
+        ON CONFLICT (device_id) DO NOTHING
+        RETURNING device_id
       `;
+      if (inserted[0]) {
+        return { success: true, deviceId };
+      }
 
-      return { success: true, deviceId };
+      // Conflict: device already has a binding. Read the current
+      // owner to decide the response.
+      const [owner] = await sql<{ user_id: number }[]>`
+        SELECT user_id FROM device_bindings WHERE device_id = ${deviceId}
+      `;
+      if (!owner) {
+        // Vanishing race: ON CONFLICT fired but the row is gone.
+        // Treat as 500 — the next call will succeed.
+        return reply.code(500).send({ error: 'binding_state_inconsistent' });
+      }
+      if (owner.user_id === userId) {
+        return { success: true, deviceId, alreadyBound: true };
+      }
+      return reply.code(403).send({ error: 'device bound to another user' });
     });
   };
 }

@@ -168,7 +168,7 @@ describeDb('Auth API (Phase 1)', () => {
     expect(binding?.user_id).toBe(userId);
   });
 
-  it('claim-device: 409 when device already bound to same user', async () => {
+  it('claim-device: idempotent 200 with alreadyBound when same user reclaims', async () => {
     // Setup: device + client token
     const pair = await app.inject({
       method: 'POST',
@@ -202,15 +202,101 @@ describeDb('Auth API (Phase 1)', () => {
       payload: { clientToken },
     });
     expect(claim1.statusCode).toBe(200);
+    expect(JSON.parse(claim1.payload).alreadyBound).toBeUndefined();
 
-    // Re-claim should be 409
+    // Re-claim by the same user is idempotent, NOT 409.
     const claim2 = await app.inject({
       method: 'POST',
       url: '/api/v1/auth/claim-device',
       headers: { authorization: `Bearer ${token}` },
       payload: { clientToken },
     });
-    expect(claim2.statusCode).toBe(409);
+    expect(claim2.statusCode).toBe(200);
+    expect(JSON.parse(claim2.payload).alreadyBound).toBe(true);
+  });
+
+  it('claim-device: 403 when device is bound to a different user', async () => {
+    // Device + client token
+    const pair = await app.inject({
+      method: 'POST',
+      url: '/api/v1/devices/pair',
+      payload: { deviceSecretHash: 'e'.repeat(64), deviceName: 'claim-pc-3' },
+    });
+    const { code, deviceId } = JSON.parse(pair.payload);
+    cleanupDeviceIds.push(deviceId);
+
+    const confirm = await app.inject({
+      method: 'POST',
+      url: '/api/v1/devices/confirm',
+      payload: { code },
+    });
+    const { clientToken } = JSON.parse(confirm.payload);
+
+    // First user claims successfully
+    const openid1 = `first-owner-${Date.now()}-${Math.random()}`;
+    const login1 = await app.inject({
+      method: 'POST',
+      url: '/api/v1/auth/wx-login',
+      payload: { code: 'o1', provider: 'wechat', openid: openid1 },
+    });
+    const { token: token1, userId: userId1 } = JSON.parse(login1.payload);
+    cleanupUserIds.push(userId1);
+
+    const claim1 = await app.inject({
+      method: 'POST',
+      url: '/api/v1/auth/claim-device',
+      headers: { authorization: `Bearer ${token1}` },
+      payload: { clientToken },
+    });
+    expect(claim1.statusCode).toBe(200);
+
+    // A different user tries to claim the same device
+    const openid2 = `second-user-${Date.now()}-${Math.random()}`;
+    const login2 = await app.inject({
+      method: 'POST',
+      url: '/api/v1/auth/wx-login',
+      payload: { code: 'o2', provider: 'wechat', openid: openid2 },
+    });
+    const { token: token2, userId: userId2 } = JSON.parse(login2.payload);
+    cleanupUserIds.push(userId2);
+
+    const claim2 = await app.inject({
+      method: 'POST',
+      url: '/api/v1/auth/claim-device',
+      headers: { authorization: `Bearer ${token2}` },
+      payload: { clientToken },
+    });
+    expect(claim2.statusCode).toBe(403);
+    expect(JSON.parse(claim2.payload).error).toBe('device bound to another user');
+  });
+
+  it('wx-login: concurrent same openid yields exactly one new user', async () => {
+    // Two near-simultaneous requests with the same openid. The CTE +
+    // ON CONFLICT path serialises on the (provider, openid) PK, so
+    // exactly one should report isNew=true and both should return
+    // the same userId.
+    const sharedOpenid = `race-${Date.now()}-${Math.random()}`;
+
+    const [a, b] = await Promise.all([
+      app.inject({
+        method: 'POST',
+        url: '/api/v1/auth/wx-login',
+        payload: { code: 'ra', provider: 'wechat', openid: sharedOpenid },
+      }),
+      app.inject({
+        method: 'POST',
+        url: '/api/v1/auth/wx-login',
+        payload: { code: 'rb', provider: 'wechat', openid: sharedOpenid },
+      }),
+    ]);
+
+    expect(a.statusCode).toBe(200);
+    expect(b.statusCode).toBe(200);
+    const aBody = JSON.parse(a.payload);
+    const bBody = JSON.parse(b.payload);
+    expect(aBody.userId).toBe(bBody.userId);
+    expect([aBody.isNew, bBody.isNew].filter(Boolean).length).toBe(1);
+    cleanupUserIds.push(aBody.userId);
   });
 
   it('claim-device: 404 on invalid clientToken', async () => {

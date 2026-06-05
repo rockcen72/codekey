@@ -110,11 +110,16 @@ export async function ensureUserToken(): Promise<{ userId: number; bound: boolea
     token = login.token;
   }
   try {
-    await claimDevice();
-    return { userId: (wx.getStorageSync('CODEKEY_USER_ID') as number), bound: true };
+    const result = await claimDevice();
+    return { userId: (wx.getStorageSync('CODEKEY_USER_ID') as number), bound: true, alreadyBound: !!result?.alreadyBound };
   } catch (err: any) {
-    if (err?.error === 'device already bound') {
-      return { userId: (wx.getStorageSync('CODEKEY_USER_ID') as number), bound: true };
+    // device is bound to a different user — surface as a structured
+    // error so the UI can prompt the user to unbind it on the PC side
+    // before re-pairing. Don't swallow this one.
+    if (err?.error === 'device bound to another user') {
+      const e = new Error('DEVICE_BOUND_TO_ANOTHER_USER') as Error & { code?: string };
+      e.code = 'DEVICE_BOUND_TO_ANOTHER_USER';
+      throw e;
     }
     // No clientToken yet (user hasn't paired) — log-in still succeeded,
     // device will be claimed after the first successful /devices/confirm.
