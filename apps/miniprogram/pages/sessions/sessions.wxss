@@ -120,7 +120,6 @@
 .card-time-wrap { display: flex; align-items: center; gap: 6rpx; flex-shrink: 0; }
 .session-time { font-size: 20rpx; color: var(--ck-subtle); white-space: nowrap; }
 .session-subtitle { display: block; margin-top: 6rpx; font-size: 24rpx; color: var(--ck-muted); }
-.session-summary { display: block; margin-top: 4rpx; font-size: 22rpx; color: var(--ck-muted); line-height: 1.4; }
 @keyframes titleSweep { 0% { background-position: -100% center; } 100% { background-position: 200% center; } }
 .session-title.title-sweep {
   background: linear-gradient(90deg, transparent 0%, rgba(128,128,128,0.12) 50%, transparent 100%);
