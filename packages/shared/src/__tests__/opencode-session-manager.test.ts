@@ -1,10 +1,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { EventEmitter } from 'node:events';
-import { existsSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { ApprovalBridge } from '../bridge/handler.js';
-import { OpenCodeSessionManager } from '../bridge/opencode-session-manager.js';
+import { discoverLocalOpenCodeSessions, OpenCodeSessionManager } from '../bridge/opencode-session-manager.js';
 
 class FakeRelay extends EventEmitter {
   sent: string[] = [];
@@ -31,9 +31,12 @@ describe('OpenCodeSessionManager event handling', () => {
   let bridge: ApprovalBridge;
   let manager: OpenCodeSessionManager;
   const attachedStoragePath = join(tmpdir(), 'codekey-opencode-attached.json');
+  const opencodeDataDir = join(tmpdir(), 'codekey-opencode-data-test');
 
   beforeEach(() => {
     if (existsSync(attachedStoragePath)) rmSync(attachedStoragePath);
+    if (existsSync(opencodeDataDir)) rmSync(opencodeDataDir, { recursive: true, force: true });
+    process.env.OPENCODE_DATA_DIR = opencodeDataDir;
     relay = new FakeRelay();
     bridge = new ApprovalBridge(relay as any);
     bridge.listenRelayCommands();
@@ -59,6 +62,9 @@ describe('OpenCodeSessionManager event handling', () => {
 
   afterEach(() => {
     if (existsSync(attachedStoragePath)) rmSync(attachedStoragePath);
+    if (existsSync(opencodeDataDir)) rmSync(opencodeDataDir, { recursive: true, force: true });
+    delete process.env.OPENCODE_DATA_DIR;
+    vi.restoreAllMocks();
   });
 
   describe('permission.asked/updated', () => {
@@ -160,6 +166,7 @@ describe('OpenCodeSessionManager event handling', () => {
         const handled = await manager.handleApprovalForward('oc-perm:perm-reply', 'approve');
 
         expect(handled).toBe(true);
+        expect(bridge.getPendingApprovals()).toEqual([]);
         expect(fetchSpy).toHaveBeenCalledWith(
           'http://127.0.0.1:4096/permission/perm-reply/reply',
           expect.objectContaining({
@@ -170,6 +177,27 @@ describe('OpenCodeSessionManager event handling', () => {
       } finally {
         globalThis.fetch = originalFetch;
       }
+    });
+
+    it('clears local pending approval on permission.replied SSE', async () => {
+      await (manager as any).handleSSEEvent({
+        type: 'permission.asked',
+        properties: {
+          id: 'perm-replied',
+          permission: 'Bash',
+          sessionID: 'oc-session-replied',
+          metadata: { command: 'npm test' },
+          time: { created: Date.now() },
+        },
+      });
+      expect(bridge.getPendingApprovals()).toHaveLength(1);
+
+      await (manager as any).handleSSEEvent({
+        type: 'permission.replied',
+        properties: { id: 'perm-replied' },
+      });
+
+      expect(bridge.getPendingApprovals()).toEqual([]);
     });
   });
 
@@ -228,6 +256,84 @@ describe('OpenCodeSessionManager event handling', () => {
       });
 
       expect(manager.ownsSession('server-oc-session-4')).toBe(false);
+    });
+
+    it('syncs renamed OpenCode session title to relay', async () => {
+      await manager.attachSession('ses_1790', 'Initial title', 'server-ses_1790');
+      relay.sent.length = 0;
+
+      await (manager as any).handleSSEEvent({
+        type: 'session.updated',
+        properties: {
+          info: {
+            id: 'ses_1790',
+            title: 'Renamed session',
+          },
+        },
+      });
+
+      const labelUpdate = relay.sent
+        .map((raw) => JSON.parse(raw))
+        .find((msg) => msg.type === 'update_session_label');
+      expect(labelUpdate).toMatchObject({
+        payload: { sessionId: 'server-ses_1790', label: 'Renamed session' },
+      });
+    });
+  });
+
+  describe('attachSession persistence', () => {
+    it('uses a known remote server session id instead of registering again', async () => {
+      await manager.attachSession('oc-session-remote', 'Remote title', 'server-existing-remote');
+
+      expect(manager.ownsSession('server-existing-remote')).toBe(true);
+      expect(bridge.getAttachedSessionIds()).toContain('oc-session-remote');
+
+      const registrations = relay.sent
+        .map((raw) => JSON.parse(raw))
+        .filter((msg) => msg.type === 'register_session' && msg.payload.claudeSessionId === 'oc-session-remote');
+      expect(registrations.length).toBe(0);
+    });
+
+    it('restores attached mappings even when the current OpenCode API list is empty', async () => {
+      writeFileSync(attachedStoragePath, JSON.stringify([
+        { localSessionId: 'ses_stored', serverSessionId: 'server-stored' },
+      ]), 'utf-8');
+      vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+        if (url.endsWith('/session')) return { ok: true, json: async () => [] } as Response;
+        return { ok: true, body: null } as Response;
+      }));
+
+      const restoredManager = new OpenCodeSessionManager('http://127.0.0.1:4096', bridge);
+      vi.spyOn(restoredManager as any, 'connectSSE').mockResolvedValue(undefined);
+      await restoredManager.start();
+
+      expect(restoredManager.ownsSession('server-stored')).toBe(true);
+      expect(bridge.getAttachedSessionIds()).toContain('ses_stored');
+      restoredManager.stop();
+    });
+  });
+
+  describe('local session discovery', () => {
+    it('discovers OpenCode sessions from local storage when the HTTP server is empty', async () => {
+      const sessionDir = join(opencodeDataDir, 'storage', 'session', 'global');
+      mkdirSync(sessionDir, { recursive: true });
+      writeFileSync(join(sessionDir, 'ses_local.json'), JSON.stringify({
+        id: 'ses_local',
+        directory: 'F:/Work/Codekey',
+        title: 'Local OpenCode title',
+        time: { created: 1, updated: 20 },
+      }), 'utf-8');
+      vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+        if (url.endsWith('/session')) return { ok: true, json: async () => [] } as Response;
+        return { ok: true, body: null } as Response;
+      }));
+
+      expect(discoverLocalOpenCodeSessions()).toMatchObject([
+        { id: 'ses_local', title: 'Local OpenCode title', directory: 'F:/Work/Codekey' },
+      ]);
+      await expect(manager.listSessions()).resolves.toMatchObject([
+        { id: 'ses_local', title: 'Local OpenCode title', directory: 'F:/Work/Codekey' },
+      ]);
     });
   });
 
@@ -730,7 +836,7 @@ describe('OpenCodeSessionManager event handling', () => {
   });
 
   describe('server.connected', () => {
-    it('does not restore attached sessions missing from the current OpenCode session list', async () => {
+    it('restores attached sessions even when the current OpenCode session list omits them', async () => {
       writeFileSync(attachedStoragePath, JSON.stringify([
         { localSessionId: 'ses_local_a', serverSessionId: 'server-ses_local_a' },
       ]), 'utf-8');
@@ -751,8 +857,8 @@ describe('OpenCodeSessionManager event handling', () => {
 
         await manager.start();
 
-        expect(bridge.getAttachedSessionIds()).not.toContain('ses_local_a');
-        expect(manager.ownsSession('server-ses_local_a')).toBe(false);
+        expect(bridge.getAttachedSessionIds()).toContain('ses_local_a');
+        expect(manager.ownsSession('server-ses_local_a')).toBe(true);
       } finally {
         globalThis.fetch = originalFetch;
         manager.stop();

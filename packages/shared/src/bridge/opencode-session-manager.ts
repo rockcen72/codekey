@@ -2,12 +2,22 @@ import { randomUUID } from 'node:crypto';
 import { get as httpGet } from 'node:http';
 import { createEventStreamParser } from './sse-parser.js';
 import { ApprovalBridge } from './handler.js';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
+import { homedir, tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { discoverOpenCodePort } from './platform.js';
+import { tryFormatInputRequiredEvent } from './input-card.js';
 
 interface AttachedOpenCodeSession {
   localSessionId: string;
   serverSessionId?: string;
+}
+
+interface OpenCodeSessionInfo {
+  id: string;
+  title?: string;
+  directory?: string;
+  time?: { created?: number; updated?: number };
 }
 
 const INITIAL_RECONNECT_DELAY = 1000;
@@ -15,8 +25,6 @@ const MAX_RECONNECT_DELAY = 30_000;
 const BACKOFF_MULTIPLIER = 2;
 
 function getAttachedStoragePath(): string {
-  const { tmpdir } = require('node:os');
-  const { join } = require('node:path');
   return join(tmpdir(), 'codekey-opencode-attached.json');
 }
 
@@ -53,6 +61,48 @@ function saveAttachedSessions(sessions: AttachedOpenCodeSession[]): void {
     }
     writeFileSync(getAttachedStoragePath(), JSON.stringify([...byLocal.values()]), 'utf-8');
   } catch {}
+}
+
+function getOpenCodeDataDir(): string {
+  return process.env.OPENCODE_DATA_DIR || join(homedir(), '.local', 'share', 'opencode');
+}
+
+export function discoverLocalOpenCodeSessions(limit = 50): OpenCodeSessionInfo[] {
+  const sessionRoot = join(getOpenCodeDataDir(), 'storage', 'session');
+  try {
+    if (!existsSync(sessionRoot)) return [];
+    const sessions: Array<OpenCodeSessionInfo & { _sortTime: number }> = [];
+    for (const project of readdirSync(sessionRoot, { withFileTypes: true })) {
+      if (!project.isDirectory()) continue;
+      const projectDir = join(sessionRoot, project.name);
+      for (const file of readdirSync(projectDir, { withFileTypes: true })) {
+        if (!file.isFile() || !/^ses_.*\.json$/.test(file.name)) continue;
+        const filePath = join(projectDir, file.name);
+        try {
+          const parsed = JSON.parse(readFileSync(filePath, 'utf-8')) as Record<string, unknown>;
+          const id = typeof parsed.id === 'string' ? parsed.id : file.name.replace(/\.json$/, '');
+          if (!id) continue;
+          const time = parsed.time && typeof parsed.time === 'object'
+            ? parsed.time as { created?: number; updated?: number }
+            : undefined;
+          const stat = statSync(filePath);
+          sessions.push({
+            id,
+            title: normalizeOpenCodeTitle(parsed.title),
+            directory: typeof parsed.directory === 'string' ? parsed.directory : undefined,
+            time,
+            _sortTime: typeof time?.updated === 'number' ? time.updated : stat.mtimeMs,
+          });
+        } catch {}
+      }
+    }
+    return sessions
+      .sort((a, b) => b._sortTime - a._sortTime)
+      .slice(0, limit)
+      .map(({ _sortTime, ...session }) => session);
+  } catch {
+    return [];
+  }
 }
 
 export class OpenCodeSessionManager {
@@ -117,15 +167,8 @@ export class OpenCodeSessionManager {
     this._stopped = false;
     this._reconnectDelay = INITIAL_RECONNECT_DELAY;
 
-    // Restore only sessions that still exist in the current local OpenCode server.
-    // A stale temp file must not create ghost sessions on the relay after VS Code reloads.
     const storedSessions = loadAttachedSessions();
-    const activeSessionIds = await this.fetchOpenCodeSessionIds();
-    const restorableSessions = storedSessions.filter((session) => activeSessionIds.has(session.localSessionId));
-    if (restorableSessions.length !== storedSessions.length) {
-      saveAttachedSessions(restorableSessions);
-    }
-    for (const session of restorableSessions) {
+    for (const session of storedSessions) {
       this.bridge.addOpenCodeAttachedSession(session.localSessionId);
       if (session.serverSessionId) {
         this.opencodeSessions.add(session.serverSessionId);
@@ -153,36 +196,55 @@ export class OpenCodeSessionManager {
     this.deliveredMessageParts.clear();
   }
 
-  async attachSession(localSessionId: string, title?: string): Promise<string> {
+  async attachSession(localSessionId: string, title?: string, knownServerSessionId?: string): Promise<string> {
     const fetchMessages = (sid: string): Promise<any[]> => {
       return fetch(`${this.opencodeBaseUrl}/session/${encodeURIComponent(sid)}/message?limit=5`)
         .then(r => r.ok ? r.json() as Promise<any[]> : Promise.resolve([]))
         .catch((): any[] => []);
     };
-    return this.bridge.attachOpenCodeSession(localSessionId, fetchMessages, title, (localId, serverId) => {
+    return this.bridge.attachOpenCodeSession(localSessionId, fetchMessages, normalizeOpenCodeTitle(title), (localId, serverId) => {
       this.registerSession(localId, serverId);
       saveAttachedSessions([...loadAttachedSessions(), { localSessionId: localId, serverSessionId: serverId }]);
-    });
+    }, knownServerSessionId);
   }
 
-  private async fetchOpenCodeSessionIds(): Promise<Set<string>> {
+  async listSessions(limit = 50): Promise<OpenCodeSessionInfo[]> {
+    const localSessions = discoverLocalOpenCodeSessions(limit);
+    const byId = new Map(localSessions.map((session) => [session.id, session]));
+    for (const session of await this.fetchOpenCodeSessions()) {
+      if (!session.id) continue;
+      const local = byId.get(session.id);
+      byId.set(session.id, {
+        ...local,
+        ...session,
+        title: normalizeOpenCodeTitle(session.title) || local?.title,
+      });
+    }
+    return [...byId.values()]
+      .sort((a, b) => (b.time?.updated ?? 0) - (a.time?.updated ?? 0))
+      .slice(0, limit);
+  }
+
+  private async fetchOpenCodeSessions(): Promise<OpenCodeSessionInfo[]> {
     try {
       const resp = await fetch(`${this.opencodeBaseUrl}/session`);
-      if (!resp.ok) return new Set();
+      if (!resp.ok) return [];
       const sessions = await resp.json() as unknown;
-      if (!Array.isArray(sessions)) return new Set();
-      return new Set(sessions
+      if (!Array.isArray(sessions)) return [];
+      return sessions
         .map((session) => {
-          if (typeof session === 'string') return session;
+          if (typeof session === 'string') return { id: session };
           if (session && typeof session === 'object') {
-            const id = (session as Record<string, unknown>).id;
-            return typeof id === 'string' ? id : '';
+            const obj = session as Record<string, unknown>;
+            const id = typeof obj.id === 'string' ? obj.id : '';
+            if (!id) return null;
+            return obj as unknown as OpenCodeSessionInfo;
           }
-          return '';
+          return null;
         })
-        .filter((id) => id.length > 0));
+        .filter((session): session is OpenCodeSessionInfo => !!session);
     } catch {
-      return new Set();
+      return [];
     }
   }
 
@@ -433,7 +495,23 @@ export class OpenCodeSessionManager {
     this.permissionMap.set(clientEventId, { requestID, serverSessionId, localSessionID: sessionID });
   }
 
-  private onPermissionReplied(_props: Record<string, unknown>): void {}
+  private onPermissionReplied(props: Record<string, unknown>): void {
+    const requestID = (props.id || props.requestID || props.permissionID) as string;
+    if (!requestID) return;
+    const clientEventId = `oc-perm:${requestID}`;
+    const entry = this.permissionMap.get(clientEventId);
+    if (entry) {
+      const resolved = this.bridge.resolveTrackedApproval(clientEventId);
+      if (!resolved) {
+        console.error('[opencode] permission.replied had local mapping but no tracked approval: %s', clientEventId);
+      }
+      for (const [key, value] of this.permissionMap) {
+        if (value === entry) this.permissionMap.delete(key);
+      }
+      return;
+    }
+    this.permissionMap.delete(clientEventId);
+  }
 
   // ── Session lifecycle ───────────────────────────────────
 
@@ -443,7 +521,16 @@ export class OpenCodeSessionManager {
     const sessionID = info.id as string;
     if (!sessionID) return;
 
-    if (type === 'session.deleted') {
+    if (type === 'session.updated') {
+      const serverSessionId = this.opencodeSessionToRelayId.get(sessionID);
+      const title = extractOpenCodeSessionTitle(info);
+      if (serverSessionId && title) {
+        this.bridge.relay.sendRaw(JSON.stringify({
+          type: 'update_session_label',
+          payload: { sessionId: serverSessionId, label: title },
+        }));
+      }
+    } else if (type === 'session.deleted') {
       const serverSessionId = this.opencodeSessionToRelayId.get(sessionID);
       if (serverSessionId) {
         this.opencodeSessions.delete(serverSessionId);
@@ -527,6 +614,18 @@ export class OpenCodeSessionManager {
       this.deliveredMessageParts = new Set(arr.slice(-5000));
     }
 
+    const inputCard = tryFormatInputRequiredEvent(info, 'opencode');
+    if (inputCard) {
+      this.bridge.sendEventToRelay(serverSessionId, {
+        clientEventId: inputCard.requestId || `oc-input:${messageID}`,
+        sessionId: serverSessionId,
+        agent: 'opencode',
+        eventType: 'input_required',
+        data: inputCard,
+      });
+      return;
+    }
+
     // User message typed in TUI: emit as user_prompt
     if (info.role === 'user') {
       const summary = info.summary as Record<string, unknown> | undefined;
@@ -580,6 +679,20 @@ export class OpenCodeSessionManager {
 
     const key = `part:${partID}`;
     if (this.deliveredMessageParts.has(key)) return;
+
+    const inputCard = tryFormatInputRequiredEvent(part, 'opencode')
+      || tryFormatInputRequiredEvent(props, 'opencode');
+    if (inputCard) {
+      this.deliveredMessageParts.add(key);
+      this.bridge.sendEventToRelay(serverSessionId, {
+        clientEventId: inputCard.requestId || `oc-input:${partID || messageID}`,
+        sessionId: serverSessionId,
+        agent: 'opencode',
+        eventType: 'input_required',
+        data: inputCard,
+      });
+      return;
+    }
 
     if (partType === 'text') {
       const text = (part.text as string) || (props.delta as string) || '';
@@ -671,6 +784,7 @@ export class OpenCodeSessionManager {
     if (clientEventId && clientEventId !== eventId) {
       this.bridge.resolveEventOnRelay(clientEventId);
     }
+    this.bridge.resolveTrackedApproval(eventId, clientEventId);
     this.permissionMap.delete(eventId);
     if (clientEventId) this.permissionMap.delete(clientEventId);
 
@@ -759,4 +873,24 @@ function permissionToCommand(permissionType: string, metadata: Record<string, un
   if (metadata.filePath) return `${permissionType} ${metadata.filePath}`;
   if (metadata.patch) return `${permissionType} (patch: ${(metadata.patch as string).slice(0, 50)})`;
   return permissionType;
+}
+
+function normalizeOpenCodeTitle(title: unknown): string | undefined {
+  if (typeof title !== 'string') return undefined;
+  const trimmed = title.trim();
+  if (!trimmed || /^ses_[a-f0-9]{8,}$/i.test(trimmed) || trimmed === 'OpenCode session') return undefined;
+  return trimmed;
+}
+
+function extractOpenCodeSessionTitle(info: Record<string, unknown>): string | undefined {
+  const candidates = [
+    info.title,
+    info.name,
+    (info.metadata as Record<string, unknown> | undefined)?.title,
+  ];
+  for (const candidate of candidates) {
+    const title = normalizeOpenCodeTitle(candidate);
+    if (title) return title;
+  }
+  return undefined;
 }
