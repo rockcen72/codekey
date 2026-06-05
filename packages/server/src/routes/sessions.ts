@@ -19,19 +19,24 @@ export function sessionRoutes(sql: postgres.Sql) {
       return { sessionId: session.id, createdAt: session.created_at };
     });
 
-    // List sessions (mini program) — scoped to own device, optionally filtered by windowId
+    // List sessions — scoped to own device, optionally filtered by windowId.
+    // history=1 is used by the mobile history page so transient bridge
+    // disconnect cleanup does not make recently finished CC sessions disappear.
     fastify.get('/sessions', { preHandler: [tokenAuth(sql)] }, async (req, reply) => {
       const { deviceAuth } = req as unknown as { deviceAuth: { deviceId: string } };
-      const { windowId } = req.query as { windowId?: string };
+      const { windowId, history } = req.query as { windowId?: string; history?: string };
+      const includeHistory = history === '1' || history === 'true';
       // Return all active sessions that have a claudeSessionId — not just
       // transcript_attach. Hook-created sessions (source='hook') also need to
       // appear so the sidebar can overlay their relay-synced titles on the
       // local transcript list.
-      let query = sql`SELECT s.*, (SELECT COUNT(*) FROM events e WHERE e.session_id = s.id AND e.pending = true)::int AS pending_count FROM sessions s WHERE s.device_id = ${deviceAuth.deviceId} AND s.status = 'active' AND coalesce(s.metadata->>'claudeSessionId', '') <> ''`;
+      let query = includeHistory
+        ? sql`SELECT s.*, (SELECT COUNT(*) FROM events e WHERE e.session_id = s.id AND e.pending = true)::int AS pending_count FROM sessions s WHERE s.device_id = ${deviceAuth.deviceId} AND coalesce(s.metadata->>'claudeSessionId', '') <> '' AND (s.status IN ('active', 'paused') OR (s.status = 'finished' AND s.finished_at > now() - interval '7 days'))`
+        : sql`SELECT s.*, (SELECT COUNT(*) FROM events e WHERE e.session_id = s.id AND e.pending = true)::int AS pending_count FROM sessions s WHERE s.device_id = ${deviceAuth.deviceId} AND s.status = 'active' AND coalesce(s.metadata->>'claudeSessionId', '') <> ''`;
       if (windowId) {
         query = sql`${query} AND s.metadata->>'windowId' = ${windowId}`;
       }
-      query = sql`${query} ORDER BY s.last_active_at DESC`;
+      query = sql`${query} ORDER BY CASE WHEN s.status = 'active' THEN 0 ELSE 1 END, s.last_active_at DESC`;
       return await query;
     });
 
