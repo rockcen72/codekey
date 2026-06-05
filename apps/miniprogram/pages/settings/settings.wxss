@@ -5,6 +5,8 @@
 .section { padding: 24rpx 32rpx; }
 .section-title { font-size: 24rpx; font-weight: 700; color: var(--ck-muted); margin-bottom: 14rpx; display: block; text-transform: uppercase; letter-spacing: 1rpx; }
 .info-row { display: flex; align-items: center; padding: 14rpx 0; }
+.info-row-warning .label { color: var(--ck-warning); font-weight: 700; }
+.info-row-warning .value { color: var(--ck-warning); font-weight: 700; }
 .label { font-size: 26rpx; color: var(--ck-muted); width: 140rpx; flex-shrink: 0; }
 .value { font-size: 28rpx; color: var(--ck-text); flex: 1; }
 .value.code { font-family: monospace; font-size: 24rpx; }

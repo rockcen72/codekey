@@ -28,6 +28,7 @@ interface PageData {
   plan: string;
   expiresAt: string; // formatted for display, or ''
   daysRemaining: number | null; // for trial: days until expiresAt
+  isExpiringSoon: boolean; // paid tier with <= 3 days remaining (P4.1.2)
   usage: UsageSnapshot | null;
   quotaState: QuotaState;
   quotaPercent: number; // 0-100, used for progress bar width
@@ -43,6 +44,7 @@ Page({
     plan: '',
     expiresAt: '',
     daysRemaining: null,
+    isExpiringSoon: false,
     usage: null,
     quotaState: 'hidden',
     quotaPercent: 0,
@@ -151,12 +153,17 @@ Page({
     const quotaPercent = usage
       ? Math.min(100, Math.round((usage.used / usage.limit) * 100))
       : 0;
+    const isExpiringSoon = tier === 'paid'
+      && daysRemaining != null
+      && daysRemaining >= 0
+      && daysRemaining <= 3;
 
     this.setData({
       tier,
       plan: sub.plan ?? '',
       expiresAt: expiresAt ? this.formatDate(expiresAt) : '',
       daysRemaining,
+      isExpiringSoon,
       usage,
       quotaState,
       quotaPercent,

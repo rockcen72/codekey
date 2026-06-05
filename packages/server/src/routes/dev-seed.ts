@@ -8,6 +8,8 @@
  * Endpoints:
  *   POST /api/v1/dev/invalidate-entitlement   body: {userId, product?}
  *   GET  /api/v1/dev/usage/:userId            returns UsageSnapshot
+ *   POST /api/v1/dev/bind-device              body: {deviceId, userId}
+ *   POST /api/v1/dev/clear-usage              body: {userId, period?}
  *
  * Both require the X-Dev-Secret header to match DEV_SEED_SECRET. This is
  * the second layer of defence: even if the module somehow loaded with a
@@ -62,6 +64,47 @@ export function devSeedRoutes(sql: postgres.Sql) {
           return reply.code(400).send({ error: 'userId must be numeric' });
         }
         return getUsage(sql, userId);
+      },
+    );
+
+    // Bind a device to a user (skips the full pairing + claim-device flow).
+    // Used to test quota gate with a fresh device without going through
+    // /auth/claim-device (which needs the user's user_token).
+    app.post<{ Body: { deviceId?: string; userId?: number } }>(
+      '/dev/bind-device',
+      { preHandler: requireSecret },
+      async (req, reply) => {
+        const { deviceId, userId } = req.body ?? {};
+        if (typeof deviceId !== 'string' || !deviceId) {
+          return reply.code(400).send({ error: 'deviceId (string) required' });
+        }
+        if (typeof userId !== 'number' || !Number.isFinite(userId)) {
+          return reply.code(400).send({ error: 'userId (number) required' });
+        }
+        await sql`
+          INSERT INTO device_bindings (device_id, user_id, bound_at)
+          VALUES (${deviceId}, ${userId}, now())
+        `;
+        return { ok: true, deviceId, userId };
+      },
+    );
+
+    // Reset the approval_usage counter for a user. Used to test the
+    // free-tier flow at 0/50 (gate allows) vs 50/50 (gate blocks).
+    app.post<{ Body: { userId?: number; period?: string } }>(
+      '/dev/clear-usage',
+      { preHandler: requireSecret },
+      async (req) => {
+        const { userId, period } = req.body ?? {};
+        if (typeof userId !== 'number' || !Number.isFinite(userId)) {
+          return { ok: false, error: 'userId (number) required' };
+        }
+        await sql`
+          DELETE FROM approval_usage
+          WHERE user_id = ${userId} AND product = 'codekey'
+            ${period ? sql`AND period = ${period}` : sql``}
+        `;
+        return { ok: true, userId, period: period ?? 'all' };
       },
     );
   };

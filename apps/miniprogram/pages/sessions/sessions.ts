@@ -55,6 +55,7 @@ Page({
     subTier: 'unauthenticated' as 'paid' | 'trial' | 'free' | 'unauthenticated' | 'load_failed',
     subPlan: null as string | null,
     subDaysRemaining: null as number | null,
+    subIsExpiringSoon: false,
     subUsage: null as UsageSnapshot | null,
     subQuotaState: 'hidden' as 'hidden' | 'normal' | 'approaching' | 'exhausted',
     subQuotaPercent: 0,
@@ -252,12 +253,19 @@ Page({
       const subQuotaPercent = usage
         ? Math.min(100, Math.round((usage.used / usage.limit) * 100))
         : 0;
-      const subPillText = this._buildSubPillText(tier, sub.plan, daysRemaining, usage, subQuotaState);
-      const subPillClass = `sub-pill-${subQuotaState === 'hidden' ? 'tier-' + tier : subQuotaState}`;
+      const subIsExpiringSoon = tier === 'paid'
+        && daysRemaining != null
+        && daysRemaining >= 0
+        && daysRemaining <= 3;
+      const subPillText = this._buildSubPillText(tier, sub.plan, daysRemaining, usage, subQuotaState, subIsExpiringSoon);
+      const subPillClass = subIsExpiringSoon
+        ? 'sub-pill-expiring'
+        : `sub-pill-${subQuotaState === 'hidden' ? 'tier-' + tier : subQuotaState}`;
       this.setData({
         subTier: tier,
         subPlan: sub.plan,
         subDaysRemaining: daysRemaining,
+        subIsExpiringSoon,
         subUsage: usage,
         subQuotaState,
         subQuotaPercent,
@@ -275,11 +283,15 @@ Page({
     daysRemaining: number | null,
     usage: UsageSnapshot | null,
     quotaState: 'hidden' | 'normal' | 'approaching' | 'exhausted',
+    isExpiringSoon: boolean = false,
   ): string {
     // Compact text for the top-bar pill (≤ 8 Chinese chars or
     // ~12 Latin chars). Tapping the pill opens settings.
     if (tier === 'paid') {
       const planLabel = plan === 'yearly' ? '年付' : plan === 'monthly' ? '月付' : (plan || 'Pro');
+      if (isExpiringSoon && daysRemaining != null) {
+        return `Pro · ${planLabel} · 剩${daysRemaining}天`;
+      }
       return `Pro · ${planLabel}`;
     }
     if (tier === 'trial') {
@@ -287,10 +299,13 @@ Page({
       if (daysRemaining === 0) return '试用 · 今天到期';
       return '试用中';
     }
-    // free
+    // free — show the count for both normal and approaching so the
+    // user can see exactly how close they are; the pill's amber
+    // background (sub-pill-approaching) does the warning work.
     if (quotaState === 'exhausted') return 'Free · 已用完';
-    if (quotaState === 'approaching') return 'Free · 接近上限';
-    if (quotaState === 'normal' && usage) return `Free · ${usage.used}/${usage.limit}`;
+    if ((quotaState === 'normal' || quotaState === 'approaching') && usage) {
+      return `Free · ${usage.used}/${usage.limit}`;
+    }
     return 'Free';
   },
 

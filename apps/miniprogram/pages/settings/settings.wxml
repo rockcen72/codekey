@@ -6,7 +6,11 @@
 
   <view class="section" wx:if="{{loaded}}">
     <text class="section-title">订阅</text>
-    <view class="info-row" wx:if="{{tier === 'paid'}}">
+    <view class="info-row info-row-warning" wx:if="{{tier === 'paid' && isExpiringSoon}}">
+      <text class="label">Pro 即将到期</text>
+      <text class="value">还剩 {{daysRemaining}} 天 · 续期使用下方兑换码</text>
+    </view>
+    <view class="info-row" wx:elif="{{tier === 'paid'}}">
       <text class="label">Pro 已开通</text>
       <text class="value">有效期至 {{expiresAt}}</text>
     </view>
