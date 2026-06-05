@@ -36,6 +36,8 @@ function filterSessionsByTab(sessions: DisplaySession[], tab: string): DisplaySe
     : sessions.filter(s => (s.agent_type || s.displayRuntime || 'unknown') === tab);
 }
 
+let _summaryTimers: Record<string, ReturnType<typeof setTimeout>> = {};
+
 Page({
   data: {
     sessions: [] as any[],
@@ -73,6 +75,10 @@ Page({
   onHide() {
     this.unsubscribeWs();
     this._stopPolling();
+    for (const key of Object.keys(_summaryTimers)) {
+      clearTimeout(_summaryTimers[key]);
+      delete _summaryTimers[key];
+    }
   },
 
   subscribeWs() {
@@ -87,6 +93,18 @@ Page({
           sessions: this.data.sessions.map(patch),
           filteredSessions: this.data.filteredSessions.map(patch),
         });
+        if (_summaryTimers[payload.sessionId]) {
+          clearTimeout(_summaryTimers[payload.sessionId]);
+          delete _summaryTimers[payload.sessionId];
+        }
+        _summaryTimers[payload.sessionId] = setTimeout(() => {
+          const fadePatch = (s: any) => s.id === payload.sessionId ? { ...s, lastSummary: null } : s;
+          this.setData({
+            sessions: this.data.sessions.map(fadePatch),
+            filteredSessions: this.data.filteredSessions.map(fadePatch),
+          });
+          delete _summaryTimers[payload.sessionId!];
+        }, 6000);
       } else {
         this.fetchSessions();
       }

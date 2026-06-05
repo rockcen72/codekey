@@ -59,7 +59,7 @@
           bindtouchstart="onTouchStart"
           bindtouchend="onTouchEnd">
       <view class="swipe-inner {{item.swiped ? 'swiped' : ''}}">
-        <view class="session-card {{item.hasPending ? 'has-pending' : ''}} {{item.connected ? 'connected' : ''}}"
+        <view class="session-card agent-{{item.agentClass}} {{item.hasPending ? 'has-pending' : ''}} {{item.connected ? 'connected' : ''}}"
               data-id="{{item.id}}"
               bindtap="openSession">
           <view class="conn-bar {{item.connected ? 'online' : 'offline'}} agent-{{item.agentClass}}"></view>
@@ -67,14 +67,14 @@
             <view class="card-top">
               <view class="card-title-row">
                 <text class="session-title ellipsis">{{item.displayTitle}}</text>
-                <text class="agent-chip">{{item.displayAgentLabel}}</text>
+                <text class="agent-chip agent-{{item.agentClass}}">{{item.displayAgentLabel}}</text>
               </view>
               <view class="card-time-wrap">
                 <text class="session-time">{{item.displayTime}}</text>
               </view>
             </view>
             <text class="session-subtitle ellipsis">{{item.displaySubtitle}}</text>
-            <text class="session-summary ellipsis" wx:if="{{item.lastSummary}}">{{item.lastSummary}}</text>
+            <text class="session-summary ellipsis {{item.lastSummary ? 'sv' : 'sh'}}">{{item.lastSummary || ''}}</text>
             <view class="card-footer">
               <text class="session-id mono" wx:if="{{item.displayClaudeId}}">{{item.displayClaudeId}}</text>
               <view wx:if="{{item.hasPending}}" class="pending-badge">

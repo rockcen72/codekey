@@ -94,9 +94,12 @@
 
 /* ── Session card ── */
 
-.session-card { display: flex; align-items: stretch; flex-shrink: 0; width: 100%; border: 1rpx solid var(--ck-border); border-radius: var(--ck-radius-md); background: var(--ck-surface); box-shadow: 0 2rpx 8rpx rgba(28,25,23,0.04); transition: box-shadow 140ms ease, transform 140ms ease; overflow: hidden; }
+.session-card { display: flex; align-items: stretch; flex-shrink: 0; width: 100%; border: 1rpx solid var(--ck-border); border-radius: var(--ck-radius-md); background: var(--ck-surface); box-shadow: 0 2rpx 8rpx rgba(28,25,23,0.04); transition: box-shadow 140ms ease, transform 140ms ease, border-color 0.2s ease; overflow: hidden; }
 .session-card:active { box-shadow: 0 4rpx 12rpx rgba(28,25,23,0.08); transform: translateY(-1rpx); }
-.session-card.connected { border-color: #fed7aa; }
+.session-card.connected { border-color: var(--ck-border); }
+.session-card.connected.agent-claude { border-color: rgba(234,88,12,0.35); }
+.session-card.connected.agent-codex { border-color: rgba(34,197,94,0.35); }
+.session-card.connected.agent-opencode { border-color: rgba(92,156,245,0.35); }
 .conn-bar { width: 6rpx; flex-shrink: 0; background: var(--ck-border); transition: background 200ms ease; }
 .conn-bar.agent-claude { background: #ea580c; }
 .conn-bar.agent-codex { background: #22c55e; }
@@ -109,11 +112,17 @@
 .card-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 10rpx; }
 .card-title-row { display: flex; align-items: center; gap: 8rpx; min-width: 0; flex: 1; }
 .session-title { font-size: 30rpx; font-weight: 700; color: var(--ck-text); flex: 1; min-width: 0; }
-.agent-chip { font-size: 18rpx; font-weight: 500; color: var(--ck-primary); background: rgba(37,99,235,0.08); padding: 2rpx 12rpx; border-radius: var(--ck-radius-full); flex-shrink: 0; }
+.agent-chip { font-size: 18rpx; font-weight: 500; padding: 2rpx 12rpx; border-radius: var(--ck-radius-full); flex-shrink: 0; }
+.agent-chip.agent-claude { color: #ea580c; background: rgba(234,88,12,0.08); }
+.agent-chip.agent-codex { color: #22c55e; background: rgba(34,197,94,0.08); }
+.agent-chip.agent-opencode { color: #5c9cf5; background: rgba(92,156,245,0.08); }
+.agent-chip.agent-unknown { color: var(--ck-muted); background: var(--ck-surface); border: 1rpx solid var(--ck-border); }
 .card-time-wrap { display: flex; align-items: center; gap: 6rpx; flex-shrink: 0; }
 .session-time { font-size: 20rpx; color: var(--ck-subtle); white-space: nowrap; }
 .session-subtitle { display: block; margin-top: 6rpx; font-size: 24rpx; color: var(--ck-muted); }
-.session-summary { display: block; margin-top: 4rpx; font-size: 22rpx; color: var(--ck-primary); opacity: 0.85; }
+.session-summary { display: block; min-height: 30rpx; margin-top: 4rpx; font-size: 22rpx; color: var(--ck-text); line-height: 1.4; overflow: hidden; transition: opacity 0.8s ease; }
+.sv { opacity: 1; }
+.sh { opacity: 0; }
 .card-footer { display: flex; align-items: center; gap: 8rpx; margin-top: 12rpx; }
 .session-id { font-size: 18rpx; color: var(--ck-subtle); }
 
