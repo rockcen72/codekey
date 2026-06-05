@@ -243,6 +243,7 @@ Page({
       const command = e.data?.command || '';
       const summary = e.data?.summary || e.data?.command || '';
       const summaryShort = e.data?.summaryShort || '';
+      const output = e.data?.output || '';
       const eventAgentType = e.data?.agent || e.data?.agentType || e.agent || e.agent_type;
       const agentName = this.chatAgentName(eventAgentType);
       const agentClass = agentColorClass(eventAgentType || this.data.session?.agent_type || this.data.session?.metadata?.runtime);
@@ -331,16 +332,17 @@ Page({
       }
 
       if (e.type === 'task_complete') {
+        const taskText = output || summary || summaryShort;
         messages.push({
           id: e.id,
           type: 'ai',
           side: 'left',
-          content: summaryShort || summary,
+          content: taskText,
           displayTime: time,
           typeLabel: '任务完成',
           isTaskComplete: true,
           command: '',
-          summary: summaryShort || summary,
+          summary: taskText,
           risk_level: '',
           riskText: '',
           pending: false,

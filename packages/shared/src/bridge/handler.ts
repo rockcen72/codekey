@@ -304,7 +304,7 @@ export class ApprovalBridge {
               sessionId: serverSessionId,
               agent: 'opencode',
               eventType: 'task_complete',
-              data: { type: 'task_complete', summary: text.slice(0, 500), output: text.slice(0, 500) },
+              data: { type: 'task_complete', summary: text, summaryShort: text.slice(0, 200), output: text },
               ts: info.time?.completed || info.time?.created ? new Date((info.time.completed || info.time.created) as number).toISOString() : new Date().toISOString(),
             });
           }
@@ -1461,8 +1461,9 @@ export class ApprovalBridge {
           eventType: 'task_complete',
           data: {
             type: 'task_complete',
-            summary: entry.text.slice(0, 200),
+            summary: entry.text,
             summaryShort: entry.text.slice(0, 200),
+            output: entry.text,
           },
           ts: entry.timestamp || new Date().toISOString(),
         },

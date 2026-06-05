@@ -77,7 +77,7 @@ export type AgentEventPayload =
   | ({ type: 'question' } & QuestionEventData)
   | ({ type: 'command_started' } & CommandEventData)
   | ({ type: 'command_finished' } & CommandEventData)
-  | ({ type: 'task_complete' } & { summary: string; summaryShort?: string })
+  | ({ type: 'task_complete' } & { summary: string; summaryShort?: string; output?: string })
   | ({ type: 'diff_ready' } & DiffEventData)
   | ({ type: 'error' } & ErrorEventData)
   | ({ type: 'heartbeat' } & Record<string, never>)

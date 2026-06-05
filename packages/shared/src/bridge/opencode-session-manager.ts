@@ -240,7 +240,7 @@ export class OpenCodeSessionManager {
               sessionId: serverSessionId,
               agent: 'opencode',
               eventType: 'task_complete',
-              data: { type: 'task_complete', summary: text.slice(0, 500), output: text.slice(0, 500) },
+              data: { type: 'task_complete', summary: text, summaryShort: text.slice(0, 200), output: text },
               ts: info.time?.completed || info.time?.created ? new Date((info.time.completed || info.time.created) as number).toISOString() : new Date().toISOString(),
             });
           }
@@ -617,8 +617,9 @@ export class OpenCodeSessionManager {
         eventType: 'task_complete',
         data: {
           type: 'task_complete',
-          summary: text.slice(0, 500),
+          summary: text,
           summaryShort: text.slice(0, 200),
+          output: text,
         },
       });
     } else if (partType === 'tool') {

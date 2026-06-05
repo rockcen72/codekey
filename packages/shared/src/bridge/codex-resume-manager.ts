@@ -219,7 +219,7 @@ export class CodexResumeManager {
             sessionId: serverSessionId,
             agent: 'codex',
             eventType: 'task_complete',
-            data: { type: 'task_complete', summary: text, output: text },
+            data: { type: 'task_complete', summary: text, summaryShort: text.slice(0, 200), output: text },
             ts: new Date().toISOString(),
           },
         });
@@ -347,7 +347,7 @@ export class CodexResumeManager {
           const trimmed = cleanCodexDisplayText(extracted);
           if (!trimmed) continue;
           const eventType = role === 'user' ? 'user_prompt' : 'task_complete';
-          messages.push({ type: eventType, text: trimmed.slice(0, 500), ts: obj.timestamp || '' });
+          messages.push({ type: eventType, text: trimmed, ts: obj.timestamp || '' });
         } catch { /* skip */ }
       }
       // Forward in chronological order
@@ -362,7 +362,7 @@ export class CodexResumeManager {
             eventType: msg.type,
             data: msg.type === 'user_prompt'
               ? { type: 'user_prompt', prompt: msg.text, summary: msg.text.slice(0, 200) }
-              : { type: 'task_complete', summary: msg.text.slice(0, 200), output: msg.text },
+              : { type: 'task_complete', summary: msg.text, summaryShort: msg.text.slice(0, 200), output: msg.text },
             ts: msg.ts || new Date().toISOString(),
           },
         });
@@ -404,7 +404,7 @@ export class CodexResumeManager {
         eventType: role === 'user' ? 'user_prompt' : 'task_complete',
         data: role === 'user'
           ? { type: 'user_prompt', prompt: text, summary: text.slice(0, 200) }
-          : { type: 'task_complete', summary: text.slice(0, 500), output: text.slice(0, 500) },
+          : { type: 'task_complete', summary: text, summaryShort: text.slice(0, 200), output: text },
         ts: event.timestamp || new Date().toISOString(),
       },
     });
