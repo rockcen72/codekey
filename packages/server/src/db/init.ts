@@ -236,6 +236,42 @@ export async function initDb(url: string) {
     )
   `;
 
+  // ── Subscription system (Phase 3: approval quota) ──────────
+
+  // approval_usage: per-(user, product, period) counter of approval
+  // events that passed through the server. The period is a CHAR(7)
+  // "YYYY-MM" string so the counter resets cleanly at the month
+  // boundary without any scheduled job. Free-tier users get a 50/
+  // month cap; trial/paid users skip the cap entirely (Phase 3
+  // design — see docs/plans/subscription-implementation-slices.md).
+  await sql`
+    CREATE TABLE IF NOT EXISTS approval_usage (
+      user_id   BIGINT       NOT NULL REFERENCES users(id),
+      product   VARCHAR(32)  NOT NULL DEFAULT 'codekey',
+      period    CHAR(7)      NOT NULL,
+      count     INTEGER      NOT NULL DEFAULT 0,
+      PRIMARY KEY (user_id, product, period)
+    )
+  `;
+  await sql`CREATE INDEX IF NOT EXISTS idx_au_product_period ON approval_usage(product, period)`;
+
+  // approval_events_dedup: idempotency log so the same logical
+  // approval event isn't counted twice. Bridges send clientEventId
+  // (shared by e.g. OpenCode's permission.asked and permission.updated
+  // hooks) — the server dedups on that. Cleanup runs alongside
+  // approval_usage (12-month retention) in runCleanup().
+  await sql`
+    CREATE TABLE IF NOT EXISTS approval_events_dedup (
+      user_id         BIGINT       NOT NULL REFERENCES users(id),
+      product         VARCHAR(32)  NOT NULL DEFAULT 'codekey',
+      period          CHAR(7)      NOT NULL,
+      client_event_id VARCHAR(64)  NOT NULL,
+      created_at      TIMESTAMPTZ  NOT NULL DEFAULT now(),
+      PRIMARY KEY (user_id, product, period, client_event_id)
+    )
+  `;
+  await sql`CREATE INDEX IF NOT EXISTS idx_aed_period ON approval_events_dedup(period)`;
+
   console.log('Database migrations complete');
   return sql;
 }

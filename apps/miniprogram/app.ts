@@ -60,6 +60,19 @@ App({
     ws.on('*', (msg: any) => {
       this._emit(msg.type, msg.payload ?? msg);
     });
+    // Phase 3: when the server blocks an approval because the free
+    // monthly cap is hit, surface a toast. The actual event row was
+    // still written server-side for audit; we just don't push the
+    // event_push the phone would have answered.
+    ws.on('quota_exceeded', (payload: any) => {
+      const used = payload?.used ?? 0;
+      const limit = payload?.limit ?? 50;
+      wx.showToast({
+        title: `本月审批已用完 (${used}/${limit})，升级 Pro 解锁无限`,
+        icon: 'none',
+        duration: 3000,
+      });
+    });
 
     ws.connect();
     this.globalData.ws = ws;

@@ -6,6 +6,7 @@ import {
   pcClients, clientClients, pairingClients,
   type WsClient, type PairingClient,
 } from './connection-registry.js';
+import { applyApprovalQuota } from '../services/quota.js';
 
 /** Grace period timers: device socket close → delay session cleanup by 30s.
  *  If the device reconnects within that window, the timer is cancelled. */
@@ -17,6 +18,10 @@ const DISCONNECT_GRACE_MS = 10_000;
  *  sending large frames before auth completes. Close the socket
  *  with code 4002 if exceeded. */
 const PENDING_MAX_BYTES = 1_048_576; // 1 MB
+
+export function isPendingInteractiveEvent(eventType: string): boolean {
+  return eventType === 'approval_required' || eventType === 'input_required';
+}
 
 export function wsHandler(sql: postgres.Sql) {
   return function (socket: WebSocket, req: FastifyRequest) {
@@ -506,7 +511,7 @@ export function wsHandler(sql: postgres.Sql) {
             return;
           }
 
-          const pending = msg.payload.eventType === 'approval_required';
+          const pending = isPendingInteractiveEvent(msg.payload.eventType);
           const eventData = msg.payload.data ? { ...msg.payload.data } : {};
           if (msg.payload.clientEventId) eventData.clientEventId = msg.payload.clientEventId;
           sql`
@@ -514,7 +519,7 @@ export function wsHandler(sql: postgres.Sql) {
             VALUES (${sessionId}, ${msg.payload.eventType},
                     ${sql.json(eventData)}, ${msg.payload.data?.risk ?? null}, ${pending})
             RETURNING id
-          `.then(([event]) => {
+          `.then(async ([event]) => {
             // Bump session activity timestamp (background, non-critical)
             sql`UPDATE sessions SET last_active_at = now() WHERE id = ${sessionId}`.catch(() => {});
             // If event carries windowId/label, persist in session metadata
@@ -538,6 +543,43 @@ export function wsHandler(sql: postgres.Sql) {
               || sessionMetadata.runtime === 'codex-resume'
               || !!sessionMetadata.claudeSessionId;
             const mpList = visibleToMiniProgram ? clientClients.get(deviceId!) : undefined;
+
+            // Phase 3 quota gate: only approval_required events count against
+            // a free user's monthly cap. trial / paid users are unlimited
+            // (the service short-circuits on tier). The event is still
+            // written to `events` above for audit, but when over the cap we
+            // skip the event_push and tell the mini program why.
+            if (mpList && msg.payload.eventType === 'approval_required') {
+              const outcome = await applyApprovalQuota(
+                sql,
+                deviceId!,
+                msg.payload.clientEventId ?? null,
+              );
+              if (outcome.kind === 'over_limit') {
+                for (const mp of mpList) {
+                  if (mp.socket.readyState === mp.socket.OPEN) {
+                    mp.socket.send(JSON.stringify({
+                      type: 'quota_exceeded',
+                      payload: {
+                        sessionId,
+                        eventId: event.id,
+                        product: 'codekey',
+                        used: outcome.used,
+                        limit: outcome.limit,
+                        period: outcome.period,
+                      },
+                    }));
+                  }
+                }
+                // The event is recorded in the DB; the phone sees a quota
+                // toast instead of an approval request. The PC keeps
+                // waiting on its bridge-side pending list (PENDING TTL
+                // eventually expires the row server-side).
+                return;
+              }
+              // unlimited / allowed / fail_open → fall through to event_push.
+            }
+
             if (mpList) {
               for (const mp of mpList) {
                 if (mp.socket.readyState === mp.socket.OPEN) {

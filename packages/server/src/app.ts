@@ -42,6 +42,18 @@ async function runCleanup(sql: postgres.Sql): Promise<void> {
       WHERE id = ${s.id} AND status = 'active'
     `;
   }
+
+  // 3. Phase 3: keep 12 months of approval usage / dedup data so
+  //    the counter has a year of history (for support / analytics)
+  //    but doesn't grow unbounded. Period is "YYYY-MM" so we compare
+  //    lexicographically against the cutoff period string.
+  const cutoffPeriod = (() => {
+    const d = new Date();
+    d.setUTCMonth(d.getUTCMonth() - 12);
+    return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`;
+  })();
+  await sql`DELETE FROM approval_usage WHERE period < ${cutoffPeriod}`;
+  await sql`DELETE FROM approval_events_dedup WHERE period < ${cutoffPeriod}`;
 }
 
 function startAutoCleanup(sql: postgres.Sql): () => void {

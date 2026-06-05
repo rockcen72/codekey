@@ -1,5 +1,7 @@
 // ── Event Types ──────────────────────────────────────────
 
+import type { InputRequiredEvent } from './bridge/input-card.js';
+
 export type AgentType = 'claude-code' | 'claude-code-hook' | 'codex' | 'opencode' | 'generic-pty';
 
 export type RiskLevel = 'low' | 'medium' | 'high' | 'critical' | 'unknown';
@@ -17,6 +19,7 @@ export type Decision = 'approve' | 'deny' | 'reply' | 'pause';
 
 export type AgentEventType =
   | 'approval_required'
+  | 'input_required'
   | 'question'
   | 'command_started'
   | 'command_finished'
@@ -74,6 +77,7 @@ export interface DiffEventData {
 
 export type AgentEventPayload =
   | ({ type: 'approval_required' } & ApprovalEventData)
+  | InputRequiredEvent
   | ({ type: 'question' } & QuestionEventData)
   | ({ type: 'command_started' } & CommandEventData)
   | ({ type: 'command_finished' } & CommandEventData)
@@ -129,11 +133,27 @@ export interface EventPushMessage {
   };
 }
 
+export interface QuotaExceededMessage {
+  type: 'quota_exceeded';
+  payload: {
+    sessionId: string;
+    /** Server-side event id (matches the row that was written to the events
+     *  table for audit, even though the push was suppressed). */
+    eventId: string;
+    product: string;
+    used: number;
+    limit: number;
+    /** "YYYY-MM" the count applies to. */
+    period: string;
+  };
+}
+
 export type WsMessage =
   | SessionEventMessage
   | ResponseMessage
   | CommandMessage
   | EventPushMessage
+  | QuotaExceededMessage
   | { type: 'ping'; ts: string }
   | { type: 'pong'; ts: string }
   // Server → PC push messages
