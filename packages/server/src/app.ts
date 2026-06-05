@@ -91,6 +91,16 @@ export async function buildApp(databaseUrl: string) {
   await app.register(authRoutes(sql), { prefix: '/api/v1' });
   await app.register(subscriptionRoutes(sql), { prefix: '/api/v1' });
 
+  // Dev-only seed routes. See config/dev-seed.ts for the 4-condition guard.
+  // import() is async so the throw inside the module becomes a rejected
+  // promise — caught by the existing main().catch() in bundle-entry.ts and
+  // index.ts, which exits the process before any route can serve traffic.
+  const { isDevSeedEnabled } = await import('./config/dev-seed.js');
+  if (isDevSeedEnabled()) {
+    const { devSeedRoutes } = await import('./routes/dev-seed.js');
+    await app.register(devSeedRoutes(sql), { prefix: '/api/v1' });
+  }
+
   // WebSocket
   app.register(async function (fastify) {
     fastify.get('/ws', { websocket: true }, wsHandler(sql));
