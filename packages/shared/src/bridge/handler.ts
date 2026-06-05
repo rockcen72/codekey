@@ -11,6 +11,7 @@ import { discoverLocalSessions } from './codex-local-session-resolver.js';
 import { MAX_PROMPT_LENGTH } from '../types.js';
 import type { AgentEventPayload, SessionEventMessage } from '../types.js';
 import { RiskEngine } from '../risk.js';
+import { tryFormatInputRequiredEvent } from './input-card.js';
 
 interface PhoneCommandFingerprint {
   fingerprint: string;
@@ -18,18 +19,19 @@ interface PhoneCommandFingerprint {
 }
 
 export interface HookEventBody {
-  eventType: 'task_complete' | 'session_idle';
+  eventType: string;
   claudeSessionId?: string;
   codekeyWindowId?: string;
   lastAssistantMessage?: string;
-  data: {
+  rawEvent?: Record<string, unknown>;
+  data?: {
     type: 'task_complete';
     summary: string;
     summaryShort?: string;
   } | {
     type: 'session_idle';
     idleMinutes?: number;
-  };
+  } | Record<string, unknown>;
 }
 
 interface PendingApproval {
@@ -244,9 +246,13 @@ export class ApprovalBridge {
     fetchMessages: (sessionId: string) => Promise<any[]>,
     title?: string,
     onRegistered?: (localId: string, serverId: string) => void,
+    knownServerSessionId?: string,
   ): Promise<string> {
     this.addOpenCodeAttachedSession(localSessionId);
-    const existingServerSessionId = this.sessions.get(localSessionId);
+    const existingServerSessionId = knownServerSessionId || this.sessions.get(localSessionId);
+    if (knownServerSessionId) {
+      this.sessions.set(localSessionId, knownServerSessionId);
+    }
     const serverSessionId = existingServerSessionId
       ?? await this.ensureSession(localSessionId, undefined, 'opencode', { agentType: 'opencode', runtime: 'opencode' });
     if (existingServerSessionId) {
@@ -1116,6 +1122,24 @@ export class ApprovalBridge {
     return out;
   }
 
+  resolveTrackedApproval(eventId: string, clientEventId?: string): boolean {
+    let entry = this.pendingByServerEventId.get(eventId);
+    if (!entry && clientEventId && clientEventId !== eventId) {
+      entry = this.pendingByServerEventId.get(clientEventId);
+    }
+    if (!entry) return false;
+
+    clearTimeout(entry.timer);
+    for (const [key, val] of this.pendingByServerEventId) {
+      if (val === entry) {
+        this.resolveEventOnRelay(key);
+        this.pendingByServerEventId.delete(key);
+      }
+    }
+    entry.resolve({ approved: false });
+    return true;
+  }
+
   trackPendingApproval(input: TrackPendingApprovalInput): () => void {
     const existing = this.pendingByServerEventId.get(input.id);
     if (existing) {
@@ -1194,9 +1218,59 @@ export class ApprovalBridge {
       return;
     }
 
-    const data: AgentEventPayload = body.data.type === 'task_complete'
-      ? { type: 'task_complete', summary: body.data.summary ?? '', summaryShort: body.data.summaryShort ?? '' }
-      : { type: 'session_idle', idleMinutes: body.data.idleMinutes ?? 0 };
+    const inputCard = tryFormatInputRequiredEvent(body.data, 'claude-code-hook')
+      || tryFormatInputRequiredEvent(body.rawEvent, 'claude-code-hook')
+      || tryFormatInputRequiredEvent(body, 'claude-code-hook');
+    if (inputCard) {
+      const clientEventId = inputCard.requestId || `cc-input:${claudeSessionId}:${Date.now()}`;
+      const relayMsg: SessionEventMessage = {
+        type: 'event',
+        payload: {
+          clientEventId,
+          sessionId: serverSessionId,
+          agent: 'claude-code-hook',
+          eventType: 'input_required',
+          data: inputCard,
+          ts: new Date().toISOString(),
+        },
+      };
+      if (windowId) {
+        (relayMsg.payload as Record<string, unknown>).windowId = windowId;
+      }
+      const label = windowId ? this.windowLabels.get(windowId) : undefined;
+      if (label) {
+        (relayMsg.payload as Record<string, unknown>).sessionLabel = label;
+      }
+      this.relay.sendEvent(serverSessionId, relayMsg);
+      this.trackPendingApproval({
+        id: clientEventId,
+        serverSessionId,
+        claudeSessionId,
+        agentType: 'claude-code-hook',
+        command: inputCard.summary,
+        summary: inputCard.summary,
+        toolName: 'Input',
+        risk: 'medium',
+      });
+      return;
+    }
+
+    if (!body.data || (body.eventType !== 'task_complete' && body.eventType !== 'session_idle')) {
+      console.error('[bridge] ignoring unsupported hook event: event=%s session=%s', body.eventType, claudeSessionId);
+      return;
+    }
+
+    const hookData = body.data as Record<string, unknown>;
+    const data: AgentEventPayload = hookData.type === 'task_complete'
+      ? {
+        type: 'task_complete',
+        summary: typeof hookData.summary === 'string' ? hookData.summary : '',
+        summaryShort: typeof hookData.summaryShort === 'string' ? hookData.summaryShort : '',
+      }
+      : {
+        type: 'session_idle',
+        idleMinutes: typeof hookData.idleMinutes === 'number' ? hookData.idleMinutes : 0,
+      };
 
     const relayMsg: SessionEventMessage = {
       type: 'event',

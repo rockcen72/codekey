@@ -29,10 +29,16 @@ function simulateSessionRegistered(relay: MockRelayClient): void {
   handler!({ claudeSessionId: uid?.claudeSessionId, sessionId: 'server-sess-123' });
 }
 
-function simulateApprovalForward(relay: MockRelayClient, eventId: string, clientEventId: string, decision: string): void {
+function simulateApprovalForward(
+  relay: MockRelayClient,
+  eventId: string,
+  clientEventId: string,
+  decision: string,
+  message = '',
+): void {
   const handler = findHandler(relay, 'approval_forward');
   expect(handler).toBeDefined();
-  handler!({ eventId, clientEventId, decision });
+  handler!({ eventId, clientEventId, decision, message });
 }
 
 beforeEach(() => { vi.clearAllMocks(); });
@@ -84,6 +90,17 @@ describe('CodexRelay', () => {
     expect(d[0].decision).toBe('approve');
   });
 
+  it('keeps reply message from approval_forward decisions', () => {
+    codexRelay.registerApproval('input-1', 'choose agent', 'medium');
+    simulateSessionRegistered(relay);
+    simulateApprovalForward(relay, 'server-event-999', 'input-1', 'reply', 'general');
+    expect(codexRelay.pollDecisions()[0]).toEqual({
+      correlationId: 'input-1',
+      decision: 'reply',
+      message: 'general',
+    });
+  });
+
   it('returns decisions only once (poll is destructive)', () => {
     codexRelay.registerApproval('req-1', 'cmd', 'low');
     simulateSessionRegistered(relay);
@@ -116,6 +133,14 @@ describe('CodexRelay', () => {
     const ev = sentMessages(relay, 'event');
     expect((ev[0].payload as any).eventType).toBe('task_complete');
     expect((ev[0].payload as any).sessionId).toBe('server-sess-123');
+  });
+
+  it('uses input_required requestId as clientEventId for reply correlation', () => {
+    codexRelay.ensureSession();
+    simulateSessionRegistered(relay);
+    codexRelay.pushEvent('input_required', { type: 'input_required', requestId: 'input-1', summary: 'Pick one' });
+    const ev = sentMessages(relay, 'event');
+    expect((ev[0].payload as any).clientEventId).toBe('input-1');
   });
 
   it('relay command queues prompts when sessionId matches', () => {

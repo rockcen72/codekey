@@ -237,6 +237,47 @@ describe('ApprovalBridge canonical sessions', () => {
     expect(relay.sent).toEqual([]);
   });
 
+  it('tracks input_required hook events so phone replies resolve them', async () => {
+    const relay = new FakeRelay();
+    const bridge = new ApprovalBridge(relay as any);
+
+    await bridge.handleHookEvent({
+      eventType: 'input_required',
+      claudeSessionId: 'claude-input',
+      codekeyWindowId: 'window-input',
+      data: {
+        id: 'select-agent',
+        questions: [{
+          id: 'agent',
+          text: 'Choose an agent',
+          options: ['builder', 'reviewer'],
+        }],
+      },
+    });
+
+    const inputEvent = relay.sent
+      .map(m => JSON.parse(m))
+      .find((m: any) => m.type === 'event' && m.payload.eventType === 'input_required');
+    expect(inputEvent).toBeDefined();
+    expect(bridge.getPendingApprovals()).toEqual([
+      expect.objectContaining({
+        id: 'select-agent',
+        serverSessionId: 'server-claude-input',
+        agentType: 'claude-code-hook',
+      }),
+    ]);
+
+    relay.emit('approval_forward', {
+      eventId: 'select-agent',
+      clientEventId: 'select-agent',
+      decision: 'reply',
+      message: 'builder',
+    });
+
+    expect(bridge.getPendingApprovals()).toEqual([]);
+    expect(relay.sent.some((m) => m.includes('"resolve_event"') && m.includes('select-agent'))).toBe(true);
+  });
+
   it('deduplicates identical approval hooks while the approval is pending', async () => {
     const relay = new FakeRelay();
     const bridge = new ApprovalBridge(relay as any);
