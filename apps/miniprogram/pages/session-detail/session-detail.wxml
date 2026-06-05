@@ -55,6 +55,20 @@
             </view>
             <!-- Summary if different from command -->
             <view wx:if="{{item.summary && item.summary !== item.command}}" class="event-summary">{{item.summary}}</view>
+            <view wx:if="{{item.requiresInput && item.inputOptions && item.inputOptions.length}}" class="input-options">
+              <button
+                wx:for="{{item.inputOptions}}"
+                wx:key="value"
+                class="input-option"
+                data-id="{{item.eventId}}"
+                data-value="{{item.value}}"
+                disabled="{{!item.pending}}"
+                catchtap="chooseInputOption"
+              >
+                <text class="input-option-label">{{item.label}}</text>
+                <text wx:if="{{item.description}}" class="input-option-desc">{{item.description}}</text>
+              </button>
+            </view>
 
             <!-- Footer: status tags + time -->
             <view class="event-foot">
@@ -74,7 +88,10 @@
             </view>
 
             <!-- Action buttons for pending -->
-            <view wx:if="{{item.pending && item.canApprove}}" class="action-bar">
+            <view wx:if="{{item.pending && item.requiresInput}}" class="action-bar">
+              <button class="action-btn outline" data-id="{{item.eventId}}" bindtap="openApprovalSheet">回复</button>
+            </view>
+            <view wx:elif="{{item.pending && item.canApprove}}" class="action-bar">
               <button class="action-btn primary" data-id="{{item.eventId}}" catchtap="approveEvent">批准</button>
               <button class="action-btn secondary" data-id="{{item.eventId}}" catchtap="denyEvent">拒绝</button>
               <button class="action-btn ghost" data-id="{{item.eventId}}" catchtap="pauseEvent">暂缓</button>
@@ -118,10 +135,10 @@
       <view class="sheet-handle"></view>
       <view class="sheet-head">
         <view class="event-head-left">
-          <text class="sheet-title">审批请求</text>
+          <text class="sheet-title">{{approvalEvent.requiresInput ? '选择请求' : '审批请求'}}</text>
           <text wx:if="{{approvalEvent.toolName}}" class="tool-tag">{{approvalEvent.toolName}}</text>
         </view>
-        <text class="risk-tag {{approvalEvent.risk_level}}">{{approvalEvent.riskText}}</text>
+        <text wx:if="{{!approvalEvent.requiresInput}}" class="risk-tag {{approvalEvent.risk_level}}">{{approvalEvent.riskText}}</text>
       </view>
 
       <text class="sheet-summary" wx:if="{{approvalEvent.summary}}">{{approvalEvent.summary}}</text>
@@ -130,16 +147,30 @@
         <text class="code-text">{{approvalEvent.command}}</text>
       </view>
 
-      <view class="risk-notice" wx:if="{{approvalEvent.pending && !approvalEvent.canApprove}}">
+      <view class="risk-notice" wx:if="{{approvalEvent.pending && !approvalEvent.requiresInput && !approvalEvent.canApprove}}">
         <text>该请求风险较高，请在电脑端确认后处理。</text>
       </view>
 
+      <view wx:if="{{approvalEvent.requiresInput && approvalEvent.inputOptions && approvalEvent.inputOptions.length}}" class="input-options sheet-options">
+        <button
+          wx:for="{{approvalEvent.inputOptions}}"
+          wx:key="value"
+          class="input-option"
+          data-id="{{approvalEvent.eventId}}"
+          data-value="{{item.value}}"
+          catchtap="chooseSheetInputOption"
+        >
+          <text class="input-option-label">{{item.label}}</text>
+          <text wx:if="{{item.description}}" class="input-option-desc">{{item.description}}</text>
+        </button>
+      </view>
+
       <view class="sheet-reply">
-        <input class="sheet-reply-input" placeholder="回复 AI..." value="{{sheetReplyText}}" bindinput="onSheetReplyInput" />
+        <input class="sheet-reply-input" placeholder="{{approvalEvent.requiresInput ? '输入选择或补充说明...' : '回复 AI...'}}" value="{{sheetReplyText}}" bindinput="onSheetReplyInput" />
         <button class="sheet-reply-btn" bindtap="sendSheetReply">发送</button>
       </view>
 
-      <view class="sheet-actions">
+      <view wx:if="{{!approvalEvent.requiresInput}}" class="sheet-actions">
         <button class="sheet-btn approve {{approvalEvent.canApprove ? '' : 'disabled'}}" disabled="{{!approvalEvent.canApprove}}" bindtap="approveSheet">批准</button>
         <button class="sheet-btn deny" bindtap="denySheet">拒绝</button>
         <button class="sheet-btn pause" bindtap="pauseSheet">暂缓</button>

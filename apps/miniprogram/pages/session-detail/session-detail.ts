@@ -33,6 +33,8 @@ interface ChatMessage {
   kindBadge: string;
   toolName?: string;
   senderName?: string;
+  requiresInput?: boolean;
+  inputOptions?: { label: string; value: string; description?: string }[];
 }
 
 Page({
@@ -421,6 +423,64 @@ Page({
         continue;
       }
 
+      if (e.type === 'input_required') {
+        const questions = Array.isArray(e.data?.questions) ? e.data.questions : [];
+        const inputOptions = this.extractInputOptions(questions);
+        const accent: ChatMessage['accent'] = e.pending ? 'pending' : 'neutral';
+
+        messages.push({
+          id: e.id,
+          type: 'ai',
+          side: 'left',
+          content: this.formatInputContent(e.data || {}),
+          displayTime: time,
+          typeLabel: '选择请求',
+          isTaskComplete: false,
+          command: '',
+          summary: e.data?.summary || 'Agent 需要你的选择',
+          risk_level: e.risk_level || 'medium',
+          riskText: '',
+          pending: e.pending,
+          decision: e.decision || '',
+          decisionText: !e.pending ? this.getDecisionText(e.decision) : '',
+          canApprove: false,
+          eventId: e.id,
+          accent,
+          agentClass,
+          kindBadge: e.pending ? 'INPUT' : (this.getDecisionText(e.decision) || 'DONE'),
+          senderName: agentName,
+          requiresInput: true,
+          inputOptions,
+        });
+
+        if (!e.pending && e.decision) {
+          const decisionContent = this.getDecisionText(e.decision);
+          messages.push({
+            id: e.id + '-decision',
+            type: 'user',
+            side: 'right',
+            content: decisionContent,
+            displayTime: time,
+            typeLabel: '',
+            isTaskComplete: false,
+            command: '',
+            summary: '',
+            risk_level: '',
+            riskText: '',
+            pending: false,
+            decision: e.decision,
+            decisionText: decisionContent,
+            canApprove: false,
+            eventId: e.id,
+            accent: 'neutral',
+            agentClass: 'unknown',
+            kindBadge: '',
+            senderName: '你',
+          });
+        }
+        continue;
+      }
+
       if (e.type === 'user_prompt') {
         const prompt = e.data?.prompt || e.data?.summary || '';
         // Use original transcript timestamp if available, fallback to DB created_at
@@ -774,6 +834,63 @@ Page({
     wx.showToast({ title: '已发送，等待电脑端接收', icon: 'none', duration: 1500 });
   },
 
+  chooseInputOption(e: any) {
+    const eventId = e.currentTarget.dataset.id;
+    const value = e.currentTarget.dataset.value || '';
+    if (!eventId || !value) return;
+    this.replyToInput(eventId, value);
+  },
+
+  chooseSheetInputOption(e: any) {
+    const eventId = e.currentTarget.dataset.id;
+    const value = e.currentTarget.dataset.value || '';
+    if (!eventId || !value) return;
+    this.replyToInput(eventId, value);
+    this.closeApprovalSheet();
+  },
+
+  replyToInput(eventId: string, text: string) {
+    app.sendWs({
+      type: 'approval_response',
+      payload: { sessionId: this.data.sessionId, eventId, decision: 'reply', message: text },
+    });
+
+    const messages = [...this.data.chatMessages];
+    const aiIdx = messages.findIndex((m: ChatMessage) => m.eventId === eventId && m.type === 'ai');
+    if (aiIdx !== -1) {
+      messages[aiIdx].pending = false;
+      messages[aiIdx].decision = 'reply';
+      messages[aiIdx].decisionText = this.getDecisionText('reply');
+      messages[aiIdx].accent = 'neutral';
+      messages[aiIdx].kindBadge = this.getDecisionText('reply');
+    }
+    const replyId = eventId + '-reply-' + Date.now();
+    messages.push({
+      id: replyId,
+      type: 'user',
+      side: 'right',
+      content: text,
+      displayTime: '',
+      typeLabel: '',
+      isTaskComplete: false,
+      command: '',
+      summary: '',
+      risk_level: '',
+      riskText: '',
+      pending: false,
+      decision: 'reply',
+      decisionText: this.getDecisionText('reply'),
+      canApprove: false,
+      eventId,
+      accent: 'neutral',
+      agentClass: 'unknown',
+      kindBadge: '',
+      senderName: '你',
+    });
+    this.setData({ chatMessages: messages, scrollToId: 'msg-' + replyId });
+    setTimeout(() => this.fetchDetail(), 1500);
+  },
+
   // ── Navigation ──
 
   goBack() {
@@ -791,6 +908,36 @@ Page({
   chatAgentName(agentType?: string): string {
     const session = this.data.session || {};
     return agentChatName(agentType || session.agent_type || session.metadata?.runtime);
+  },
+
+  formatInputContent(data: any): string {
+    const lines: string[] = [];
+    if (data.summary) lines.push(String(data.summary));
+    const questions = Array.isArray(data.questions) ? data.questions : [];
+    for (const q of questions) {
+      const text = q?.text || q?.question || q?.prompt || q?.label;
+      if (text && !lines.includes(String(text))) lines.push(String(text));
+      const options = Array.isArray(q?.options) ? q.options : [];
+      for (const opt of options) {
+        const label = typeof opt === 'string' ? opt : opt?.label || opt?.value || opt?.name;
+        const desc = typeof opt === 'object' ? opt?.description : '';
+        if (label) lines.push(desc ? `- ${label}: ${desc}` : `- ${label}`);
+      }
+    }
+    return lines.join('\n') || 'Agent 需要你的选择';
+  },
+
+  extractInputOptions(questions: any[]): { label: string; value: string; description?: string }[] {
+    const first = questions.find((q) => Array.isArray(q?.options));
+    if (!first) return [];
+    return first.options.map((opt: any) => {
+      if (typeof opt === 'string') return { label: opt, value: opt };
+      return {
+        label: String(opt?.label || opt?.value || opt?.name || ''),
+        value: String(opt?.value || opt?.id || opt?.label || ''),
+        description: opt?.description ? String(opt.description) : undefined,
+      };
+    }).filter((opt: any) => opt.label && opt.value);
   },
 });
 
