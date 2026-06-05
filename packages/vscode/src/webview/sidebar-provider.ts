@@ -18,6 +18,7 @@ import {
   renderAgentsContent,
   renderApprovalsContent,
   renderSessionsContent,
+  renderSubscribe,
   type SidebarState,
   type PairingState,
 } from './sidebar-html.js';
@@ -726,6 +727,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       agentsHtml: renderAgentsContent(state),
       approvalsHtml: renderApprovalsContent(state),
       sessionsHtml: renderSessionsContent(state),
+      subscriptionHtml: renderSubscribe(state),
       deviceStatus,
       paired: deviceStatus === 'paired',
       agentCount: state.agents.filter(a => a.runtimeStatus === 'active').length,

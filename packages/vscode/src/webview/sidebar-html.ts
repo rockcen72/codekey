@@ -345,7 +345,7 @@ function renderClaudeSessions(state: SidebarState): string {
   </div>`;
 }
 
-function renderSubscribe(state: SidebarState): string {
+export function renderSubscribe(state: SidebarState): string {
   const sub = state.subscription;
   let planLabel = 'AI Coding Remote';
   let planClass = '';
@@ -368,7 +368,7 @@ function renderSubscribe(state: SidebarState): string {
         : ' sub-free';
     }
   }
-  return `<div class="footer"><span class="sub-label${planClass}">${planLabel}</span></div>`;
+  return `<div class="footer" id="subscriptionFooter"><span class="sub-label${planClass}">${planLabel}</span></div>`;
 }
 
 // ── Pairing card ─────────────────────────────────────────
@@ -607,7 +607,7 @@ ${renderSubscribe(state)}
   }
   // Cache last HTML per section — skip swap when unchanged to preserve
   // user-opened previews / scroll position / active tab state.
-  var _lastHtml = { deviceContent: '', pairingContent: '', agentsContent: '', approvalsContent: '', sessionsContent: '' };
+  var _lastHtml = { deviceContent: '', pairingContent: '', agentsContent: '', approvalsContent: '', sessionsContent: '', subscriptionHtml: '' };
   function swap(id, html) {
     if (html === undefined) return false;
     if (_lastHtml[id] === html) return false;
@@ -628,6 +628,7 @@ ${renderSubscribe(state)}
       applySavedPlatform();
       swap('agentsContent', d.agentsHtml);
       swap('approvalsContent', d.approvalsHtml);
+      swap('subscriptionFooter', d.subscriptionHtml);
       if (swap('sessionsContent', d.sessionsHtml)) applyAgentFilter();
       // Update badges
       if (d.agentCount !== undefined) {
