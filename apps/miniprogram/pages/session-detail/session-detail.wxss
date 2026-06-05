@@ -64,6 +64,36 @@
   background: var(--ck-success);
 }
 
+/* ── Quota strip (free tier only) ── */
+
+.quota-strip {
+  display: flex;
+  align-items: center;
+  gap: 14rpx;
+  padding: 0 32rpx 14rpx;
+  background: var(--ck-bg);
+}
+.quota-strip-bar {
+  flex: 1;
+  height: 8rpx;
+  background: var(--ck-border);
+  border-radius: 4rpx;
+  overflow: hidden;
+}
+.quota-strip-fill {
+  height: 100%;
+  border-radius: 4rpx;
+  transition: width 200ms ease, background 200ms ease;
+}
+.quota-strip-label {
+  font-size: 22rpx;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+.quota-label-normal { color: var(--ck-muted); }
+.quota-label-approaching { color: var(--ck-warning); }
+.quota-label-exhausted { color: var(--ck-danger); }
+
 /* ── Timeline ── */
 
 .timeline {

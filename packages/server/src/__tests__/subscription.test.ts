@@ -385,6 +385,52 @@ describeDb("Subscription service (Phase 2)", () => {
 		expect(body.product).toBe("codekey");
 	});
 
+	it("GET /subscription: returns usage snapshot for free tier", async () => {
+		const { userId, token } = await makeUser();
+		// Plant a usage row so we can assert the count
+		const { getCurrentPeriod } = await import("../services/quota.js");
+		const period = getCurrentPeriod();
+		await sql`
+			INSERT INTO approval_usage (user_id, product, period, count)
+			VALUES (${userId}, 'codekey', ${period}, 23)
+			ON CONFLICT (user_id, product, period) DO UPDATE SET count = 23
+		`;
+		const res = await app.inject({
+			method: "GET",
+			url: "/api/v1/subscription",
+			headers: { authorization: `Bearer ${token}` },
+		});
+		const body = JSON.parse(res.payload);
+		expect(body.tier).toBe("free");
+		expect(body.usage).toBeDefined();
+		expect(body.usage.used).toBe(23);
+		expect(body.usage.limit).toBe(50);
+		expect(body.usage.period).toBe(period);
+	});
+
+	it("GET /subscription: returns usage=null for paid tier (unlimited)", async () => {
+		const { userId, token } = await makeUser();
+		// Plant a paid row + a usage row to prove usage is suppressed
+		await sql`
+			INSERT INTO user_subscriptions (user_id, product, plan, expires_at, source)
+			VALUES (${userId}, 'codekey', 'monthly', now() + interval '30 days', 'test')
+		`;
+		const { getCurrentPeriod } = await import("../services/quota.js");
+		await sql`
+			INSERT INTO approval_usage (user_id, product, period, count)
+			VALUES (${userId}, 'codekey', ${getCurrentPeriod()}, 100)
+		`;
+		_resetEntitlementCache();
+		const res = await app.inject({
+			method: "GET",
+			url: "/api/v1/subscription",
+			headers: { authorization: `Bearer ${token}` },
+		});
+		const body = JSON.parse(res.payload);
+		expect(body.tier).toBe("paid");
+		expect(body.usage).toBeNull();
+	});
+
 	it("GET /subscription: returns paid tier after redeem", async () => {
 		const { token } = await makeUser();
 		const [minted] = await mintCodes(sql, "codekey", "monthly", 1);
@@ -406,6 +452,7 @@ describeDb("Subscription service (Phase 2)", () => {
 		const body = JSON.parse(res.payload);
 		expect(body.tier).toBe("paid");
 		expect(body.plan).toBe("monthly");
+		expect(body.usage).toBeNull();
 	});
 
 	it("GET /subscription: returns trial tier when trial_claims row exists and no paid", async () => {
@@ -424,6 +471,7 @@ describeDb("Subscription service (Phase 2)", () => {
 		});
 		const body = JSON.parse(res.payload);
 		expect(body.tier).toBe("trial");
+		expect(body.usage).toBeNull(); // trial is unlimited
 	});
 
 	// ── cache ────────────────────────────────────────────────

@@ -1,5 +1,6 @@
 import { createApi } from '../../services/api';
 import { getServerUrl } from '../../services/storage';
+import { getSubscription, type UsageSnapshot } from '../../services/subscription';
 
 const app = getApp<any>();
 
@@ -55,18 +56,23 @@ Page({
     approvalSheetOpen: false,
     approvalEvent: null as ChatMessage | null,
     sheetReplyText: '',
+    quotaState: 'hidden' as 'hidden' | 'normal' | 'approaching' | 'exhausted',
+    quotaPercent: 0,
+    usage: null as UsageSnapshot | null,
   },
 
   onLoad(query: any) {
     const id = query.id || '';
     this.setData({ sessionId: id });
     this.fetchDetail();
+    this.fetchSubscription();
     this.subscribeWs();
   },
 
   onShow() {
     this.setData({ _userScrolledUp: false });
     this.fetchDetail();
+    this.fetchSubscription();
     this._startPolling();
   },
 
@@ -148,6 +154,13 @@ Page({
       }
     };
 
+    this._onQuotaExceededBound = () => {
+      // Re-fetch the per-user quota snapshot so the top bar
+      // updates immediately instead of waiting for the next
+      // onShow. Toast dedounce in app.ts prevents UI flooding.
+      this.fetchSubscription();
+    };
+
     this._onAuthFailedBound = () => { wx.redirectTo({ url: '/pages/login/login' }); };
 
     app.onWsEvent('event_push', this._onEventPushBound);
@@ -159,6 +172,7 @@ Page({
     app.onWsEvent('device_online', this._onDeviceOnlineBound);
     app.onWsEvent('error', this._onWsErrorBound);
     app.onWsEvent('session_label_updated', this._onSessionLabelUpdatedBound);
+    app.onWsEvent('quota_exceeded', this._onQuotaExceededBound);
 
     // Sync current connection state
     if (app.globalData.wsConnected !== this.data.wsConnected) {
@@ -176,6 +190,7 @@ Page({
     if (this._onDeviceOnlineBound) app.offWsEvent('device_online', this._onDeviceOnlineBound);
     if (this._onWsErrorBound) app.offWsEvent('error', this._onWsErrorBound);
     if (this._onSessionLabelUpdatedBound) app.offWsEvent('session_label_updated', this._onSessionLabelUpdatedBound);
+    if (this._onQuotaExceededBound) app.offWsEvent('quota_exceeded', this._onQuotaExceededBound);
     this._onEventPushBound = undefined;
     this._onSessionDeactivatedBound = undefined;
     this._onWsConnectedBound = undefined;
@@ -184,6 +199,7 @@ Page({
     this._onDeviceOnlineBound = undefined;
     this._onWsErrorBound = undefined;
     this._onSessionLabelUpdatedBound = undefined;
+    this._onQuotaExceededBound = undefined;
   },
 
   _startPolling() {
@@ -199,6 +215,31 @@ Page({
   },
 
   // ── Data fetching ──
+
+  async fetchSubscription() {
+    // Pulls the per-user subscription (including the free-tier
+    // monthly usage counter) so the top bar can show "X/50".
+    // Silently no-ops on auth/network failure — the top bar just
+    // stays hidden, which is correct (we can't show a quota for
+    // paid/trial when we don't know the tier).
+    try {
+      const sub = await getSubscription();
+      const usage = sub.tier === 'free' ? sub.usage : null;
+      const quotaState: 'hidden' | 'normal' | 'approaching' | 'exhausted' = !usage
+        ? 'hidden'
+        : usage.used >= usage.limit
+          ? 'exhausted'
+          : usage.used >= Math.floor(usage.limit * 0.8)
+            ? 'approaching'
+            : 'normal';
+      const quotaPercent = usage
+        ? Math.min(100, Math.round((usage.used / usage.limit) * 100))
+        : 0;
+      this.setData({ usage, quotaState, quotaPercent });
+    } catch (err) {
+      console.warn('[session-detail] fetchSubscription failed:', err);
+    }
+  },
 
   async fetchDetail(options?: { scrollToEventId?: string }) {
     try {

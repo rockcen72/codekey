@@ -50,6 +50,37 @@ export interface QuotaCheckResult {
 	skipped?: "not_free";
 }
 
+/** A snapshot of how many approval events the user has used in the
+ *  current period, along with the cap and the period label. Returned
+ *  by GET /api/v1/subscription so the mini program can render the
+ *  "本月已用 X/50" progress bar. */
+export interface UsageSnapshot {
+	used: number;
+	limit: number;
+	period: string;
+}
+
+/** Read the current usage counter for a (user, product, period).
+ *  Returns 0 when no row exists yet (a fresh month, or a user that
+ *  hasn't triggered any approvals). Pure DB read; no entitlement
+ *  check, no side effects. */
+export async function getUsage(
+	sql: postgres.Sql,
+	userId: number,
+	product: Product = MVP_PRODUCT,
+	period: string = getCurrentPeriod(),
+): Promise<UsageSnapshot> {
+	const [row] = await sql<{ count: number }[]>`
+		SELECT count FROM approval_usage
+		WHERE user_id = ${userId} AND product = ${product} AND period = ${period}
+	`;
+	return {
+		used: row?.count ?? 0,
+		limit: FREE_LIMIT,
+		period,
+	};
+}
+
 export async function checkApprovalQuota(
 	sql: postgres.Sql,
 	userId: number,
@@ -69,14 +100,10 @@ export async function checkApprovalQuota(
 		};
 	}
 
-	const [row] = await sql<{ count: number }[]>`
-		SELECT count FROM approval_usage
-		WHERE user_id = ${userId} AND product = ${product} AND period = ${period}
-	`;
-	const used = row?.count ?? 0;
+	const usage = await getUsage(sql, userId, product, period);
 	return {
-		allowed: used < FREE_LIMIT,
-		used,
+		allowed: usage.used < FREE_LIMIT,
+		used: usage.used,
 		limit: FREE_LIMIT,
 		tier: "free",
 		period,

@@ -47,11 +47,21 @@ function apiBase(): string {
 
 export type Tier = 'paid' | 'trial' | 'free';
 
+/** Per-month usage counter for the approval quota. Returned only for
+ *  free-tier users by GET /subscription; paid / trial get `null`. */
+export interface UsageSnapshot {
+  used: number;
+  limit: number;
+  /** "YYYY-MM" in UTC, matches the period used for the counter. */
+  period: string;
+}
+
 export interface SubscriptionStatus {
   tier: Tier;
   plan: string | null;
   expiresAt: string | null; // ISO timestamp or null
   product: string;
+  usage: UsageSnapshot | null;
 }
 
 export interface RedeemOk {

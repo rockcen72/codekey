@@ -9,6 +9,21 @@
     </view>
   </view>
 
+  <!-- Per-user monthly quota bar. Hidden when not on the free
+       tier (paid/trial return usage=null and the bar stays
+       hidden). Color shifts to warn the user as they approach
+       the 50/month cap. -->
+  <view class="quota-strip" wx:if="{{quotaState !== 'hidden'}}">
+    <view class="quota-strip-bar">
+      <view class="quota-strip-fill quota-{{quotaState}}" style="width: {{quotaPercent}}%"></view>
+    </view>
+    <text class="quota-strip-label quota-label-{{quotaState}}">
+      <text wx:if="{{quotaState === 'exhausted'}}">本月 {{usage.limit}} 次审批已用完</text>
+      <text wx:elif="{{quotaState === 'approaching'}}">本月 {{usage.used}}/{{usage.limit}} · 接近额度上限</text>
+      <text wx:else>本月 {{usage.used}}/{{usage.limit}}</text>
+    </text>
+  </view>
+
   <scroll-view class="timeline" scroll-y scroll-into-view="{{scrollToId}}" scroll-top="{{scrollTop}}" scroll-with-animation bindscroll="onScroll">
     <view class="empty" wx:if="{{chatMessages.length === 0}}">
       <text class="empty-icon">◌</text>

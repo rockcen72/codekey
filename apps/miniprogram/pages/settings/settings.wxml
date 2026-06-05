@@ -12,11 +12,14 @@
     </view>
     <view class="info-row" wx:elif="{{tier === 'trial'}}">
       <text class="label">Pro 试用中</text>
-      <text class="value">{{expiresAt}} 到期</text>
+      <text class="value" wx:if="{{daysRemaining != null && daysRemaining > 0}}">还剩 {{daysRemaining}} 天</text>
+      <text class="value" wx:elif="{{daysRemaining === 0}}">今天到期</text>
+      <text class="value" wx:else>{{expiresAt}} 到期</text>
     </view>
     <view class="info-row" wx:elif="{{tier === 'free'}}">
       <text class="label">当前为 Free</text>
-      <text class="value">本月初级版</text>
+      <text class="value" wx:if="{{usage}}">本月已用 {{usage.used}}/{{usage.limit}} 次</text>
+      <text class="value" wx:else>本月初级版</text>
     </view>
     <view class="info-row" wx:elif="{{tier === 'unauthenticated'}}">
       <text class="label">未登录</text>
@@ -24,7 +27,20 @@
     </view>
     <view class="info-row" wx:elif="{{tier === 'load_failed'}}">
       <text class="label">加载失败</text>
-      <text class="value">返回重试</text>
+      <text class="value" bindtap="refreshSubscription">点击重试</text>
+    </view>
+
+    <!-- Quota progress bar (free tier only). Hidden for paid/trial
+         since the server returns usage=null for those tiers. -->
+    <view class="quota-card" wx:if="{{quotaState !== 'hidden'}}">
+      <view class="quota-bar">
+        <view class="quota-fill quota-{{quotaState}}" style="width: {{quotaPercent}}%"></view>
+      </view>
+      <text class="quota-status quota-status-{{quotaState}}">
+        <text wx:if="{{quotaState === 'approaching'}}">接近额度上限 (≥80%)</text>
+        <text wx:elif="{{quotaState === 'exhausted'}}">本月 {{usage.limit}} 次审批已用完</text>
+        <text wx:else>本月已用 {{usage.used}}/{{usage.limit}} 次</text>
+      </text>
     </view>
 
     <view class="redeem-row">

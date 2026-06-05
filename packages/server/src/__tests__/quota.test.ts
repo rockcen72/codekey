@@ -14,6 +14,7 @@ import {
 	applyApprovalQuota,
 	checkApprovalQuota,
 	getCurrentPeriod,
+	getUsage,
 	recordApproval,
 } from "../services/quota.js";
 
@@ -36,6 +37,83 @@ describe("getCurrentPeriod()", () => {
 
 	it("exports FREE_LIMIT = 50", () => {
 		expect(FREE_LIMIT).toBe(50);
+	});
+});
+
+describeDb("getUsage()", () => {
+	let sql: postgres.Sql;
+	const cleanupUserIds: number[] = [];
+
+	beforeAll(async () => {
+		const { initDb } = await import("../db/init.js");
+		sql = await initDb(DATABASE_URL!);
+	});
+
+	afterAll(async () => {
+		for (const uid of cleanupUserIds) {
+			try {
+				await sql`DELETE FROM approval_usage WHERE user_id = ${uid}`;
+			} catch {
+				/* ignore */
+			}
+			try {
+				await sql`DELETE FROM users WHERE id = ${uid}`;
+			} catch {
+				/* ignore */
+			}
+		}
+		await sql.end();
+	});
+
+	beforeEach(async () => {
+		await sql`DELETE FROM approval_usage WHERE period = '2099-12'`;
+	});
+
+	async function makeUser(): Promise<number> {
+		const { buildApp } = await import("../app.js");
+		process.env.WECHAT_APPID = process.env.WECHAT_APPID || "mock";
+		process.env.USER_JWT_SECRET =
+			process.env.USER_JWT_SECRET || "test-secret-" + "x".repeat(40);
+		const { app } = await buildApp(DATABASE_URL!);
+		const openid = `quota-usage-${Date.now()}-${Math.random()}`;
+		const res = await app.inject({
+			method: "POST",
+			url: "/api/v1/auth/wx-login",
+			payload: { code: "c", provider: "wechat", openid },
+		});
+		expect(res.statusCode).toBe(200);
+		const body = JSON.parse(res.payload);
+		cleanupUserIds.push(body.userId);
+		await app.close();
+		return body.userId;
+	}
+
+	it("returns { used: 0, limit: 50 } when no usage row exists", async () => {
+		const userId = await makeUser();
+		const u = await getUsage(sql, userId, "codekey", "2099-12");
+		expect(u).toEqual({ used: 0, limit: FREE_LIMIT, period: "2099-12" });
+	});
+
+	it("returns the stored count when a usage row exists", async () => {
+		const userId = await makeUser();
+		await sql`
+			INSERT INTO approval_usage (user_id, product, period, count)
+			VALUES (${userId}, 'codekey', '2099-12', 17)
+		`;
+		const u = await getUsage(sql, userId, "codekey", "2099-12");
+		expect(u.used).toBe(17);
+		expect(u.limit).toBe(FREE_LIMIT);
+		expect(u.period).toBe("2099-12");
+	});
+
+	it("returns used=0 for a different period (no cross-period leakage)", async () => {
+		const userId = await makeUser();
+		await sql`
+			INSERT INTO approval_usage (user_id, product, period, count)
+			VALUES (${userId}, 'codekey', '2099-11', 30)
+		`;
+		const u = await getUsage(sql, userId, "codekey", "2099-12");
+		expect(u.used).toBe(0);
 	});
 });
 

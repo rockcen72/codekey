@@ -18,6 +18,7 @@ import {
 	mintCodes,
 	redeemCode,
 } from "../services/subscription/index.js";
+import { getUsage } from "../services/quota.js";
 
 export function subscriptionRoutes(sql: postgres.Sql) {
 	return async (fastify: FastifyInstance) => {
@@ -78,20 +79,37 @@ export function subscriptionRoutes(sql: postgres.Sql) {
 		// Returns the current entitlement for the calling user. Used by
 		// the mini program to render the subscription card and to
 		// decide whether to display the quota progress bar.
+		//
+		// Phase 4: the response also includes a `usage` snapshot for
+		// free-tier users so the mini program can render "本月已用
+		// X/50" without a second round-trip. trial / paid users get
+		// `usage: null` — their cap is unlimited and the UI should
+		// either hide the bar or show "不限量".
 		fastify.get(
 			"/subscription",
 			{ preHandler: [userTokenAuth()] },
 			async (req) => {
 				const userAuth = req.userAuth;
 				if (!userAuth) {
-					return { tier: "free", plan: null, expiresAt: null, product: MVP_PRODUCT };
+					return {
+						tier: "free",
+						plan: null,
+						expiresAt: null,
+						product: MVP_PRODUCT,
+						usage: null,
+					};
 				}
 				const ent = await getEntitlement(sql, userAuth.userId, MVP_PRODUCT);
+				const usage =
+					ent.tier === "free"
+						? await getUsage(sql, userAuth.userId, MVP_PRODUCT)
+						: null;
 				return {
 					tier: ent.tier,
 					plan: ent.plan,
 					expiresAt: ent.expiresAt,
 					product: MVP_PRODUCT,
+					usage,
 				};
 			},
 		);
