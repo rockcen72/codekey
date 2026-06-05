@@ -24,6 +24,13 @@ export interface PairingState {
   pairUrl?: string;
 }
 
+export interface SubscriptionInfo {
+  tier: 'free' | 'trial' | 'paid';
+  plan: string | null;
+  expiresAt: string | null;
+  usage: { used: number; limit: number; period: string } | null;
+}
+
 export interface SidebarState {
   deviceStatus: 'unpaired' | 'paired' | 'offline';
   deviceId?: string;
@@ -46,6 +53,7 @@ export interface SidebarState {
   pairing?: PairingState;
   pairingPlatform?: string;
   lang?: string;
+  subscription?: SubscriptionInfo;
 }
 
 export interface ClaudeSessionItem {
@@ -337,8 +345,30 @@ function renderClaudeSessions(state: SidebarState): string {
   </div>`;
 }
 
-function renderSubscribe(): string {
-  return `<div class="footer">CodeKey &middot; AI Coding Remote</div>`;
+function renderSubscribe(state: SidebarState): string {
+  const sub = state.subscription;
+  let planLabel = 'AI Coding Remote';
+  let planClass = '';
+  if (sub) {
+    if (sub.tier === 'paid') {
+      const pn = sub.plan === 'yearly' ? 'Annual' : 'Monthly';
+      planLabel = `Pro · ${pn}`;
+      if (sub.expiresAt) {
+        const days = Math.max(0, Math.ceil((new Date(sub.expiresAt).getTime() - Date.now()) / 86400000));
+        if (days > 0 && days <= 3) planClass = 'sub-expiring';
+      }
+      planClass += ' sub-paid';
+    } else if (sub.tier === 'trial') {
+      planLabel = 'Trial';
+      planClass = ' sub-trial';
+    } else if (sub.usage) {
+      planLabel = `Free · ${sub.usage.used}/${sub.usage.limit}`;
+      planClass = sub.usage.used >= sub.usage.limit ? ' sub-exhausted'
+        : sub.usage.used >= sub.usage.limit * 0.8 ? ' sub-approaching'
+        : ' sub-free';
+    }
+  }
+  return `<div class="footer"><span class="sub-label${planClass}">${planLabel}</span></div>`;
 }
 
 // ── Pairing card ─────────────────────────────────────────
@@ -515,7 +545,7 @@ ${renderPairing(state)}
 ${renderAgents(state)}
 ${renderClaudeSessions(state)}
 ${renderApprovals(state)}
-${renderSubscribe()}
+${renderSubscribe(state)}
 <script nonce="${NONCE}">
 (function() {
   var api = acquireVsCodeApi();
@@ -1180,6 +1210,12 @@ body{
    ═══════════════════════════════════════════════ */
 .empty-state{font-size:11px;color:var(--vscode-descriptionForeground,#50506e);text-align:center;padding:8px 0}
 .footer{text-align:center;padding:12px 0 8px;font-size:9px;color:var(--vscode-descriptionForeground,#50506e);letter-spacing:.04em}
+.sub-label.sub-paid{color:var(--vscode-terminal-ansiBlue,#3794ff)}
+.sub-label.sub-trial{color:var(--vscode-terminal-ansiBlue,#3794ff)}
+.sub-label.sub-free{color:var(--vscode-descriptionForeground,#50506e)}
+.sub-label.sub-approaching{color:var(--vscode-terminal-ansiYellow,#e2b714)}
+.sub-label.sub-exhausted{color:var(--vscode-terminal-ansiRed,#f14c4c)}
+.sub-label.sub-expiring{color:var(--vscode-terminal-ansiYellow,#e2b714)}
 
 /* ═══════════════════════════════════════════════
    PAIRING CARD

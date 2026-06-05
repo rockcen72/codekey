@@ -56,7 +56,19 @@ export function createApi(creds: Credentials) {
     getSessionEvents(sessionId: string): Promise<EventResponse[]> {
       return request<EventResponse[]>('GET', `/sessions/${sessionId}/events`);
     },
+
+    getDeviceSubscription(): Promise<SubscriptionResponse> {
+      return request<SubscriptionResponse>('GET', '/device-subscription');
+    },
   };
+}
+
+export interface SubscriptionResponse {
+  tier: 'free' | 'trial' | 'paid';
+  plan: string | null;
+  expiresAt: string | null;
+  product: string;
+  usage: { used: number; limit: number; period: string } | null;
 }
 
 export type ApiClient = ReturnType<typeof createApi>;

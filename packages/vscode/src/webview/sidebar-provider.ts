@@ -4,7 +4,7 @@ import * as crypto from 'node:crypto';
 import * as os from 'node:os';
 import WebSocket from 'ws';
 import { loadCredentials, clearCredentials } from '../auth/credentials.js';
-import { createApi, ApiError, type SessionResponse } from '../api/client.js';
+import { createApi, ApiError, type SessionResponse, type SubscriptionResponse } from '../api/client.js';
 import { getAgents } from '../agents/registry.js';
 import { BridgeStatusService } from '../services/bridge-status.js';
 import { SessionStore } from '../services/session-store.js';
@@ -49,6 +49,28 @@ interface BridgePendingApproval {
   createdAt: number;
 }
 
+function agentDisplayName(agentType?: string, fallback?: string): string {
+  if (agentType && AGENT_DISPLAY_NAMES[agentType]) return AGENT_DISPLAY_NAMES[agentType];
+  return fallback || agentType || 'Claude Code';
+}
+
+function openCodeSessionTitle(session: any): string {
+  const candidates = [
+    session?.title,
+    session?.name,
+    session?.metadata?.title,
+    session?.info?.title,
+    session?.info?.name,
+  ];
+  for (const candidate of candidates) {
+    if (typeof candidate !== 'string') continue;
+    const title = candidate.trim();
+    if (!title || /^ses_/.test(title) || title === session?.id) continue;
+    return title;
+  }
+  return 'OpenCode session';
+}
+
 export class SidebarProvider implements vscode.WebviewViewProvider {
   static readonly viewType = 'codekey.sidebar';
 
@@ -66,6 +88,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
   private _pairingWs?: WebSocket;
   private _pairingTimeout?: ReturnType<typeof setTimeout>;
   private _opencodeAttachInFlight = new Set<string>();
+  private _codexStaleStopInFlight = new Set<string>();
   private _pushInFlight = false;
   private _pushQueued = false;
   private _approvalPollInFlight = false;
@@ -177,6 +200,23 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       }
     } catch {
       // bridge may already be gone
+    }
+  }
+
+  private async _autoStopStaleCodexSession(sessionId: string): Promise<void> {
+    if (this._codexStaleStopInFlight.has(sessionId)) return;
+    this._codexStaleStopInFlight.add(sessionId);
+    try {
+      await this._bridgeFetch(`${this._bridgeService.getBridgeUrl()}/v1/codex-sessions/stop`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sessionId }),
+      });
+      log(`_autoStopStaleCodexSession: cleared stale resume ${sessionId.slice(0, 8)}`);
+    } catch (err) {
+      log(`_autoStopStaleCodexSession failed for ${sessionId.slice(0, 8)}: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      this._codexStaleStopInFlight.delete(sessionId);
     }
   }
 
@@ -300,19 +340,27 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     let deviceStatus: SidebarState['deviceStatus'] = 'unpaired';
     let sessions: SessionResponse[] = [];
     let allDeviceSessions: SessionResponse[] = [];
+    let allDeviceSessionsFresh = false;
     let events: Record<string, any[]> = {};
     let pendingApprovals: SidebarState['pendingApprovals'] = [];
 
+    let subscription: SubscriptionResponse | undefined;
     if (creds?.deviceToken) {
       try {
         const api = createApi(creds);
         const windowId = vscode.env.sessionId;
         sessions = await api.getSessions(windowId);
-        allDeviceSessions = await api.getSessions().catch(() => sessions);
+        try {
+          allDeviceSessions = await api.getSessions();
+          allDeviceSessionsFresh = true;
+        } catch {
+          allDeviceSessions = sessions;
+        }
         await Promise.all(sessions.map(async (s) => {
           events[s.id] = await api.getSessionEvents(s.id).catch(() => []);
         }));
         deviceStatus = 'paired';
+        subscription = await api.getDeviceSubscription().catch(() => undefined);
       } catch (err) {
         if (err instanceof ApiError && (err.status === 401 || err.status === 403)) {
           deviceStatus = 'unpaired';
@@ -335,7 +383,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
           command: a.command || '(unknown)',
           summary: a.summary || a.command || '(unknown)',
           toolName: a.toolName || '',
-          agent: (session?.agent_type && AGENT_DISPLAY_NAMES[session.agent_type]) || session?.agent_type || 'Claude Code',
+          agent: agentDisplayName(a.agentType, session?.agent_type),
           risk: a.risk,
           serverSessionId: a.serverSessionId,
         });
@@ -355,7 +403,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
               command: e.data?.command ?? '(unknown)',
               summary: e.data?.summary ?? e.data?.command ?? '(unknown)',
               toolName: e.data?.toolName ?? '',
-              agent: (session?.agent_type && AGENT_DISPLAY_NAMES[session.agent_type]) || session?.agent_type || 'Claude Code',
+              agent: agentDisplayName(session?.agent_type),
               risk: e.risk_level ?? 'medium',
               serverSessionId: sid,
             });
@@ -469,11 +517,23 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       }
     }
     const remoteOpenCodeByLocalId = new Map<string, { serverSessionId: string; title?: string }>();
+    const remoteCodexByLocalId = new Map<string, { serverSessionId: string; title?: string }>();
     for (const s of allDeviceSessions) {
-      if (s.agent_type !== 'opencode') continue;
       const localId = s.metadata?.claudeSessionId || s.metadata?.localSessionId;
       if (!localId) continue;
-      remoteOpenCodeByLocalId.set(localId, { serverSessionId: s.id, title: s.metadata?.title });
+      if (s.agent_type === 'codex') {
+        remoteCodexByLocalId.set(localId, {
+          serverSessionId: s.id,
+          title: s.metadata?.title,
+        });
+        continue;
+      }
+      if (s.agent_type !== 'opencode') continue;
+      const title = openCodeSessionTitle({ id: localId, metadata: s.metadata });
+      remoteOpenCodeByLocalId.set(localId, {
+        serverSessionId: s.id,
+        ...(title !== 'OpenCode session' ? { title } : {}),
+      });
     }
 
     // Load stored (attached) sessions — these persist in the list even when CC exits
@@ -580,19 +640,27 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       if (codexResp.ok) {
         const codexBody = await codexResp.json() as { sessions?: any[] };
         if (codexBody.sessions) {
-            const existingIds = new Set(mergedClaudeSessions.map(s => s.sessionId));
-            for (const cs of codexBody.sessions) {
-              if (existingIds.has(cs.sessionId)) continue;
-              existingIds.add(cs.sessionId);
+          const existingIds = new Set(mergedClaudeSessions.map(s => s.sessionId));
+          for (const cs of codexBody.sessions) {
+            if (existingIds.has(cs.sessionId)) continue;
+            existingIds.add(cs.sessionId);
+            const remote = remoteCodexByLocalId.get(cs.sessionId);
+            // If the full remote list failed, keep local "attached" state conservative.
+            // Only auto-stop stale resume sessions after a fresh all-device session list proves
+            // the remote Codex session is gone.
+            const isAttached = attachedSessions.includes(cs.sessionId) && (!allDeviceSessionsFresh || !!remote);
+            if (allDeviceSessionsFresh && attachedSessions.includes(cs.sessionId) && !remote) {
+              this._autoStopStaleCodexSession(cs.sessionId);
+            }
             mergedClaudeSessions.push({
               sessionId: cs.sessionId,
-              title: cs.title || cs.sessionId.slice(0, 8),
+              title: remote?.title || cs.title || cs.sessionId.slice(0, 8),
               cwd: cs.cwd || '',
               updatedAt: cs.updatedAt || '',
-              attached: attachedSessions.includes(cs.sessionId),
-              canDetach: attachedSessions.includes(cs.sessionId),
+              attached: isAttached,
+              canDetach: isAttached,
               isCodexSession: true,
-              resumed: attachedSessions.includes(cs.sessionId),
+              resumed: isAttached,
             });
           }
         }
@@ -609,7 +677,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
             if (!s.id) continue;
             const item = {
               sessionId: s.id,
-              title: s.title || 'OpenCode session',
+              title: openCodeSessionTitle(s),
               cwd: s.directory || '',
               updatedAt: s.time?.updated ? new Date(s.time.updated).toISOString() : '',
               attached: attachedSessions.includes(s.id) || remoteOpenCodeByLocalId.has(s.id),
@@ -644,6 +712,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       feishuAppId: vscode.workspace.getConfiguration('codekey').get<string>('feishuAppId', ''),
       pairingPlatform: creds?.platform,
       pairing: this._pairingState,
+      subscription,
     };
 
     if (this._firstPush) {
@@ -870,7 +939,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         // Save new credentials for subsequent re-pair
         const { saveCredentials } = await import('../auth/credentials.js');
         saveCredentials({ deviceId: result.deviceId, deviceSecret, relayUrl });
-        await BridgeStatusService.getInstance().stop();
+        await BridgeStatusService.getInstance().stop({ force: true });
         this._openPairingSocket(result.deviceId, deviceSecret, relayUrl);
         this._pairingState = {
           code: String(result.code),
@@ -913,7 +982,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         return;
       }
       const result = await resp.json() as { code: string; expiresIn?: number; pairUrl?: string };
-      await BridgeStatusService.getInstance().stop();
+      await BridgeStatusService.getInstance().stop({ force: true });
       this._openPairingSocket(creds.deviceId, creds.deviceSecret, relayUrl);
       this._pairingState = {
         code: String(result.code),

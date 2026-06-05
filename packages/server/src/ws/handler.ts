@@ -561,6 +561,8 @@ export function wsHandler(sql: postgres.Sql) {
                 msg.payload.clientEventId ?? null,
               );
               if (outcome.kind === 'over_limit') {
+                // Phone: send quota_exceeded so the mini program can show
+                // a toast explaining why no approval card appeared.
                 for (const mp of mpList) {
                   if (mp.socket.readyState === mp.socket.OPEN) {
                     mp.socket.send(JSON.stringify({
@@ -569,8 +571,6 @@ export function wsHandler(sql: postgres.Sql) {
                         sessionId,
                         eventId: event.id,
                         clientEventId: msg.payload.clientEventId ?? null,
-                        // TODO(multi-product): plumb the real product through
-                        // once we add a second one (see services/subscription).
                         product: 'codekey',
                         used: outcome.used,
                         limit: outcome.limit,
@@ -579,10 +579,24 @@ export function wsHandler(sql: postgres.Sql) {
                     }));
                   }
                 }
-                // The event is recorded in the DB; the phone sees a quota
-                // toast instead of an approval request. The PC keeps
-                // waiting on its bridge-side pending list (PENDING TTL
-                // eventually expires the row server-side).
+                // PC bridge: send an immediate approval_forward with
+                // decision 'deny' so the bridge resolves its pending
+                // approval instead of blocking for 30 min (PENDING_TTL).
+                // Also update the DB event so audit is accurate.
+                sql`
+                  UPDATE events SET pending = false, decision = 'deny',
+                    responded_at = now() WHERE id = ${event.id} AND pending = true
+                `.catch(() => {});
+                pc.socket.send(JSON.stringify({
+                  type: 'approval_forward',
+                  payload: {
+                    sessionId,
+                    eventId: event.id,
+                    decision: 'deny',
+                    message: 'Free quota exhausted this month',
+                    clientEventId: msg.payload.clientEventId ?? null,
+                  },
+                }));
                 return;
               }
               // unlimited / allowed / fail_open → fall through to event_push.

@@ -11,6 +11,8 @@
 import type { FastifyInstance } from "fastify";
 import type postgres from "postgres";
 import { userTokenAuth } from "../auth/user-middleware.js";
+import { deviceTokenAuth } from "../auth/middleware.js";
+import type { DeviceAuth } from "../auth/middleware.js";
 import { rateLimit } from "../middleware/rate-limit.js";
 import {
 	MVP_PRODUCT,
@@ -103,6 +105,41 @@ export function subscriptionRoutes(sql: postgres.Sql) {
 				const usage =
 					ent.tier === "free"
 						? await getUsage(sql, userAuth.userId, MVP_PRODUCT)
+						: null;
+				return {
+					tier: ent.tier,
+					plan: ent.plan,
+					expiresAt: ent.expiresAt,
+					product: MVP_PRODUCT,
+					usage,
+				};
+			},
+		);
+
+		// ── GET /api/v1/device-subscription ────────────────────────
+		// Same data as /subscription but authenticated via device token
+		// (for VS Code sidebar). Looks up the bound user from device_bindings.
+		fastify.get(
+			"/device-subscription",
+			{ preHandler: [deviceTokenAuth(sql)] },
+			async (req, reply) => {
+				const { deviceId } = (req as unknown as { deviceAuth: DeviceAuth }).deviceAuth;
+				const [binding] = await sql`
+					SELECT user_id FROM device_bindings WHERE device_id = ${deviceId} LIMIT 1
+				`;
+				if (!binding) {
+					return reply.code(200).send({
+						tier: "free",
+						plan: null,
+						expiresAt: null,
+						product: MVP_PRODUCT,
+						usage: null,
+					});
+				}
+				const ent = await getEntitlement(sql, binding.user_id, MVP_PRODUCT);
+				const usage =
+					ent.tier === "free"
+						? await getUsage(sql, binding.user_id, MVP_PRODUCT)
 						: null;
 				return {
 					tier: ent.tier,
