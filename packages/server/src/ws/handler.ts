@@ -544,12 +544,17 @@ export function wsHandler(sql: postgres.Sql) {
               || !!sessionMetadata.claudeSessionId;
             const mpList = visibleToMiniProgram ? clientClients.get(deviceId!) : undefined;
 
-            // Phase 3 quota gate: only approval_required events count against
-            // a free user's monthly cap. trial / paid users are unlimited
-            // (the service short-circuits on tier). The event is still
-            // written to `events` above for audit, but when over the cap we
-            // skip the event_push and tell the mini program why.
-            if (mpList && msg.payload.eventType === 'approval_required') {
+            // Phase 3 quota gate: any event that pushes to the mini program
+            // for user interaction counts against a free user's monthly
+            // cap — approval_required AND input_required. Routing around
+            // the cap via input_required would defeat the whole point of
+            // the gate, so we use the same predicate that marks these
+            // events as pending (see isPendingInteractiveEvent above).
+            // trial / paid users are unlimited (the service short-circuits
+            // on tier). The event is still written to `events` above for
+            // audit, but when over the cap we skip the event_push and
+            // tell the mini program why.
+            if (mpList && isPendingInteractiveEvent(msg.payload.eventType)) {
               const outcome = await applyApprovalQuota(
                 sql,
                 deviceId!,
@@ -563,6 +568,9 @@ export function wsHandler(sql: postgres.Sql) {
                       payload: {
                         sessionId,
                         eventId: event.id,
+                        clientEventId: msg.payload.clientEventId ?? null,
+                        // TODO(multi-product): plumb the real product through
+                        // once we add a second one (see services/subscription).
                         product: 'codekey',
                         used: outcome.used,
                         limit: outcome.limit,

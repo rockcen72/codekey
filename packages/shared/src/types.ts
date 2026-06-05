@@ -140,6 +140,10 @@ export interface QuotaExceededMessage {
     /** Server-side event id (matches the row that was written to the events
      *  table for audit, even though the push was suppressed). */
     eventId: string;
+    /** Bridge-supplied id (mirrors SessionEventMessage.payload.clientEventId).
+     *  Null when the bridge didn't provide one. Lets the mini program
+     *  correlate a quota toast with the specific blocked event. */
+    clientEventId?: string | null;
     product: string;
     used: number;
     limit: number;

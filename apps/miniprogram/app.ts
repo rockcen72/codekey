@@ -3,6 +3,11 @@ import { getClientToken, getDeviceId, getServerUrl, clearAuth } from './services
 
 type EventHandler = (payload?: any) => void;
 
+// Module-local throttle timestamp for the quota_exceeded toast. Reset
+// on every initWs() via the let-binding below — see QUOTA_TOAST_SUPPRESS_MS.
+let lastQuotaToastAt = 0;
+const QUOTA_TOAST_SUPPRESS_MS = 5_000;
+
 App({
   globalData: {
     serverUrl: getServerUrl(),
@@ -64,7 +69,17 @@ App({
     // monthly cap is hit, surface a toast. The actual event row was
     // still written server-side for audit; we just don't push the
     // event_push the phone would have answered.
+    //
+    // wx.showToast is queue-then-display: a burst of over-limit events
+    // (e.g. several input_required prompts that all blow past 50/50)
+    // would chain toasts, with the last one showing ~6s after the
+    // first. Suppress repeat toasts within QUOTA_TOAST_SUPPRESS_MS —
+    // the per-event log via wx.showToast won't be missed when the
+    // user is already aware of the cap.
     ws.on('quota_exceeded', (payload: any) => {
+      const now = Date.now();
+      if (now - lastQuotaToastAt < QUOTA_TOAST_SUPPRESS_MS) return;
+      lastQuotaToastAt = now;
       const used = payload?.used ?? 0;
       const limit = payload?.limit ?? 50;
       wx.showToast({
