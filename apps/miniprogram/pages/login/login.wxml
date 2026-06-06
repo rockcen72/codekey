@@ -1,5 +1,19 @@
 <view class="container">
-  <view class="logo">CodeKey</view>
+  <view class="brand-lockup">
+    <view class="logo-mark">
+      <view class="mark-code left"></view>
+      <view class="mark-code right"></view>
+      <view class="mark-phone">
+        <view class="mark-check"></view>
+      </view>
+      <view class="mark-signal">
+        <view class="signal-arc outer"></view>
+        <view class="signal-arc inner"></view>
+        <view class="signal-dot"></view>
+      </view>
+    </view>
+    <view class="logo">CodeKey</view>
+  </view>
   <text class="subtitle">AI 远程控制</text>
   <text class="desc">扫描电脑终端的配对码，连接你的 AI 代理</text>
 
