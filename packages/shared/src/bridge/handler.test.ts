@@ -626,6 +626,54 @@ describe('ApprovalBridge canonical sessions', () => {
     expect(sentTypes).not.toContain('update_session_label');
   });
 
+  it('attachOpenCodeSession with knownServerSessionId + title sends attach_session AND update_session_label', async () => {
+    const relay = new FakeRelay();
+    const bridge = new ApprovalBridge(relay as any);
+    const fetchMessages = async () => [];
+
+    await bridge.attachOpenCodeSession(
+      'opencode-local-3',
+      fetchMessages,
+      'Recovered Title',
+      undefined,
+      'server-existing-3',
+    );
+
+    const sent = relay.sent.map(m => JSON.parse(m));
+    const sentTypes = sent.map(m => m.type);
+
+    expect(sentTypes).toContain('attach_session');
+    expect(sentTypes).toContain('update_session_label');
+    expect(sentTypes).not.toContain('register_session');
+
+    const attachMsg = sent.find(m => m.type === 'attach_session');
+    expect(attachMsg.payload.sessionId).toBe('server-existing-3');
+
+    const labelMsg = sent.find(m => m.type === 'update_session_label');
+    expect(labelMsg.payload.sessionId).toBe('server-existing-3');
+    expect(labelMsg.payload.label).toBe('Recovered Title');
+  });
+
+  it('attachOpenCodeSession with knownServerSessionId but no title sends attach_session only', async () => {
+    const relay = new FakeRelay();
+    const bridge = new ApprovalBridge(relay as any);
+    const fetchMessages = async () => [];
+
+    await bridge.attachOpenCodeSession(
+      'opencode-local-4',
+      fetchMessages,
+      undefined,
+      undefined,
+      'server-existing-4',
+    );
+
+    const sentTypes = relay.sent.map(m => JSON.parse(m).type);
+
+    expect(sentTypes).toContain('attach_session');
+    expect(sentTypes).not.toContain('update_session_label');
+    expect(sentTypes).not.toContain('register_session');
+  });
+
   it('maps hook-created sessions to windowId so later tab label sync updates relay title', async () => {
     const relay = new FakeRelay();
     const bridge = new ApprovalBridge(relay as any);

@@ -264,6 +264,12 @@ export class ApprovalBridge {
           metadata: { claudeSessionId: localSessionId, runtime: 'opencode', source: 'opencode_attach' },
         },
       }));
+      if (title) {
+        this.relay.sendRaw(JSON.stringify({
+          type: 'update_session_label',
+          payload: { sessionId: existingServerSessionId, label: title },
+        }));
+      }
     }
     if (onRegistered) {
       try { onRegistered(localSessionId, serverSessionId); } catch {}
