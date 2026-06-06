@@ -311,6 +311,73 @@ describe('OpenCodeSessionManager event handling', () => {
       expect(bridge.getAttachedSessionIds()).toContain('ses_stored');
       restoredManager.stop();
     });
+
+    it('pushes local title to relay on _onOpenCodeRegistered after a restart', async () => {
+      // Simulate a bridge restart: stored session is missing its relay
+      // mapping, and a new serverSessionId will be assigned via reconcile.
+      // Without the fix, the new relay row has no title because the prior
+      // row was 'finished' and the relay reuse path skipped it.
+      const sessionDir = join(opencodeDataDir, 'storage', 'session', 'global');
+      mkdirSync(sessionDir, { recursive: true });
+      writeFileSync(join(sessionDir, 'ses_reconcile.json'), JSON.stringify({
+        id: 'ses_reconcile',
+        directory: 'F:/Work/Codekey',
+        title: 'OpenCode reconcile title',
+        time: { created: 1, updated: 20 },
+      }), 'utf-8');
+      vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+        if (url.endsWith('/session')) return { ok: true, json: async () => [] } as Response;
+        return { ok: true, body: null } as Response;
+      }));
+
+      const restoredManager = new OpenCodeSessionManager('http://127.0.0.1:4096', bridge);
+      vi.spyOn(restoredManager as any, 'connectSSE').mockResolvedValue(undefined);
+      await restoredManager.start();
+      relay.sent.length = 0;
+
+      // Reconcile path: handler.ts:1829 fires _onOpenCodeRegistered with a
+      // fresh serverSessionId (the relay INSERTed because prior row was
+      // 'finished').
+      bridge._onOpenCodeRegistered?.('ses_reconcile', 'server-ses_reconcile');
+
+      const labelUpdate = relay.sent
+        .map((raw) => JSON.parse(raw))
+        .find((msg) => msg.type === 'update_session_label');
+      expect(labelUpdate).toMatchObject({
+        payload: { sessionId: 'server-ses_reconcile', label: 'OpenCode reconcile title' },
+      });
+      restoredManager.stop();
+    });
+
+    it('does not push update_session_label when local title is uninformative', async () => {
+      // normalizeOpenCodeTitle rejects 'ses_xxx' and 'OpenCode session'.
+      // Verify the fix doesn't push these as labels.
+      const sessionDir = join(opencodeDataDir, 'storage', 'session', 'global');
+      mkdirSync(sessionDir, { recursive: true });
+      writeFileSync(join(sessionDir, 'ses_default.json'), JSON.stringify({
+        id: 'ses_default',
+        directory: 'F:/Work/Codekey',
+        title: 'OpenCode session',
+        time: { created: 1, updated: 20 },
+      }), 'utf-8');
+      vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+        if (url.endsWith('/session')) return { ok: true, json: async () => [] } as Response;
+        return { ok: true, body: null } as Response;
+      }));
+
+      const restoredManager = new OpenCodeSessionManager('http://127.0.0.1:4096', bridge);
+      vi.spyOn(restoredManager as any, 'connectSSE').mockResolvedValue(undefined);
+      await restoredManager.start();
+      relay.sent.length = 0;
+
+      bridge._onOpenCodeRegistered?.('ses_default', 'server-ses_default');
+
+      const labelUpdate = relay.sent
+        .map((raw) => JSON.parse(raw))
+        .find((msg) => msg.type === 'update_session_label');
+      expect(labelUpdate).toBeUndefined();
+      restoredManager.stop();
+    });
   });
 
   describe('local session discovery', () => {

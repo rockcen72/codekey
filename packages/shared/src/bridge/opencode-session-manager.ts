@@ -161,6 +161,18 @@ export class OpenCodeSessionManager {
     // Register session mapping callback — fires on reconcile + attach
     this.bridge._onOpenCodeRegistered = (localId, serverId) => {
       this.registerSession(localId, serverId);
+      // Push title from local OpenCode storage so the relay row has it on
+      // every re-registration, not just the first attach. The relay reuse
+      // path skips finished sessions, so a new INSERT after a bridge
+      // restart loses the prior title — SSE session.updated only fires on
+      // actual changes, not on registration. Idempotent: relay merges.
+      const local = discoverLocalOpenCodeSessions(50).find((s) => s.id === localId);
+      if (local?.title) {
+        this.bridge.relay.sendRaw(JSON.stringify({
+          type: 'update_session_label',
+          payload: { sessionId: serverId, label: local.title },
+        }));
+      }
     };
 
     this._abortController = new AbortController();
