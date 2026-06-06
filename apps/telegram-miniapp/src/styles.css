@@ -1,0 +1,255 @@
+:root {
+  color-scheme: light;
+  font-family: "Aptos", "Segoe UI", sans-serif;
+  --bg: var(--tg-bg-color, #f4f1ea);
+  --panel: var(--tg-secondary-bg-color, #fffaf0);
+  --text: var(--tg-text-color, #1f2523);
+  --muted: var(--tg-hint-color, #66706b);
+  --accent: var(--tg-button-color, #006d77);
+  --accent-text: var(--tg-button-text-color, #ffffff);
+  --line: rgba(31, 37, 35, 0.12);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: var(--bg);
+  color: var(--text);
+}
+
+a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.shell {
+  width: min(720px, 100%);
+  min-height: 100vh;
+  margin: 0 auto;
+  padding: max(18px, env(safe-area-inset-top)) 18px 28px;
+}
+
+.centered {
+  display: grid;
+  place-items: center;
+}
+
+.page-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 20px;
+}
+
+.page-header h1,
+.login-panel h1 {
+  margin: 0;
+  font-size: 28px;
+  line-height: 1.1;
+}
+
+.eyebrow {
+  margin: 0 0 8px;
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.muted,
+.empty-state p {
+  color: var(--muted);
+}
+
+.login-panel,
+.tool-panel,
+.detail-panel,
+.empty-state,
+.notice {
+  width: 100%;
+  padding: 18px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.primary-button,
+.ghost-button {
+  min-height: 42px;
+  border: 0;
+  border-radius: 8px;
+  padding: 0 16px;
+  font: inherit;
+  font-weight: 700;
+}
+
+.primary-button {
+  background: var(--accent);
+  color: var(--accent-text);
+}
+
+.primary-button:disabled {
+  opacity: 0.55;
+}
+
+.ghost-button {
+  background: rgba(31, 37, 35, 0.06);
+  color: var(--text);
+}
+
+.link-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.field-label {
+  display: block;
+  margin-bottom: 8px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.code-input {
+  width: 100%;
+  height: 58px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 0 14px;
+  background: #fff;
+  color: var(--text);
+  font-size: 28px;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.error-text {
+  color: #b42318;
+}
+
+.debug-list {
+  display: grid;
+  gap: 8px;
+  margin: 16px 0;
+  padding: 12px;
+  border-radius: 8px;
+  background: rgba(31, 37, 35, 0.06);
+}
+
+.debug-list div {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.debug-list dt {
+  color: var(--muted);
+}
+
+.debug-list dd {
+  margin: 0;
+  font-weight: 700;
+}
+
+.summary-row,
+.session-card-top,
+.session-meta,
+.event-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.session-list,
+.event-list {
+  display: grid;
+  gap: 10px;
+}
+
+.session-card,
+.event-row {
+  display: block;
+  padding: 14px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--text);
+}
+
+.session-title {
+  margin: 12px 0 8px;
+  font-size: 18px;
+  font-weight: 800;
+  overflow-wrap: anywhere;
+}
+
+.session-meta {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.device-badge,
+.status-dot,
+.subscription-pill,
+.pending-count {
+  display: inline-flex;
+  align-items: center;
+  min-height: 26px;
+  border-radius: 999px;
+  padding: 0 10px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.device-badge {
+  background: rgba(0, 109, 119, 0.12);
+  color: #00545c;
+}
+
+.status-dot {
+  background: rgba(31, 37, 35, 0.08);
+}
+
+.status-active {
+  color: #137333;
+}
+
+.status-paused {
+  color: #9a6700;
+}
+
+.status-finished {
+  color: var(--muted);
+}
+
+.pending-count {
+  margin-top: 10px;
+  background: #fff3cd;
+  color: #7a4d00;
+}
+
+.detail-panel pre {
+  overflow: auto;
+  margin: 14px 0 0;
+  padding: 12px;
+  border-radius: 8px;
+  background: rgba(31, 37, 35, 0.06);
+}
+
+@media (max-width: 420px) {
+  .page-header {
+    align-items: flex-start;
+  }
+
+  .page-header h1,
+  .login-panel h1 {
+    font-size: 24px;
+  }
+}
