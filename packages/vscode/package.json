@@ -1,7 +1,6 @@
 {
   "name": "codekey-vscode",
   "version": "0.2.4",
-  "private": true,
   "displayName": "CodeKey",
   "description": "Remote control for AI coding agents — approve, deny, reply from your phone",
   "publisher": "codekey",
@@ -12,6 +11,18 @@
   "categories": [
     "Other"
   ],
+  "keywords": [
+    "claude-code",
+    "codex",
+    "remote",
+    "approval",
+    "ai",
+    "copilot"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/rockcen72/codekey.git"
+  },
   "activationEvents": [
     "onStartupFinished",
     "onView:codekey.sidebar"
