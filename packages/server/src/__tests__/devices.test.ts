@@ -95,4 +95,27 @@ describeDb('Devices API', () => {
     });
     expect(retry.statusCode).toBe(404);
   });
+
+  it('confirms pairing code with telegram platform label', async () => {
+    const pair = await app.inject({
+      method: 'POST',
+      url: '/api/v1/devices/pair',
+      payload: { deviceSecretHash: 't'.repeat(64), deviceName: 'telegram-pc' },
+    });
+    const { code, deviceId } = JSON.parse(pair.payload);
+    cleanupIds.push(deviceId);
+
+    const confirm = await app.inject({
+      method: 'POST',
+      url: '/api/v1/devices/confirm',
+      payload: { code, platform: 'telegram' },
+    });
+    expect(confirm.statusCode).toBe(200);
+
+    const [token] = await sql<{ label: string }[]>`
+      SELECT label FROM device_tokens
+      WHERE device_id = ${deviceId} AND token_type = 'client'
+    `;
+    expect(token?.label).toBe('telegram-miniapp');
+  });
 });

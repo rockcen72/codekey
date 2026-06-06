@@ -75,7 +75,12 @@ export function deviceRoutes(sql: postgres.Sql) {
     }, async (req, reply) => {
       const { code, platform } = req.body as { code: string; platform?: string };
       if (!code) return reply.code(400).send({ error: 'code required' });
-      if (platform !== undefined && platform !== 'feishu' && platform !== 'wechat') {
+      if (
+        platform !== undefined &&
+        platform !== 'feishu' &&
+        platform !== 'wechat' &&
+        platform !== 'telegram'
+      ) {
         return reply.code(400).send({ error: 'invalid platform' });
       }
 
@@ -94,7 +99,12 @@ export function deviceRoutes(sql: postgres.Sql) {
       // Create client token (short-lived, for mini program)
       const clientToken = randomUUID();
       const clientTokenHash = createHash('sha256').update(clientToken).digest('hex');
-      const clientLabel = platform === 'feishu' ? 'feishu-miniprogram' : 'wechat-miniprogram';
+      const clientLabel =
+        platform === 'feishu'
+          ? 'feishu-miniprogram'
+          : platform === 'telegram'
+            ? 'telegram-miniapp'
+            : 'wechat-miniprogram';
       await sql`
         INSERT INTO device_tokens (device_id, token_type, token_hash, label, expires_at)
         VALUES (${record.device_id}, 'client', ${clientTokenHash}, ${clientLabel}, now() + interval '30 days')
