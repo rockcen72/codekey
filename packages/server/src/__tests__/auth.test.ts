@@ -19,6 +19,7 @@ describeDb('Auth API (Phase 1)', () => {
     // body's `openid` field (or derives one from the code).
     process.env.WECHAT_APPID = 'mock';
     process.env.USER_JWT_SECRET = process.env.USER_JWT_SECRET || 'test-secret-' + 'x'.repeat(40);
+    process.env.TELEGRAM_LOGIN_SECRET = 'test-telegram-login-secret';
 
     const built = await buildApp(DATABASE_URL!);
     app = built.app;
@@ -109,6 +110,74 @@ describeDb('Auth API (Phase 1)', () => {
       SELECT provider FROM auth_identities WHERE user_id = ${body.userId}
     `;
     expect(row?.provider).toBe('feishu');
+  });
+
+  // ── POST /api/v1/auth/telegram ───────────────────────────
+
+  it('telegram-login: creates user + auth_identity on first login', async () => {
+    const telegramId = String(Date.now());
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/v1/auth/telegram',
+      headers: { 'x-codekey-telegram-secret': 'test-telegram-login-secret' },
+      payload: { telegramId, username: 'codekey_test' },
+    });
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.payload);
+    expect(body.isNew).toBe(true);
+    expect(body.provider).toBe('telegram');
+    expect(body.telegramId).toBe(telegramId);
+    expect(typeof body.userId).toBe('number');
+    expect(typeof body.token).toBe('string');
+    cleanupUserIds.push(body.userId);
+
+    const [row] = await sql`
+      SELECT provider, openid FROM auth_identities WHERE user_id = ${body.userId}
+    `;
+    expect(row?.provider).toBe('telegram');
+    expect(row?.openid).toBe(telegramId);
+  });
+
+  it('telegram-login: returns existing user on repeat login', async () => {
+    const telegramId = String(Date.now() + 1);
+    const first = await app.inject({
+      method: 'POST',
+      url: '/api/v1/auth/telegram',
+      headers: { 'x-codekey-telegram-secret': 'test-telegram-login-secret' },
+      payload: { telegramId },
+    });
+    const firstBody = JSON.parse(first.payload);
+    cleanupUserIds.push(firstBody.userId);
+
+    const second = await app.inject({
+      method: 'POST',
+      url: '/api/v1/auth/telegram',
+      headers: { 'x-codekey-telegram-secret': 'test-telegram-login-secret' },
+      payload: { telegramId, username: 'changed_name' },
+    });
+    expect(second.statusCode).toBe(200);
+    const secondBody = JSON.parse(second.payload);
+    expect(secondBody.isNew).toBe(false);
+    expect(secondBody.userId).toBe(firstBody.userId);
+  });
+
+  it('telegram-login: rejects missing shared secret', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/v1/auth/telegram',
+      payload: { telegramId: '123456' },
+    });
+    expect(res.statusCode).toBe(401);
+  });
+
+  it('telegram-login: rejects missing telegramId', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/v1/auth/telegram',
+      headers: { 'x-codekey-telegram-secret': 'test-telegram-login-secret' },
+      payload: {},
+    });
+    expect(res.statusCode).toBe(400);
   });
 
   // ── POST /api/v1/auth/claim-device ────────────────────────

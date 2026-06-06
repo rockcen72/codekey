@@ -34,6 +34,56 @@ interface WxCode2SessionResp {
   errmsg?: string;
 }
 
+async function findOrCreateUserForIdentity(
+  sql: postgres.Sql,
+  provider: string,
+  openid: string,
+  unionid?: string,
+): Promise<{ userId: number; isNew: boolean }> {
+  const [existing] = await sql<{ user_id: number }[]>`
+    SELECT user_id FROM auth_identities
+    WHERE provider = ${provider} AND openid = ${openid}
+  `;
+
+  if (existing) {
+    return { userId: existing.user_id, isNew: false };
+  }
+
+  try {
+    const userId = await sql.begin(async (tx) => {
+      const [u] = await tx<{ id: number }[]>`
+        INSERT INTO users DEFAULT VALUES RETURNING id
+      `;
+      if (!u) throw new Error('users INSERT returned no row');
+      const [ident] = await tx<{ user_id: number }[]>`
+        INSERT INTO auth_identities (user_id, provider, openid, unionid)
+        VALUES (${u.id}, ${provider}, ${openid}, ${unionid ?? null})
+        ON CONFLICT (provider, openid) DO NOTHING
+        RETURNING user_id
+      `;
+      if (!ident) {
+        // Another concurrent request committed first. Throw to roll
+        // back the user row we just inserted, then re-read below.
+        throw new Error('identity_conflict');
+      }
+      return ident.user_id;
+    });
+    return { userId, isNew: true };
+  } catch (err) {
+    if (err instanceof Error && err.message === 'identity_conflict') {
+      const [winner] = await sql<{ user_id: number }[]>`
+        SELECT user_id FROM auth_identities
+        WHERE provider = ${provider} AND openid = ${openid}
+      `;
+      if (!winner) {
+        throw new Error('auth_identities row vanished after conflict');
+      }
+      return { userId: winner.user_id, isNew: false };
+    }
+    throw err;
+  }
+}
+
 async function exchangeWxCode(code: string, appid: string, secret: string): Promise<WxCode2SessionResp> {
   const url = `${WECHAT_JSCODE2SESSION}?appid=${encodeURIComponent(appid)}&secret=${encodeURIComponent(secret)}&js_code=${encodeURIComponent(code)}&grant_type=authorization_code`;
   const resp = await fetch(url, { signal: AbortSignal.timeout(5_000) });
@@ -76,73 +126,55 @@ export function authRoutes(sql: postgres.Sql) {
         unionid = wx.unionid;
       }
 
-      // First-time vs returning is decided by a quick SELECT, with a
-      // transaction + ON CONFLICT fallback for the very narrow race
-      // where two requests for the same new (provider, openid) both
-      // see "no row" simultaneously. The transaction's loser hits
-      // ON CONFLICT on the identity insert, throws, and the whole
-      // transaction (including its users row) is rolled back — so
-      // we never leave an orphan users row behind. (The earlier CTE
-      // design did: the CTE always materialised a fresh users row
-      // before the conflict check ran.)
       const provider = body.provider === 'feishu' ? 'feishu' : 'wechat';
-
-      const [existing] = await sql<{ user_id: number }[]>`
-        SELECT user_id FROM auth_identities
-        WHERE provider = ${provider} AND openid = ${openid}
-      `;
-
-      let userId: number;
-      let isNew: boolean;
-      if (existing) {
-        userId = existing.user_id;
-        isNew = false;
-      } else {
-        try {
-          const result = await sql.begin(async (tx) => {
-            const [u] = await tx<{ id: number }[]>`
-              INSERT INTO users DEFAULT VALUES RETURNING id
-            `;
-            if (!u) throw new Error('users INSERT returned no row');
-            const [ident] = await tx<{ user_id: number }[]>`
-              INSERT INTO auth_identities (user_id, provider, openid, unionid)
-              VALUES (${u.id}, ${provider}, ${openid}, ${unionid ?? null})
-              ON CONFLICT (provider, openid) DO NOTHING
-              RETURNING user_id
-            `;
-            if (!ident) {
-              // Another concurrent request committed first. Throw
-              // to roll back this transaction (which removes the
-              // users row we just inserted) and let the caller
-              // re-read the winner's identity.
-              throw new Error('identity_conflict');
-            }
-            return ident.user_id;
-          });
-          userId = result;
-          isNew = true;
-        } catch (err) {
-          if (err instanceof Error && err.message === 'identity_conflict') {
-            const [winner] = await sql<{ user_id: number }[]>`
-              SELECT user_id FROM auth_identities
-              WHERE provider = ${provider} AND openid = ${openid}
-            `;
-            if (!winner) {
-              // Should be impossible: the winning transaction just
-              // committed. If the row really is gone, something is
-              // deeply wrong (manual delete? bad migration?).
-              throw new Error('auth_identities row vanished after conflict');
-            }
-            userId = winner.user_id;
-            isNew = false;
-          } else {
-            throw err;
-          }
-        }
-      }
+      const { userId, isNew } = await findOrCreateUserForIdentity(sql, provider, openid, unionid);
 
       const token = signUserJwt(userId);
       return { userId, token, isNew };
+    });
+
+    // ── POST /api/v1/auth/telegram ─────────────────────────
+    // This endpoint trusts Cloudflare Worker to verify Telegram
+    // initData first. It is protected by a shared server-side secret
+    // so clients cannot spoof telegramId directly.
+    fastify.post('/auth/telegram', {
+      preHandler: rateLimit({ windowMs: 60_000, max: 60, keyPrefix: 'telegram-login' }),
+    }, async (req, reply) => {
+      const expectedSecret = process.env.TELEGRAM_LOGIN_SECRET;
+      if (!expectedSecret) {
+        return reply.code(503).send({ error: 'telegram_login not configured' });
+      }
+
+      const providedSecret = req.headers['x-codekey-telegram-secret'];
+      if (providedSecret !== expectedSecret) {
+        return reply.code(401).send({ error: 'unauthorized' });
+      }
+
+      const body = (req.body ?? {}) as {
+        telegramId?: string | number;
+        username?: string;
+        firstName?: string;
+        lastName?: string;
+        authDate?: number;
+      };
+      if (body.telegramId === undefined || body.telegramId === null || body.telegramId === '') {
+        return reply.code(400).send({ error: 'telegramId required' });
+      }
+
+      const openid = String(body.telegramId);
+      if (!/^\d{1,32}$/.test(openid)) {
+        return reply.code(400).send({ error: 'invalid telegramId' });
+      }
+
+      const { userId, isNew } = await findOrCreateUserForIdentity(sql, 'telegram', openid);
+      const token = signUserJwt(userId);
+      return {
+        userId,
+        token,
+        isNew,
+        provider: 'telegram',
+        telegramId: openid,
+      };
     });
 
     // ── POST /api/v1/auth/claim-device ──────────────────────
