@@ -1,8 +1,10 @@
 import { Link } from 'react-router-dom';
 import { SessionCard } from '../components/SessionCard';
+import { DeviceBadge } from '../components/DeviceBadge';
 import type { AuthState } from '../hooks/useAuth';
 import { useDevices } from '../hooks/useDevices';
 import { useSessions } from '../hooks/useSessions';
+import { formatDate } from '../utils/format';
 
 interface Props {
   auth: AuthState;
@@ -34,10 +36,20 @@ export function SessionsPage({ auth }: Props) {
         </section>
       ) : (
         <>
-          <div className="summary-row">
-            <span>{devices.devices.length} 台设备</span>
-            <Link to="/bind">新增绑定</Link>
-          </div>
+          <section className="device-summary">
+            <div className="summary-header">
+              <h2>已绑定 {devices.devices.length} 台桌面设备</h2>
+              <Link to="/bind">新增绑定</Link>
+            </div>
+            <ul className="device-list">
+              {devices.devices.map((d) => (
+                <li key={d.id}>
+                  <DeviceBadge name={d.device_name} deviceId={d.id} />
+                  <span className="muted">{formatDate(d.bound_at)}</span>
+                </li>
+              ))}
+            </ul>
+          </section>
           <section className="session-list">
             {sessions.sessions.length > 0 ? (
               sessions.sessions.map((session) => <SessionCard key={session.id} session={session} />)

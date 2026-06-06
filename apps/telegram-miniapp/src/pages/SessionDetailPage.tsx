@@ -3,6 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { userRequest } from '../api/client';
 import type { UserEvent, UserSession } from '../api/types';
 import type { AuthState } from '../hooks/useAuth';
+import { DeviceBadge } from '../components/DeviceBadge';
 import { formatDate } from '../utils/format';
 
 interface Props {
@@ -48,7 +49,7 @@ export function SessionDetailPage({ auth }: Props) {
       {session ? (
         <section className="detail-panel">
           <div className="session-meta">
-            <span>{session.device_name}</span>
+            <DeviceBadge name={session.device_name} deviceId={session.device_id} />
             <span>{formatDate(session.last_active_at)}</span>
           </div>
           <pre>{JSON.stringify(session.metadata, null, 2)}</pre>

@@ -12,7 +12,7 @@ export function SessionCard({ session }: Props) {
   return (
     <Link className="session-card" to={`/sessions/${session.id}`}>
       <div className="session-card-top">
-        <DeviceBadge name={session.device_name} />
+        <DeviceBadge name={session.device_name} deviceId={session.device_id} />
         <span className={`status-dot status-${session.status}`}>{session.status}</span>
       </div>
       <div className="session-title">{title}</div>
