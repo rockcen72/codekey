@@ -311,17 +311,20 @@ export class OpenCodeSessionManager {
     } catch (err: any) { console.error('[opencode] replayHistory error: %s', err.message || err); }
   }
 
-  private ensureRelaySession(localSessionId: string): Promise<string> {
+  private ensureRelaySession(localSessionId: string, providedTitle?: string): Promise<string> {
     const existing = this.opencodeSessionToRelayId.get(localSessionId);
     if (existing) return Promise.resolve(existing);
 
     const inFlight = this.inFlightSessions.get(localSessionId);
     if (inFlight) return inFlight;
 
-    const promise = this.bridge.ensureSession(localSessionId, undefined, 'opencode', {
+    const options: { agentType: string; runtime: string; title?: string } = {
       agentType: 'opencode',
       runtime: 'opencode',
-    }).then((serverSessionId) => {
+    };
+    if (providedTitle) options.title = providedTitle;
+
+    const promise = this.bridge.ensureSession(localSessionId, undefined, 'opencode', options).then((serverSessionId) => {
       this.opencodeSessions.add(serverSessionId);
       this.opencodeSessionToRelayId.set(localSessionId, serverSessionId);
       return serverSessionId;

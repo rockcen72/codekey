@@ -835,6 +835,49 @@ describe('OpenCodeSessionManager event handling', () => {
     });
   });
 
+  describe('ensureRelaySession title passthrough', () => {
+    it('writes providedTitle into register_session payload.metadata.title', async () => {
+      await (manager as any).ensureRelaySession('oc-pass-title', 'My OpenCode Task');
+
+      const registerMsg = relay.sent
+        .map((raw) => JSON.parse(raw))
+        .find((m: any) => m.type === 'register_session' && m.payload.claudeSessionId === 'oc-pass-title');
+
+      expect(registerMsg).toBeDefined();
+      expect(registerMsg.payload.metadata.title).toBe('My OpenCode Task');
+      expect(registerMsg.payload.metadata.runtime).toBe('opencode');
+      expect(registerMsg.payload.metadata.source).toBe('opencode');
+    });
+
+    it('omits metadata.title when no providedTitle given', async () => {
+      await (manager as any).ensureRelaySession('oc-no-title');
+
+      const registerMsg = relay.sent
+        .map((raw) => JSON.parse(raw))
+        .find((m: any) => m.type === 'register_session' && m.payload.claudeSessionId === 'oc-no-title');
+
+      expect(registerMsg).toBeDefined();
+      expect('title' in registerMsg.payload.metadata).toBe(false);
+    });
+
+    it('reuses cached serverSessionId on second call without re-registering', async () => {
+      await (manager as any).ensureRelaySession('oc-cached', 'Title 1');
+
+      const initialRegistrations = relay.sent
+        .map((raw) => JSON.parse(raw))
+        .filter((m: any) => m.type === 'register_session' && m.payload.claudeSessionId === 'oc-cached');
+      expect(initialRegistrations.length).toBe(1);
+
+      const second = await (manager as any).ensureRelaySession('oc-cached', 'Title 2 — should be ignored');
+
+      const laterRegistrations = relay.sent
+        .map((raw) => JSON.parse(raw))
+        .filter((m: any) => m.type === 'register_session' && m.payload.claudeSessionId === 'oc-cached');
+      expect(laterRegistrations.length).toBe(1);
+      expect(second).toBe('server-oc-cached');
+    });
+  });
+
   describe('server.connected', () => {
     it('restores attached sessions even when the current OpenCode session list omits them', async () => {
       writeFileSync(attachedStoragePath, JSON.stringify([

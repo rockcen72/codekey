@@ -552,6 +552,80 @@ describe('ApprovalBridge canonical sessions', () => {
     expect(registerMsg.payload.sessionLabel).toBe('Fix login bug');
   });
 
+  it('_registerOnRelay writes options.title into metadata.title when no windowLabel', async () => {
+    const relay = new FakeRelay();
+    const bridge = new ApprovalBridge(relay as any);
+
+    await bridge.ensureSession('opencode-session-1', undefined, 'opencode', {
+      agentType: 'opencode',
+      runtime: 'opencode',
+      title: 'My OpenCode Task',
+    });
+
+    const registerMsg = relay.sent
+      .map(m => JSON.parse(m))
+      .find((m: any) => m.type === 'register_session');
+
+    expect(registerMsg).toBeDefined();
+    expect(registerMsg.payload.metadata.title).toBe('My OpenCode Task');
+    expect(registerMsg.payload.metadata.runtime).toBe('opencode');
+    expect(registerMsg.payload.metadata.source).toBe('opencode');
+  });
+
+  it('_registerOnRelay omits metadata.title when no windowLabel, no options.title, no transcript title', async () => {
+    const relay = new FakeRelay();
+    const bridge = new ApprovalBridge(relay as any);
+
+    await bridge.ensureSession('claude-no-title', undefined, 'hook');
+
+    const registerMsg = relay.sent
+      .map(m => JSON.parse(m))
+      .find((m: any) => m.type === 'register_session');
+
+    expect(registerMsg).toBeDefined();
+    expect('title' in registerMsg.payload.metadata).toBe(false);
+  });
+
+  it('attachOpenCodeSession passes title into register_session metadata and does NOT send update_session_label', async () => {
+    const relay = new FakeRelay();
+    const bridge = new ApprovalBridge(relay as any);
+    const fetchMessages = async () => [];
+
+    await bridge.attachOpenCodeSession(
+      'opencode-local-1',
+      fetchMessages,
+      'My OpenCode Task',
+    );
+
+    const sentTypes = relay.sent.map(m => JSON.parse(m).type);
+    const registerMsg = relay.sent
+      .map(m => JSON.parse(m))
+      .find((m: any) => m.type === 'register_session');
+
+    expect(registerMsg).toBeDefined();
+    expect(registerMsg.payload.metadata.title).toBe('My OpenCode Task');
+    expect(registerMsg.payload.metadata.runtime).toBe('opencode');
+    expect(registerMsg.payload.metadata.source).toBe('opencode');
+    expect(sentTypes).not.toContain('update_session_label');
+  });
+
+  it('attachOpenCodeSession without title sends register without title and no update_session_label', async () => {
+    const relay = new FakeRelay();
+    const bridge = new ApprovalBridge(relay as any);
+    const fetchMessages = async () => [];
+
+    await bridge.attachOpenCodeSession('opencode-local-2', fetchMessages);
+
+    const sentTypes = relay.sent.map(m => JSON.parse(m).type);
+    const registerMsg = relay.sent
+      .map(m => JSON.parse(m))
+      .find((m: any) => m.type === 'register_session');
+
+    expect(registerMsg).toBeDefined();
+    expect('title' in registerMsg.payload.metadata).toBe(false);
+    expect(sentTypes).not.toContain('update_session_label');
+  });
+
   it('maps hook-created sessions to windowId so later tab label sync updates relay title', async () => {
     const relay = new FakeRelay();
     const bridge = new ApprovalBridge(relay as any);

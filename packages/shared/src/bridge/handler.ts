@@ -254,7 +254,7 @@ export class ApprovalBridge {
       this.sessions.set(localSessionId, knownServerSessionId);
     }
     const serverSessionId = existingServerSessionId
-      ?? await this.ensureSession(localSessionId, undefined, 'opencode', { agentType: 'opencode', runtime: 'opencode' });
+      ?? await this.ensureSession(localSessionId, undefined, 'opencode', { agentType: 'opencode', runtime: 'opencode', title });
     if (existingServerSessionId) {
       this.relay.sendRaw(JSON.stringify({
         type: 'attach_session',
@@ -263,12 +263,6 @@ export class ApprovalBridge {
           claudeSessionId: localSessionId,
           metadata: { claudeSessionId: localSessionId, runtime: 'opencode', source: 'opencode_attach' },
         },
-      }));
-    }
-    if (title) {
-      this.relay.sendRaw(JSON.stringify({
-        type: 'update_session_label',
-        payload: { sessionId: serverSessionId, label: title },
       }));
     }
     if (onRegistered) {
@@ -715,7 +709,7 @@ export class ApprovalBridge {
    *  windowId is forwarded as metadata only, not used for routing heuristic.
    *  @param source - metadata source label ('hook' | 'transcript_attach'), defaults to 'hook'.
    *  @param options - optional overrides for agentType and runtime metadata. */
-  async ensureSession(claudeSessionId: string, windowId?: string, source?: string, options?: { agentType?: string; runtime?: string }): Promise<string> {
+  async ensureSession(claudeSessionId: string, windowId?: string, source?: string, options?: { agentType?: string; runtime?: string; title?: string }): Promise<string> {
     if (!claudeSessionId) {
       throw new Error('ensureSession requires non-empty claudeSessionId');
     }
@@ -760,7 +754,7 @@ export class ApprovalBridge {
     return promise;
   }
 
-  private async _registerOnRelay(claudeSessionId: string, windowId?: string, source?: string, options?: { agentType?: string; runtime?: string }): Promise<string> {
+  private async _registerOnRelay(claudeSessionId: string, windowId?: string, source?: string, options?: { agentType?: string; runtime?: string; title?: string }): Promise<string> {
     const clientRequestId = randomUUID();
     const transcript = await resolveClaudeTranscript(claudeSessionId).catch(() => null);
 
@@ -774,7 +768,7 @@ export class ApprovalBridge {
         resolve(sid);
       });
       const label = windowId ? this.windowLabels.get(windowId) : undefined;
-      const title = label || transcript?.title || undefined;
+      const title = label || options?.title || transcript?.title || undefined;
       const agentType = options?.agentType || 'claude-code-hook';
       const runtime = options?.runtime || 'claude-code';
       const metadata: Record<string, unknown> = {
