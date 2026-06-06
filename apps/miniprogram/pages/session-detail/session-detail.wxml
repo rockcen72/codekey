@@ -123,6 +123,38 @@
     </block>
   </scroll-view>
 
+  <!-- Floating approval focus card -->
+  <view class="approval-focus" wx:if="{{hasPrimaryPendingEvent && !approvalSheetOpen}}">
+    <view class="focus-card accent-{{primaryPendingEvent.accent}} agent-{{primaryPendingEvent.agentClass}}">
+      <view class="focus-top">
+        <view class="focus-title-wrap">
+          <text class="focus-kicker">{{primaryPendingEvent.requiresInput ? '需要选择' : '等待审批'}}</text>
+          <text class="focus-title">{{primaryPendingEvent.summary || primaryPendingEvent.command || primaryPendingEvent.typeLabel}}</text>
+        </view>
+        <text wx:if="{{primaryPendingEvent.riskText}}" class="risk-tag {{primaryPendingEvent.risk_level}}">{{primaryPendingEvent.riskText}}</text>
+      </view>
+
+      <view wx:if="{{primaryPendingEvent.command}}" class="focus-command">
+        <text class="focus-command-text mono">{{primaryPendingEvent.command}}</text>
+      </view>
+
+      <view wx:if="{{primaryPendingEvent.requiresInput}}" class="focus-actions single">
+        <button class="focus-btn primary" data-id="{{primaryPendingEvent.eventId}}" bindtap="openApprovalSheet">选择 / 回复</button>
+      </view>
+      <view wx:elif="{{primaryPendingEvent.canApprove}}" class="focus-actions">
+        <button class="focus-btn primary" data-id="{{primaryPendingEvent.eventId}}" catchtap="approveEvent">批准</button>
+        <button class="focus-btn danger" data-id="{{primaryPendingEvent.eventId}}" catchtap="denyEvent">拒绝</button>
+        <button class="focus-icon-btn" data-id="{{primaryPendingEvent.eventId}}" catchtap="pauseEvent">暂缓</button>
+        <button class="focus-icon-btn" data-id="{{primaryPendingEvent.eventId}}" bindtap="openApprovalSheet">详情</button>
+      </view>
+      <view wx:else class="focus-actions">
+        <button class="focus-btn primary" data-id="{{primaryPendingEvent.eventId}}" bindtap="openApprovalSheet">查看详情</button>
+        <button class="focus-icon-btn" data-id="{{primaryPendingEvent.eventId}}" catchtap="denyEvent">拒绝</button>
+        <button class="focus-icon-btn" data-id="{{primaryPendingEvent.eventId}}" catchtap="pauseEvent">暂缓</button>
+      </view>
+    </view>
+  </view>
+
   <!-- Composer: input + circular send button -->
   <view class="composer">
     <view class="composer-inner">
@@ -144,10 +176,9 @@
     </view>
   </view>
 
-  <!-- Approval bottom sheet -->
+  <!-- Approval detail modal -->
   <view class="sheet-mask" wx:if="{{approvalSheetOpen}}" bindtap="closeApprovalSheet">
     <view class="approval-sheet" catchtap="">
-      <view class="sheet-handle"></view>
       <view class="sheet-head">
         <view class="event-head-left">
           <text class="sheet-title">{{approvalEvent.requiresInput ? '选择请求' : '审批请求'}}</text>

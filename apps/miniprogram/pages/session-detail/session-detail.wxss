@@ -100,7 +100,7 @@
   flex: 1;
   height: 0;
   box-sizing: border-box;
-  padding: 10rpx 24rpx 24rpx;
+  padding: 10rpx 24rpx 300rpx;
 }
 
 /* System markers */
@@ -597,6 +597,136 @@
   opacity: 0.8;
 }
 
+/* ── Floating approval focus ── */
+
+.approval-focus {
+  position: fixed;
+  left: 26rpx;
+  right: 26rpx;
+  top: 52%;
+  z-index: 80;
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+
+.focus-card {
+  pointer-events: auto;
+  padding: 22rpx;
+  border: 1rpx solid rgba(28, 25, 23, 0.08);
+  border-radius: 22rpx;
+  background: rgba(252, 250, 248, 0.96);
+  box-shadow: 0 18rpx 52rpx rgba(28, 25, 23, 0.18);
+  backdrop-filter: blur(18rpx);
+}
+
+.focus-card.agent-claude {
+  border-color: rgba(234, 88, 12, 0.18);
+}
+
+.focus-card.agent-codex {
+  border-color: rgba(34, 197, 94, 0.2);
+}
+
+.focus-card.agent-opencode {
+  border-color: rgba(92, 156, 245, 0.22);
+}
+
+.focus-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18rpx;
+}
+
+.focus-title-wrap {
+  flex: 1;
+  min-width: 0;
+}
+
+.focus-kicker {
+  display: block;
+  margin-bottom: 6rpx;
+  color: var(--ck-muted);
+  font-size: 21rpx;
+  font-weight: 700;
+  letter-spacing: 0;
+}
+
+.focus-title {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  color: var(--ck-text);
+  font-size: 30rpx;
+  font-weight: 800;
+  line-height: 1.35;
+  word-break: break-word;
+}
+
+.focus-command {
+  margin-top: 16rpx;
+  padding: 14rpx 16rpx;
+  border-radius: 12rpx;
+  background: #272321;
+  overflow: hidden;
+}
+
+.focus-command-text {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  color: #f4f1ed;
+  font-size: 22rpx;
+  line-height: 1.45;
+  word-break: break-all;
+}
+
+.focus-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr 92rpx 92rpx;
+  gap: 12rpx;
+  margin-top: 18rpx;
+}
+
+.focus-actions.single {
+  grid-template-columns: 1fr;
+}
+
+.focus-btn,
+.focus-icon-btn {
+  height: 88rpx;
+  line-height: 88rpx;
+  border-radius: 18rpx;
+  font-size: 28rpx;
+  font-weight: 800;
+  text-align: center;
+}
+
+.focus-btn.primary {
+  color: #fff;
+  background: #161412;
+}
+
+.focus-btn.danger {
+  color: #8f1d1d;
+  background: #fff1f1;
+}
+
+.focus-icon-btn {
+  color: var(--ck-muted);
+  background: #f1eee9;
+  font-size: 23rpx;
+  font-weight: 700;
+}
+
+.focus-btn:active,
+.focus-icon-btn:active {
+  transform: scale(0.98);
+  opacity: 0.86;
+}
+
 /* ── Composer: image button + pill input + circular send button ── */
 
 .composer {
@@ -736,25 +866,22 @@
   bottom: 0;
   z-index: 100;
   display: flex;
-  align-items: flex-end;
-  background: rgba(28, 25, 23, 0.45);
+  align-items: center;
+  justify-content: center;
+  padding: 34rpx 28rpx;
+  background: rgba(28, 25, 23, 0.38);
 }
 
 .approval-sheet {
   width: 100%;
-  max-height: 86vh;
-  padding: 16rpx 24rpx calc(24rpx + env(safe-area-inset-bottom));
-  border-radius: var(--ck-radius-xl) var(--ck-radius-xl) 0 0;
+  max-width: 690rpx;
+  max-height: 74vh;
+  padding: 26rpx 26rpx calc(26rpx + env(safe-area-inset-bottom));
+  border: 1rpx solid rgba(28, 25, 23, 0.08);
+  border-radius: 26rpx;
   background: var(--ck-surface);
   overflow: auto;
-}
-
-.sheet-handle {
-  width: 64rpx;
-  height: 6rpx;
-  margin: 0 auto 22rpx;
-  border-radius: 3rpx;
-  background: var(--ck-border);
+  box-shadow: 0 22rpx 70rpx rgba(28, 25, 23, 0.24);
 }
 
 .sheet-head {
@@ -765,7 +892,7 @@
 }
 
 .sheet-title {
-  font-size: 34rpx;
+  font-size: 32rpx;
   font-weight: 800;
   color: var(--ck-text);
 }
@@ -828,9 +955,9 @@
 
 .sheet-btn {
   flex: 1;
-  height: 76rpx;
-  line-height: 76rpx;
-  border-radius: var(--ck-radius-full);
+  min-height: 88rpx;
+  line-height: 88rpx;
+  border-radius: 18rpx;
   font-size: 28rpx;
   font-weight: 800;
   transition: background 140ms ease, color 140ms ease, border-color 140ms ease;
@@ -854,8 +981,8 @@
 /* MuxAgent button variant: ghost (outlined) */
 .sheet-btn.deny,
 .sheet-btn.pause {
-  background: transparent;
-  border: 1rpx solid var(--ck-border);
+  background: #f5f2ee;
+  border: 1rpx solid #eee8df;
   color: var(--ck-muted);
 }
 

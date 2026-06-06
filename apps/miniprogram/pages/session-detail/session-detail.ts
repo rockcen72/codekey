@@ -55,6 +55,8 @@ Page({
     _viewportHeight: 0,
     approvalSheetOpen: false,
     approvalEvent: null as ChatMessage | null,
+    primaryPendingEvent: null as ChatMessage | null,
+    hasPrimaryPendingEvent: false,
     sheetReplyText: '',
     quotaState: 'hidden' as 'hidden' | 'normal' | 'approaching' | 'exhausted',
     quotaPercent: 0,
@@ -573,6 +575,12 @@ Page({
         || latestPendingIdx !== -1
         || !this.data._userScrolledUp;
 
+      const primaryPendingEvent = this.getPrimaryPendingEvent(messages);
+      const pendingState = {
+        primaryPendingEvent,
+        hasPrimaryPendingEvent: !!primaryPendingEvent,
+      };
+
       if (shouldAutoScroll) {
         const targetIdx = pushedIdx !== -1
           ? pushedIdx
@@ -581,17 +589,25 @@ Page({
             : messages.length - 1;
         const targetId = 'msg-' + messages[targetIdx].id;
         // Reset scrollToId first so scroll-into-view always detects the change
-        this.setData({ chatMessages: messages, scrollToId: '' }, () => {
+        this.setData({ chatMessages: messages, scrollToId: '', ...pendingState }, () => {
           wx.nextTick(() => {
             this.setData({ scrollToId: targetId, scrollTop: Date.now() });
           });
         });
       } else {
-        this.setData({ chatMessages: messages });
+        this.setData({ chatMessages: messages, ...pendingState });
       }
     } else {
-      this.setData({ chatMessages: messages });
+      this.setData({ chatMessages: messages, primaryPendingEvent: null, hasPrimaryPendingEvent: false });
     }
+  },
+
+  getPrimaryPendingEvent(messages: ChatMessage[]): ChatMessage | null {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const msg = messages[i];
+      if (msg.type === 'ai' && msg.pending) return msg;
+    }
+    return null;
   },
 
   getDecisionText(decision: string): string {
@@ -604,7 +620,7 @@ Page({
     }
   },
 
-  // ── Approval bottom sheet ──
+  // ── Approval modal ──
 
   openApprovalSheet(e: any) {
     const eventId = e.currentTarget.dataset.id;
@@ -681,7 +697,13 @@ Page({
       senderName: '你',
     });
 
-    this.setData({ chatMessages: messages, sheetReplyText: '' });
+    const primaryPendingEvent = this.getPrimaryPendingEvent(messages);
+    this.setData({
+      chatMessages: messages,
+      primaryPendingEvent,
+      hasPrimaryPendingEvent: !!primaryPendingEvent,
+      sheetReplyText: '',
+    });
     this.closeApprovalSheet();
     setTimeout(() => this.fetchDetail(), 1500);
   },
@@ -744,7 +766,8 @@ Page({
         senderName: '你',
       });
     }
-    this.setData({ chatMessages: messages }, () => {
+    const primaryPendingEvent = this.getPrimaryPendingEvent(messages);
+    this.setData({ chatMessages: messages, primaryPendingEvent, hasPrimaryPendingEvent: !!primaryPendingEvent }, () => {
       this.setData({ scrollToId: 'msg-' + messages[messages.length - 1].id });
     });
 
@@ -928,7 +951,8 @@ Page({
       kindBadge: '',
       senderName: '你',
     });
-    this.setData({ chatMessages: messages, scrollToId: 'msg-' + replyId });
+    const primaryPendingEvent = this.getPrimaryPendingEvent(messages);
+    this.setData({ chatMessages: messages, primaryPendingEvent, hasPrimaryPendingEvent: !!primaryPendingEvent, scrollToId: 'msg-' + replyId });
     setTimeout(() => this.fetchDetail(), 1500);
   },
 
