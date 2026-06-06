@@ -339,6 +339,7 @@ function renderClaudeSessions(state: SidebarState): string {
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
         ${i18n(state.lang, 'Local Sessions', '本地会话')}
       </span>
+      <span class="refresh-status" id="sessionsRefreshStatus"></span>
       <button class="btn-ghost btn-sm" data-action="refreshClaudeSessions" title="Refresh" style="font-size:11px;padding:2px 6px">↻</button>
     </div>
     <div id="sessionsContent">${renderSessionsContent(state)}</div>
@@ -698,6 +699,11 @@ ${renderSubscribe(state)}
       }
       el.style.display = 'block';
     }
+
+    if (e.data && e.data.type === 'sessionsRefreshStatus') {
+      var status = document.getElementById('sessionsRefreshStatus');
+      if (status) status.textContent = e.data.text || '';
+    }
   });
 
   // Pairing method toggle (local UI only)
@@ -1007,6 +1013,12 @@ body{
   font-size:9px;font-weight:600;text-transform:uppercase;
   letter-spacing:.1em;color:var(--vscode-descriptionForeground,#50506e);
   display:flex;align-items:center;gap:5px;
+}
+.refresh-status{
+  margin-left:auto;
+  margin-right:6px;
+  font-size:10px;
+  color:var(--vscode-descriptionForeground,#50506e);
 }
 .card-label svg{width:11px;height:11px}
 

@@ -88,6 +88,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
   private _lastApprovalSig = '';
   private _pairingWs?: WebSocket;
   private _pairingTimeout?: ReturnType<typeof setTimeout>;
+  private _claudeAttachInFlight = new Set<string>();
   private _opencodeAttachInFlight = new Set<string>();
   private _codexStaleStopInFlight = new Set<string>();
   private _pushInFlight = false;
@@ -281,6 +282,12 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
   }
 
   private async attachClaudeSession(sessionId: string): Promise<void> {
+    if (!sessionId) return;
+    if (this._claudeAttachInFlight.has(sessionId)) {
+      log(`Claude attach already in flight for ${sessionId.slice(0, 8)}`);
+      return;
+    }
+    this._claudeAttachInFlight.add(sessionId);
     try {
       const res = await this._bridgeFetch(`${this._bridgeService.getBridgeUrl()}/v1/claude-sessions/attach`, {
         method: 'POST',
@@ -299,6 +306,8 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       }
     } catch {
       vscode.window.showErrorMessage('Attach failed: bridge not available');
+    } finally {
+      this._claudeAttachInFlight.delete(sessionId);
     }
   }
 
@@ -780,7 +789,22 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         vscode.commands.executeCommand('codekey.toggleCodexHook');
         break;
       case 'refreshClaudeSessions':
-        this._pushState();
+        this._view?.webview.postMessage({
+          type: 'sessionsRefreshStatus',
+          text: vscode.env.language.startsWith('zh') ? '刷新中...' : 'Refreshing...',
+        });
+        this._pushState().finally(() => {
+          this._view?.webview.postMessage({
+            type: 'sessionsRefreshStatus',
+            text: vscode.env.language.startsWith('zh') ? '已刷新' : 'Refreshed',
+          });
+          setTimeout(() => {
+            this._view?.webview.postMessage({
+              type: 'sessionsRefreshStatus',
+              text: '',
+            });
+          }, 1200);
+        });
         break;
       case 'attachClaudeSession':
         this.attachClaudeSession(msg.sessionId).then(() => this._pushState());
@@ -825,6 +849,8 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
               if (creds?.deviceId) {
                 if (!attached) {
                   await SessionStore.addOpenCode(this._context, creds.deviceId, sessionId, { title: msg.title || '', cwd: '' });
+                } else {
+                  await SessionStore.removeOpenCode(this._context, creds.deviceId, sessionId);
                 }
               }
             }
@@ -855,11 +881,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
             vscode.window.showErrorMessage(`${msg.attached ? 'Stop' : 'Resume'} failed: bridge not available`);
           });
         } else if (msg.attached) {
-          // Already attached — detach from relay (stop pushing to phone).
-          // Do NOT remove from SessionStore: the session stays visible in the
-          // local list with the button flipped to "Attach". Only the bridge's
-          // attachedSessions list changes, which is the single source of truth
-          // for the `attached` flag on each session.
+          // Already attached — detach from relay and forget the explicit sync.
           this._bridgeFetch(`${this._bridgeService.getBridgeUrl()}/v1/detach-session`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -867,6 +889,11 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
           }).then(async (res) => {
             if (!res.ok) {
               vscode.window.showErrorMessage(`Detach failed: ${res.statusText}`);
+            } else {
+              const creds = loadCredentials();
+              if (creds?.deviceId) {
+                await SessionStore.remove(this._context, creds.deviceId, msg.sessionId);
+              }
             }
             this._pushState();
           });
@@ -879,7 +906,15 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ claudeSessionId: msg.sessionId }),
-        }).then(() => this._pushState());
+        }).then(async (res) => {
+          if (res.ok) {
+            const creds = loadCredentials();
+            if (creds?.deviceId) {
+              await SessionStore.remove(this._context, creds.deviceId, msg.sessionId);
+            }
+          }
+          this._pushState();
+        });
         break;
       case 'regeneratePairingCode':
         this._handlePairingGenerate();

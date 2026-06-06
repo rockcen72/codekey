@@ -13,7 +13,6 @@ import { SidebarProvider } from './webview/sidebar-provider.js';
 import { CommandRelayService } from './services/command-relay.js';
 import { BridgeStatusService } from './services/bridge-status.js';
 import { CodexApprovalNoticeService } from './services/codex-approval-notice.js';
-import { SessionStore } from './services/session-store.js';
 import { log, setVerbose, isVerbose } from './log.js';
 import { secureFetch } from './util/secure-fetch.js';
 
@@ -208,63 +207,7 @@ export function activate(context: vscode.ExtensionContext) {
     }),
   );
 
-  // Restore previously attached sessions (best-effort, after bridge is ready)
-  restoreAttachedSessions(context).catch(err => log(`restoreAttachedSessions failed: ${err}`));
-
   log('=== CodeKey activated ===');
-}
-
-async function restoreAttachedSessions(context: vscode.ExtensionContext): Promise<void> {
-  const creds = loadCredentials();
-  if (!creds?.deviceId) return;
-  const savedSessions = SessionStore.getByDevice(context, creds.deviceId);
-  if (savedSessions.length === 0) return;
-  log(`restoreAttachedSessions: ${savedSessions.length} sessions to restore for device ${creds.deviceId.slice(0, 8)}`);
-
-  // Wait for bridge to be healthy (poll /v1/health, max 30s)
-  for (let i = 0; i < 15; i++) {
-    try {
-      const resp = await fetch(`${BridgeStatusService.getInstance().getBridgeUrl()}/v1/health`);
-      if (resp.ok) {
-        // Bridge is ready — restore each session
-        const sessionsToPrune: string[] = [];
-        for (const saved of savedSessions) {
-          try {
-            const res = await fetch(`${BridgeStatusService.getInstance().getBridgeUrl()}/v1/claude-sessions/attach`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ sessionId: saved.claudeSessionId }),
-            });
-            if (res.ok) {
-              log(`restored session: ${saved.claudeSessionId.slice(0, 8)}`);
-            } else if (res.status === 404) {
-              // Transcript no longer exists — prune from store, don't retry
-              log(`session ${saved.claudeSessionId.slice(0, 8)} not found (transcript deleted), pruning`);
-              sessionsToPrune.push(saved.claudeSessionId);
-            } else {
-              log(`restore failed for ${saved.claudeSessionId.slice(0, 8)}: ${res.status}`);
-            }
-          } catch {
-            // Network error — keep in store, retry next startup
-            log(`restore error for ${saved.claudeSessionId.slice(0, 8)}: bridge unreachable`);
-          }
-        }
-        // Prune sessions whose transcripts have been deleted
-        if (sessionsToPrune.length > 0) {
-          const all = SessionStore.getAll(context);
-          const filtered = all.filter(s =>
-            !(s.deviceId === creds.deviceId && sessionsToPrune.includes(s.claudeSessionId))
-          );
-          await SessionStore.setAll(context, filtered);
-        }
-        return;
-      }
-    } catch {
-      // Bridge not ready yet — wait and retry
-    }
-    await new Promise(r => setTimeout(r, 2000));
-  }
-  log('restoreAttachedSessions: bridge did not become healthy within 30s, giving up');
 }
 
 export async function deactivate() {
