@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { applyInheritedSessionTitle } from '../ws/handler.js';
 
 describe('session metadata registration', () => {
   it('documents expected register_session metadata merge behavior', () => {
@@ -30,5 +31,33 @@ describe('session metadata registration', () => {
       runtime: 'claude-code',
       source: 'hook',
     });
+  });
+
+  it('inherits the previous title only when register_session has no title', () => {
+    const missingTitle = {
+      claudeSessionId: 'ses_abc123',
+      runtime: 'opencode',
+      source: 'opencode',
+    };
+
+    applyInheritedSessionTitle(missingTitle, 'Real OpenCode Title');
+
+    expect(missingTitle).toEqual({
+      claudeSessionId: 'ses_abc123',
+      runtime: 'opencode',
+      source: 'opencode',
+      title: 'Real OpenCode Title',
+    });
+
+    const explicitTitle = {
+      claudeSessionId: 'ses_abc123',
+      runtime: 'opencode',
+      source: 'opencode',
+      title: 'Current Title',
+    };
+
+    applyInheritedSessionTitle(explicitTitle, 'Old Title');
+
+    expect(explicitTitle.title).toBe('Current Title');
   });
 });

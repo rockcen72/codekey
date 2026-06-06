@@ -23,6 +23,12 @@ export function isPendingInteractiveEvent(eventType: string): boolean {
   return eventType === 'approval_required' || eventType === 'input_required';
 }
 
+export function applyInheritedSessionTitle(metadata: Record<string, string>, title: unknown): void {
+  if (metadata.title) return;
+  if (typeof title !== 'string' || !title.trim()) return;
+  metadata.title = title;
+}
+
 export function wsHandler(sql: postgres.Sql) {
   return function (socket: WebSocket, req: FastifyRequest) {
     const url = new URL(req.url, 'http://localhost');
@@ -281,6 +287,18 @@ export function wsHandler(sql: postgres.Sql) {
                 WHERE id = ${existing.id}
               `;
               return { sessionId: existing.id, isNew: false, source: metadata.source ?? null };
+            }
+
+            if (!metadata.title) {
+              const [latestWithTitle] = await tx`
+                SELECT metadata->>'title' AS title FROM sessions
+                WHERE device_id = ${deviceId}
+                  AND metadata->>'claudeSessionId' = ${claudeSessionId}
+                  AND coalesce(metadata->>'title', '') <> ''
+                ORDER BY started_at DESC
+                LIMIT 1
+              `;
+              applyInheritedSessionTitle(metadata, latestWithTitle?.title);
             }
           }
 
