@@ -30,18 +30,12 @@ export class CodexResumeManager {
   private _listening = false;
 
   private approvalBridge: ApprovalBridge | null = null;
-  private storagePath: string | null = null;
 
   constructor(relay: RelayClient, resumedServerSessionIds: Set<string>, approvalBridge?: ApprovalBridge, storagePath?: string) {
     this.relay = relay;
     this.resumedServerSessionIds = resumedServerSessionIds;
     this.approvalBridge = approvalBridge ?? null;
-    this.storagePath = storagePath ?? null;
-
-    // Load previously resumed session IDs from storage
-    if (this.storagePath) {
-      this._loadPersistedIds().catch(() => {});
-    }
+    void storagePath;
 
     // Listen for session_registered to resolve pending registrations
     this.relay.on('session_registered', (payload: unknown) => {
@@ -163,9 +157,6 @@ export class CodexResumeManager {
     // Push last 3 transcript messages to relay so phone has minimal context
     this._forwardRecentHistory(serverSessionId, localSession.transcriptPath).catch(() => {});
     this._startTranscriptWatcher(serverSessionId, state);
-
-    // Persist resumed session IDs so state survives bridge restart
-    this._savePersistedIds();
 
     console.error('[codex-resume] started: local=%s server=%s cwd=%s', localSession.sessionId, serverSessionId, localSession.cwd);
     return serverSessionId;
@@ -299,10 +290,8 @@ export class CodexResumeManager {
     // Notify relay
     this.relay.sendRaw(JSON.stringify({
       type: 'deactivate_session',
-      payload: { sessionId: serverSessionId },
+      payload: { sessionId: serverSessionId, reason: 'manual_detach' },
     }));
-
-    this._savePersistedIds();
 
     console.error('[codex-resume] stopped: local=%s server=%s', localSessionId, serverSessionId);
   }
@@ -416,49 +405,6 @@ export class CodexResumeManager {
     if (state.forwardedTextKeys.has(key)) return true;
     state.forwardedTextKeys.add(key);
     return false;
-  }
-
-  /** Save resumed local session IDs to a JSON file so state survives bridge restart. */
-  private _savePersistedIds(): void {
-    if (!this.storagePath) return;
-    import('node:fs').then(({ mkdirSync, writeFileSync }) => {
-      import('node:path').then(({ dirname }) => {
-        try {
-          const ids = Array.from(this.localToServer.keys());
-          mkdirSync(dirname(this.storagePath!), { recursive: true });
-          writeFileSync(this.storagePath!, JSON.stringify({ resumedIds: ids }, null, 2), 'utf8');
-        } catch (err) {
-          console.error('[codex-resume] failed to persist resumed IDs:', err);
-        }
-      });
-    }).catch(() => {});
-  }
-
-  /** Load previously resumed session IDs from storage and re-resume them. */
-  private async _loadPersistedIds(): Promise<void> {
-    if (!this.storagePath) return;
-    try {
-      const { existsSync, readFileSync } = await import('node:fs');
-      if (!existsSync(this.storagePath)) return;
-      const data = JSON.parse(readFileSync(this.storagePath, 'utf8'));
-      const ids: string[] = data.resumedIds ?? [];
-      if (ids.length === 0) return;
-
-      console.error('[codex-resume] restoring %d persisted sessions', ids.length);
-      for (const localId of ids) {
-        const sessions = discoverLocalSessions(50);
-        const session = sessions.find(s => s.sessionId === localId);
-        if (session) {
-          this.startResume(session).catch((err) => {
-            console.error('[codex-resume] failed to restore session %s: %s', localId, err);
-          });
-        } else {
-          console.error('[codex-resume] persisted session %s not found on disk, skipping', localId);
-        }
-      }
-    } catch (err) {
-      console.error('[codex-resume] failed to load persisted IDs:', err);
-    }
   }
 
   /**

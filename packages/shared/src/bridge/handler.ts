@@ -687,6 +687,7 @@ export class ApprovalBridge {
    *  so existing sessions get the new name immediately. */
   setPendingLabel(windowId: string, label: string): void {
     if (!windowId || !label) return;
+    this.registerWindow(windowId);
     const prev = this.windowLabels.get(windowId);
     this.windowLabels.set(windowId, label);
     if (prev !== label) {
@@ -849,20 +850,20 @@ export class ApprovalBridge {
 
     const explicitWindowId = payload.codekeyWindowId || '';
     const hasKnownSession = this.sessions.has(claudeSessionId) || this.inFlightSessions.has(claudeSessionId);
+    const fallbackWindowId = this._getActiveWindowId();
     if (!explicitWindowId && !hasKnownSession) {
-      if (Date.now() - this._startTime < ApprovalBridge.STALE_EVENT_GRACE_MS) {
+      if (!fallbackWindowId && Date.now() - this._startTime < ApprovalBridge.STALE_EVENT_GRACE_MS) {
         console.error('[bridge] ignoring stale approval without windowId (grace, session=%s)', claudeSessionId);
         return { approved: false };
       }
-      const fallback = this._getActiveWindowId();
-      if (!fallback) {
+      if (!fallbackWindowId) {
         console.error('[bridge] ignoring approval without windowId for unknown session (session=%s)', claudeSessionId);
         return { approved: false };
       }
     }
 
     // Determine windowId: from hook request body, or fall back to most recent active window
-    const windowId = explicitWindowId || this._getActiveWindowId() || '';
+    const windowId = explicitWindowId || fallbackWindowId || '';
     const approvalText = this.approvalText(payload);
     const fingerprint = this.approvalFingerprint(claudeSessionId, windowId, payload);
     const existing = this.pendingApprovalFingerprints.get(fingerprint);
@@ -1192,20 +1193,23 @@ export class ApprovalBridge {
 
     const explicitWindowId = body.codekeyWindowId || '';
     const hasKnownSession = this.sessions.has(claudeSessionId) || this.inFlightSessions.has(claudeSessionId);
+    const fallbackWindowId = this._getActiveWindowId();
     if (!explicitWindowId && !hasKnownSession) {
-      if (Date.now() - this._startTime < ApprovalBridge.STALE_EVENT_GRACE_MS) {
+      if (!fallbackWindowId && Date.now() - this._startTime < ApprovalBridge.STALE_EVENT_GRACE_MS) {
         console.error('[bridge] ignoring stale hook event without windowId (grace, event=%s, session=%s)',
           body.eventType, claudeSessionId);
         return;
       }
-      console.error('[bridge] ignoring hook event without windowId for unknown session (event=%s, session=%s)',
-        body.eventType, claudeSessionId);
-      return;
+      if (!fallbackWindowId) {
+        console.error('[bridge] ignoring hook event without windowId for unknown session (event=%s, session=%s)',
+          body.eventType, claudeSessionId);
+        return;
+      }
     }
 
     // Determine windowId: explicit hook window first; fallback is only allowed
     // after this bridge already knows the Claude session.
-    const windowId = explicitWindowId || this._getActiveWindowId() || '';
+    const windowId = explicitWindowId || fallbackWindowId || '';
 
     console.error('[bridge] handleHookEvent(%s): session=%s, codekeyWindowId=%s, fallback=%s, resolved=%s',
       body.eventType, claudeSessionId, body.codekeyWindowId || '(none)', this._getActiveWindowId() || '(none)', windowId || '(none)');
@@ -1723,10 +1727,23 @@ export class ApprovalBridge {
 
     this.relay.sendRaw(JSON.stringify({
       type: 'deactivate_session',
-      payload: { sessionId: serverSessionId },
+      payload: { sessionId: serverSessionId, reason: 'manual_detach' },
     }));
 
-    // Return immediately — constructor listener + sidebar polling handle cleanup
+    // Clear local caches immediately so a quick re-attach does not reuse a
+    // server session that is already being deactivated.
+    this.sessions.delete(claudeSessionId);
+    this.transcriptAttachedIds.delete(claudeSessionId);
+    if (this.primarySessionId === serverSessionId) this.primarySessionId = null;
+    for (const [wid, sid] of this.windowSessions) {
+      if (sid === serverSessionId) {
+        this.windowSessions.delete(wid);
+        this.windowLabels.delete(wid);
+        this.activeWindows.delete(wid);
+        this.claimedTabSessions.delete(wid);
+      }
+    }
+
     return { ok: true };
   }
 

@@ -258,6 +258,18 @@ describe('OpenCodeSessionManager event handling', () => {
       expect(manager.ownsSession('server-oc-session-4')).toBe(false);
     });
 
+    it('marks manual detach so mobile history hides the finished session', async () => {
+      await manager.detachSession('oc-manual-detach', 'server-oc-manual-detach');
+
+      const msg = relay.sent
+        .map((raw) => JSON.parse(raw))
+        .find((m: any) => m.type === 'deactivate_session');
+      expect(msg?.payload).toEqual({
+        sessionId: 'server-oc-manual-detach',
+        reason: 'manual_detach',
+      });
+    });
+
     it('syncs renamed OpenCode session title to relay', async () => {
       await manager.attachSession('ses_1790', 'Initial title', 'server-ses_1790');
       relay.sent.length = 0;
@@ -294,7 +306,7 @@ describe('OpenCodeSessionManager event handling', () => {
       expect(registrations.length).toBe(0);
     });
 
-    it('restores attached mappings even when the current OpenCode API list is empty', async () => {
+    it('does not restore old attached mappings when the current OpenCode API list is empty', async () => {
       writeFileSync(attachedStoragePath, JSON.stringify([
         { localSessionId: 'ses_stored', serverSessionId: 'server-stored' },
       ]), 'utf-8');
@@ -307,8 +319,8 @@ describe('OpenCodeSessionManager event handling', () => {
       vi.spyOn(restoredManager as any, 'connectSSE').mockResolvedValue(undefined);
       await restoredManager.start();
 
-      expect(restoredManager.ownsSession('server-stored')).toBe(true);
-      expect(bridge.getAttachedSessionIds()).toContain('ses_stored');
+      expect(restoredManager.ownsSession('server-stored')).toBe(false);
+      expect(bridge.getAttachedSessionIds()).not.toContain('ses_stored');
       restoredManager.stop();
     });
   });
@@ -879,7 +891,7 @@ describe('OpenCodeSessionManager event handling', () => {
   });
 
   describe('server.connected', () => {
-    it('restores attached sessions even when the current OpenCode session list omits them', async () => {
+    it('does not restore attached sessions when the current OpenCode session list omits them', async () => {
       writeFileSync(attachedStoragePath, JSON.stringify([
         { localSessionId: 'ses_local_a', serverSessionId: 'server-ses_local_a' },
       ]), 'utf-8');
@@ -900,8 +912,8 @@ describe('OpenCodeSessionManager event handling', () => {
 
         await manager.start();
 
-        expect(bridge.getAttachedSessionIds()).toContain('ses_local_a');
-        expect(manager.ownsSession('server-ses_local_a')).toBe(true);
+        expect(bridge.getAttachedSessionIds()).not.toContain('ses_local_a');
+        expect(manager.ownsSession('server-ses_local_a')).toBe(false);
       } finally {
         globalThis.fetch = originalFetch;
         manager.stop();

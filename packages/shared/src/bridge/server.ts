@@ -6,7 +6,7 @@ import { resolve } from 'node:path';
 import { ApprovalBridge, type HookEventBody } from './handler.js';
 import { CodexRelay } from './codex-relay.js';
 import { CodexResumeManager } from './codex-resume-manager.js';
-import { discoverLocalOpenCodeSessions, type OpenCodeSessionManager } from './opencode-session-manager.js';
+import { type OpenCodeSessionManager } from './opencode-session-manager.js';
 import { listRecentClaudeTranscripts, loadConversation } from './claude-transcripts.js';
 
 export interface BridgeConfig {
@@ -648,7 +648,7 @@ function handleRequest(req: IncomingMessage, res: ServerResponse, bridge: Approv
         res.end(JSON.stringify({ ok: true, sessions }));
       }).catch(() => {
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ ok: true, sessions: discoverLocalOpenCodeSessions() }));
+        res.end(JSON.stringify({ ok: true, sessions: [] }));
       });
       return;
     }
@@ -664,14 +664,10 @@ function handleRequest(req: IncomingMessage, res: ServerResponse, bridge: Approv
             const sessions = ocRes.statusCode && ocRes.statusCode < 300 ? JSON.parse(body) as any[] : [];
             console.error('[bridge] opencode-sessions: got %d sessions', sessions.length);
             res.writeHead(200, { 'Content-Type': 'application/json' });
-            const byId = new Map(discoverLocalOpenCodeSessions().map((session) => [session.id, session]));
-            for (const session of sessions) {
-              if (session?.id) byId.set(session.id, { ...byId.get(session.id), ...session });
-            }
-            res.end(JSON.stringify({ ok: true, sessions: [...byId.values()] }));
+            res.end(JSON.stringify({ ok: true, sessions }));
           } catch {
             res.writeHead(200, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ ok: true, sessions: discoverLocalOpenCodeSessions() }));
+            res.end(JSON.stringify({ ok: true, sessions: [] }));
           }
         });
       },
@@ -679,13 +675,13 @@ function handleRequest(req: IncomingMessage, res: ServerResponse, bridge: Approv
     proxy.on('error', (err) => {
       console.error('[bridge] opencode-sessions: proxy failed — %s', err.message);
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ ok: true, sessions: discoverLocalOpenCodeSessions() }));
+      res.end(JSON.stringify({ ok: true, sessions: [] }));
     });
     proxy.on('timeout', () => {
       console.error('[bridge] opencode-sessions: proxy timed out');
       proxy.destroy();
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ ok: true, sessions: discoverLocalOpenCodeSessions() }));
+      res.end(JSON.stringify({ ok: true, sessions: [] }));
     });
     return;
   }
@@ -750,9 +746,9 @@ function handleRequest(req: IncomingMessage, res: ServerResponse, bridge: Approv
         if (!sessionId) { res.writeHead(400); res.end('{}'); return; }
         const detach = opencodeManager
           ? opencodeManager.detachSession(sessionId, typeof serverSessionId === 'string' ? serverSessionId : undefined)
-          : bridge.ensureSession(sessionId, undefined, 'opencode', { agentType: 'opencode', runtime: 'opencode' }).then((serverSessionId) => {
+            : bridge.ensureSession(sessionId, undefined, 'opencode', { agentType: 'opencode', runtime: 'opencode' }).then((serverSessionId) => {
               bridge.removeOpenCodeAttachedSession(sessionId);
-              bridge.relay.sendRaw(JSON.stringify({ type: 'deactivate_session', payload: { sessionId: serverSessionId } }));
+              bridge.relay.sendRaw(JSON.stringify({ type: 'deactivate_session', payload: { sessionId: serverSessionId, reason: 'manual_detach' } }));
               return false;
             });
         detach.then(() => {

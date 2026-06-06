@@ -199,6 +199,7 @@ export function wsHandler(sql: postgres.Sql) {
     async function finishSession(
       sessionId: string,
       socket?: WebSocket,
+      reason?: string,
     ): Promise<{ ok: true } | { ok: false; code: string }> {
       try {
         const [row] = await sql`
@@ -213,8 +214,14 @@ export function wsHandler(sql: postgres.Sql) {
             UPDATE events SET pending = false, decision = 'expired'
             WHERE session_id = ${sessionId} AND pending = true
           `;
+          const metadataPatch = reason === 'manual_detach'
+            ? { deactivatedReason: reason, hideFromMobileHistory: 'true' }
+            : reason ? { deactivatedReason: reason } : {};
           await tx`
-            UPDATE sessions SET status = 'finished', finished_at = now()
+            UPDATE sessions
+            SET status = 'finished',
+                finished_at = now(),
+                metadata = metadata || ${tx.json(metadataPatch)}
             WHERE id = ${sessionId} AND status = 'active'
           `;
         });
@@ -678,7 +685,7 @@ export function wsHandler(sql: postgres.Sql) {
           return;
         }
 
-        finishSession(sessionId, socket).then((result) => {
+        finishSession(sessionId, socket, msg.payload?.reason).then((result) => {
           if (result.ok) {
             const pc = pcClients.get(deviceId!);
             if (pc && pc.sessionId === sessionId) {

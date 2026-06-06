@@ -333,6 +333,37 @@ describe('ApprovalBridge canonical sessions', () => {
     expect(eventMessages).toHaveLength(0);
   });
 
+  it('uses a label-synced window as fallback for approvals without hook window id', async () => {
+    const relay = new FakeRelay();
+    const bridge = new ApprovalBridge(relay as any);
+
+    bridge.setPendingLabel('window-1', 'Active Claude tab');
+    const promise = bridge.handleApproval({
+      claudeSessionId: 'claude-a',
+      source: 'permission_request',
+      rawEvent: {
+        tool_name: 'Bash',
+        tool_input: { command: 'npm test' },
+      },
+    });
+
+    await new Promise(resolve => setImmediate(resolve));
+    const eventMessages = relay.sent
+      .map(m => JSON.parse(m))
+      .filter((m: any) => m.type === 'event' && m.payload.eventType === 'approval_required');
+    expect(eventMessages[0].payload.windowId).toBe('window-1');
+    expect(eventMessages[0].payload.sessionLabel).toBe('Active Claude tab');
+
+    const clientEventId = eventMessages[0].payload.clientEventId;
+    relay.emit('approval_forward', {
+      eventId: clientEventId,
+      clientEventId,
+      decision: 'approve',
+    });
+
+    await expect(promise).resolves.toEqual({ approved: true });
+  });
+
   it('includes readable approval text for non-Bash tool requests', async () => {
     const relay = new FakeRelay();
     const bridge = new ApprovalBridge(relay as any);
@@ -426,7 +457,7 @@ describe('ApprovalBridge canonical sessions', () => {
     }
   });
 
-  it('detachClaudeSession sends deactivate_session to relay but does not immediately clear cache', async () => {
+  it('detachClaudeSession sends deactivate_session to relay and clears local cache immediately', async () => {
     const tmpDir = createTranscriptFixture('claude-a', 'Real transcript title');
     process.env.CLAUDE_CONFIG_DIR = tmpDir;
     try {
@@ -437,7 +468,7 @@ describe('ApprovalBridge canonical sessions', () => {
     await bridge.attachClaudeSession('claude-a');
     expect(relay.sent.length).toBeGreaterThan(0);
 
-    // Detach — should send deactivate_session but keep local cache
+    // Detach — should send deactivate_session and clear local cache immediately.
     const beforeSentCount = relay.sent.length;
     const result = await bridge.detachClaudeSession('claude-a');
 
@@ -447,9 +478,32 @@ describe('ApprovalBridge canonical sessions', () => {
     const lastMsg = JSON.parse(relay.sent[relay.sent.length - 1]);
     expect(lastMsg.type).toBe('deactivate_session');
     expect(lastMsg.payload.sessionId).toBe('server-claude-a');
+    expect(lastMsg.payload.reason).toBe('manual_detach');
 
-    // Cache should NOT be cleared yet — detachClaudeSession is fire-and-forget
-    expect(bridge.getAttachedSessionIds()).toContain('claude-a');
+    expect(bridge.getAttachedSessionIds()).not.toContain('claude-a');
+    } finally {
+      delete process.env.CLAUDE_CONFIG_DIR;
+    }
+  });
+
+  it('reattach after detach registers a fresh session before session_deactivated ack arrives', async () => {
+    const tmpDir = createTranscriptFixture('claude-a', 'Real transcript title');
+    process.env.CLAUDE_CONFIG_DIR = tmpDir;
+    try {
+      const relay = new FakeRelay();
+      const bridge = new ApprovalBridge(relay as any);
+
+      await bridge.attachClaudeSession('claude-a');
+      await bridge.detachClaudeSession('claude-a');
+      const beforeReattach = relay.sent.length;
+
+      await bridge.attachClaudeSession('claude-a');
+
+      const reattachMessages = relay.sent
+        .slice(beforeReattach)
+        .map((raw) => JSON.parse(raw));
+      expect(reattachMessages.some((msg) => msg.type === 'register_session')).toBe(true);
+      expect(reattachMessages.some((msg) => msg.type === 'attach_session')).toBe(false);
     } finally {
       delete process.env.CLAUDE_CONFIG_DIR;
     }

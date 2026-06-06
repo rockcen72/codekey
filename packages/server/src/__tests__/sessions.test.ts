@@ -72,4 +72,54 @@ describeDb('Sessions API', () => {
     expect(historyIds).toContain(recentFinished.id);
     expect(historyIds).not.toContain(oldFinished.id);
   });
+
+  it('dedupes mobile history by agent and claudeSessionId with active row preferred', async () => {
+    const [{ id: deviceId }] = await sql`
+      INSERT INTO devices (device_name)
+      VALUES ('history-dedupe-test-device')
+      RETURNING id
+    `;
+    cleanupIds.push(deviceId);
+
+    const token = randomUUID();
+    const tokenHash = createHash('sha256').update(token).digest('hex');
+    await sql`
+      INSERT INTO device_tokens (device_id, token_type, token_hash)
+      VALUES (${deviceId}, 'client', ${tokenHash})
+    `;
+
+    const [finishedDuplicate] = await sql`
+      INSERT INTO sessions (device_id, agent_type, status, metadata, finished_at, last_active_at)
+      VALUES (${deviceId}, 'claude-code-hook', 'finished', ${sql.json({ claudeSessionId: 'same-cc' })}, now(), now() - interval '1 minute')
+      RETURNING id
+    `;
+    const [activeDuplicate] = await sql`
+      INSERT INTO sessions (device_id, agent_type, status, metadata, last_active_at)
+      VALUES (${deviceId}, 'claude-code-hook', 'active', ${sql.json({ claudeSessionId: 'same-cc' })}, now())
+      RETURNING id
+    `;
+    const [finishedOnly] = await sql`
+      INSERT INTO sessions (device_id, agent_type, status, metadata, finished_at, last_active_at)
+      VALUES (${deviceId}, 'claude-code-hook', 'finished', ${sql.json({ claudeSessionId: 'finished-only' })}, now(), now() - interval '2 minutes')
+      RETURNING id
+    `;
+    const [manualDetached] = await sql`
+      INSERT INTO sessions (device_id, agent_type, status, metadata, finished_at, last_active_at)
+      VALUES (${deviceId}, 'claude-code-hook', 'finished', ${sql.json({ claudeSessionId: 'manual-detached', hideFromMobileHistory: 'true' })}, now(), now() - interval '3 minutes')
+      RETURNING id
+    `;
+
+    const historyRes = await app.inject({
+      method: 'GET',
+      url: '/api/v1/sessions?history=1',
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect(historyRes.statusCode).toBe(200);
+    const historyIds = JSON.parse(historyRes.payload).map((s: any) => s.id);
+
+    expect(historyIds).toContain(activeDuplicate.id);
+    expect(historyIds).not.toContain(finishedDuplicate.id);
+    expect(historyIds).toContain(finishedOnly.id);
+    expect(historyIds).not.toContain(manualDetached.id);
+  });
 });

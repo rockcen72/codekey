@@ -2,16 +2,11 @@ import { randomUUID } from 'node:crypto';
 import { get as httpGet } from 'node:http';
 import { createEventStreamParser } from './sse-parser.js';
 import { ApprovalBridge } from './handler.js';
-import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
-import { homedir, tmpdir } from 'node:os';
+import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { discoverOpenCodePort } from './platform.js';
 import { tryFormatInputRequiredEvent } from './input-card.js';
-
-interface AttachedOpenCodeSession {
-  localSessionId: string;
-  serverSessionId?: string;
-}
 
 interface OpenCodeSessionInfo {
   id: string;
@@ -23,45 +18,6 @@ interface OpenCodeSessionInfo {
 const INITIAL_RECONNECT_DELAY = 1000;
 const MAX_RECONNECT_DELAY = 30_000;
 const BACKOFF_MULTIPLIER = 2;
-
-function getAttachedStoragePath(): string {
-  return join(tmpdir(), 'codekey-opencode-attached.json');
-}
-
-function loadAttachedSessions(): AttachedOpenCodeSession[] {
-  try {
-    const path = getAttachedStoragePath();
-    if (!existsSync(path)) return [];
-    const parsed = JSON.parse(readFileSync(path, 'utf-8')) as unknown;
-    if (!Array.isArray(parsed)) return [];
-    return parsed
-      .map((entry) => {
-        if (typeof entry === 'string') return { localSessionId: entry };
-        if (entry && typeof entry === 'object') {
-          const obj = entry as Record<string, unknown>;
-          const localSessionId = typeof obj.localSessionId === 'string'
-            ? obj.localSessionId
-            : typeof obj.id === 'string'
-              ? obj.id
-              : '';
-          const serverSessionId = typeof obj.serverSessionId === 'string' ? obj.serverSessionId : undefined;
-          if (localSessionId) return { localSessionId, serverSessionId };
-        }
-        return null;
-      })
-      .filter((entry): entry is AttachedOpenCodeSession => !!entry);
-  } catch { return []; }
-}
-
-function saveAttachedSessions(sessions: AttachedOpenCodeSession[]): void {
-  try {
-    const byLocal = new Map<string, AttachedOpenCodeSession>();
-    for (const s of sessions) {
-      byLocal.set(s.localSessionId, s);
-    }
-    writeFileSync(getAttachedStoragePath(), JSON.stringify([...byLocal.values()]), 'utf-8');
-  } catch {}
-}
 
 function getOpenCodeDataDir(): string {
   return process.env.OPENCODE_DATA_DIR || join(homedir(), '.local', 'share', 'opencode');
@@ -167,15 +123,6 @@ export class OpenCodeSessionManager {
     this._stopped = false;
     this._reconnectDelay = INITIAL_RECONNECT_DELAY;
 
-    const storedSessions = loadAttachedSessions();
-    for (const session of storedSessions) {
-      this.bridge.addOpenCodeAttachedSession(session.localSessionId);
-      if (session.serverSessionId) {
-        this.opencodeSessions.add(session.serverSessionId);
-        this.opencodeSessionToRelayId.set(session.localSessionId, session.serverSessionId);
-      }
-    }
-
     await this.connectSSE();
   }
 
@@ -204,14 +151,17 @@ export class OpenCodeSessionManager {
     };
     return this.bridge.attachOpenCodeSession(localSessionId, fetchMessages, normalizeOpenCodeTitle(title), (localId, serverId) => {
       this.registerSession(localId, serverId);
-      saveAttachedSessions([...loadAttachedSessions(), { localSessionId: localId, serverSessionId: serverId }]);
     }, knownServerSessionId);
   }
 
   async listSessions(limit = 50): Promise<OpenCodeSessionInfo[]> {
+    const httpSessions = await this.fetchOpenCodeSessions();
+    // When OpenCode is not running, return empty — don't show stale disk sessions.
+    if (httpSessions === null) return [];
+
     const localSessions = discoverLocalOpenCodeSessions(limit);
     const byId = new Map(localSessions.map((session) => [session.id, session]));
-    for (const session of await this.fetchOpenCodeSessions()) {
+    for (const session of httpSessions) {
       if (!session.id) continue;
       const local = byId.get(session.id);
       byId.set(session.id, {
@@ -225,12 +175,12 @@ export class OpenCodeSessionManager {
       .slice(0, limit);
   }
 
-  private async fetchOpenCodeSessions(): Promise<OpenCodeSessionInfo[]> {
+  private async fetchOpenCodeSessions(): Promise<OpenCodeSessionInfo[] | null> {
     try {
       const resp = await fetch(`${this.opencodeBaseUrl}/session`);
-      if (!resp.ok) return [];
+      if (!resp.ok) return null;
       const sessions = await resp.json() as unknown;
-      if (!Array.isArray(sessions)) return [];
+      if (!Array.isArray(sessions)) return null;
       return sessions
         .map((session) => {
           if (typeof session === 'string') return { id: session };
@@ -244,7 +194,7 @@ export class OpenCodeSessionManager {
         })
         .filter((session): session is OpenCodeSessionInfo => !!session);
     } catch {
-      return [];
+      return null;
     }
   }
 
@@ -255,10 +205,9 @@ export class OpenCodeSessionManager {
     }
     const serverSessionId = await this.ensureRelaySession(localSessionId);
     this.bridge.removeOpenCodeAttachedSession(localSessionId);
-    saveAttachedSessions(loadAttachedSessions().filter(s => s.localSessionId !== localSessionId));
     this.bridge.relay.sendRaw(JSON.stringify({
       type: 'deactivate_session',
-      payload: { sessionId: serverSessionId },
+      payload: { sessionId: serverSessionId, reason: 'manual_detach' },
     }));
     return true;
   }

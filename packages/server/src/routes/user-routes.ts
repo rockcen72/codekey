@@ -29,20 +29,29 @@ export function userRoutes(sql: postgres.Sql) {
         : sql`AND s.status = 'active'`;
 
       let query = sql`
-        SELECT s.*, (SELECT COUNT(*) FROM events e WHERE e.session_id = s.id AND e.pending = true)::int AS pending_count,
-                d.device_name
-        FROM sessions s
-        JOIN device_bindings db ON s.device_id = db.device_id
-        JOIN devices d ON d.id = db.device_id
-        WHERE db.user_id = ${userId}
-          AND db.unbound_at IS NULL
-          AND coalesce(s.metadata->>'claudeSessionId', '') <> ''
-          ${activeFilter}
+        SELECT id, device_id, agent_type, status, cwd, project_name, metadata,
+               started_at, finished_at, last_active_at, pending_count, device_name
+        FROM (
+          SELECT s.*,
+                 (SELECT COUNT(*) FROM events e WHERE e.session_id = s.id AND e.pending = true)::int AS pending_count,
+                 d.device_name,
+                 row_number() OVER (
+                   PARTITION BY s.device_id, s.agent_type, s.metadata->>'claudeSessionId'
+                   ORDER BY CASE WHEN s.status = 'active' THEN 0 ELSE 1 END, s.last_active_at DESC
+                 ) AS rn
+          FROM sessions s
+          JOIN device_bindings db ON s.device_id = db.device_id
+          JOIN devices d ON d.id = db.device_id
+          WHERE db.user_id = ${userId}
+            AND db.unbound_at IS NULL
+            AND coalesce(s.metadata->>'claudeSessionId', '') <> ''
+            AND coalesce(s.metadata->>'hideFromMobileHistory', '') <> 'true'
+            ${activeFilter}
       `;
       if (windowId) {
         query = sql`${query} AND s.metadata->>'windowId' = ${windowId}`;
       }
-      query = sql`${query} ORDER BY CASE WHEN s.status = 'active' THEN 0 ELSE 1 END, s.last_active_at DESC`;
+      query = sql`${query}) ranked WHERE rn = 1 ORDER BY CASE WHEN status = 'active' THEN 0 ELSE 1 END, last_active_at DESC`;
       return await query;
     });
 

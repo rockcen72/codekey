@@ -30,13 +30,29 @@ export function sessionRoutes(sql: postgres.Sql) {
       // transcript_attach. Hook-created sessions (source='hook') also need to
       // appear so the sidebar can overlay their relay-synced titles on the
       // local transcript list.
-      let query = includeHistory
-        ? sql`SELECT s.*, (SELECT COUNT(*) FROM events e WHERE e.session_id = s.id AND e.pending = true)::int AS pending_count FROM sessions s WHERE s.device_id = ${deviceAuth.deviceId} AND coalesce(s.metadata->>'claudeSessionId', '') <> '' AND (s.status IN ('active', 'paused') OR (s.status = 'finished' AND s.finished_at > now() - interval '7 days'))`
-        : sql`SELECT s.*, (SELECT COUNT(*) FROM events e WHERE e.session_id = s.id AND e.pending = true)::int AS pending_count FROM sessions s WHERE s.device_id = ${deviceAuth.deviceId} AND s.status = 'active' AND coalesce(s.metadata->>'claudeSessionId', '') <> ''`;
+      const statusFilter = includeHistory
+        ? sql`AND (s.status IN ('active', 'paused') OR (s.status = 'finished' AND s.finished_at > now() - interval '7 days'))`
+        : sql`AND s.status = 'active'`;
+      let query = sql`
+        SELECT id, device_id, agent_type, status, cwd, project_name, metadata,
+               started_at, finished_at, last_active_at, pending_count
+        FROM (
+          SELECT s.*,
+                 (SELECT COUNT(*) FROM events e WHERE e.session_id = s.id AND e.pending = true)::int AS pending_count,
+                 row_number() OVER (
+                   PARTITION BY s.agent_type, s.metadata->>'claudeSessionId'
+                   ORDER BY CASE WHEN s.status = 'active' THEN 0 ELSE 1 END, s.last_active_at DESC
+                 ) AS rn
+          FROM sessions s
+          WHERE s.device_id = ${deviceAuth.deviceId}
+            AND coalesce(s.metadata->>'claudeSessionId', '') <> ''
+            AND coalesce(s.metadata->>'hideFromMobileHistory', '') <> 'true'
+            ${statusFilter}
+      `;
       if (windowId) {
         query = sql`${query} AND s.metadata->>'windowId' = ${windowId}`;
       }
-      query = sql`${query} ORDER BY CASE WHEN s.status = 'active' THEN 0 ELSE 1 END, s.last_active_at DESC`;
+      query = sql`${query}) ranked WHERE rn = 1 ORDER BY CASE WHEN status = 'active' THEN 0 ELSE 1 END, last_active_at DESC`;
       return await query;
     });
 

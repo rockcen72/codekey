@@ -46,6 +46,26 @@ describe('Codex real transcript format', () => {
     rmSync(tmpHome, { recursive: true, force: true });
   });
 
+  it('marks manual stop so mobile history hides the finished session', async () => {
+    const sent: Record<string, any>[] = [];
+    const relay = Object.assign(new EventEmitter(), {
+      sendRaw(value: string) {
+        sent.push(JSON.parse(value));
+      },
+    });
+    const resumedIds = new Set<string>(['server-codex-manual-stop']);
+    const manager = new CodexResumeManager(relay as any, resumedIds);
+
+    (manager as any).localToServer.set('codex-local-stop', 'server-codex-manual-stop');
+    await manager.stopResume('codex-local-stop');
+
+    expect(sent.find((m) => m.type === 'deactivate_session')?.payload).toEqual({
+      sessionId: 'server-codex-manual-stop',
+      reason: 'manual_detach',
+    });
+    expect(resumedIds.has('server-codex-manual-stop')).toBe(false);
+  });
+
   describe('discoverLocalSessions (real three-level layout)', () => {
     it('finds transcripts under sessions/YYYY/MM/DD/', () => {
       const dir = path.join(tmpHome, 'sessions', '2026', '06', '01');
