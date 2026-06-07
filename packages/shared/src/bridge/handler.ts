@@ -110,6 +110,9 @@ export class ApprovalBridge {
   private sessions = new Map<string, string>(); // claudeSessionId → serverSessionId
   private inFlightSessions = new Map<string, Promise<string>>(); // claudeSessionId → registering promise
   private registeredClientRequests = new Map<string, (sid: string) => void>(); // clientRequestId → resolve
+  /** serverSessionId → list of pending resolvers waiting for session_deactivated ack.
+   *  Multiple resolvers allowed in case stopResume + detachClaudeSession race. */
+  private deactivationWaiters = new Map<string, Array<() => void>>();
   private pendingByServerEventId = new Map<string, PendingApproval>();
   private pendingApprovalFingerprints = new Map<string, Promise<{ approved: boolean }>>();
   private primarySessionId: string | null = null;
@@ -462,6 +465,49 @@ export class ApprovalBridge {
           this.claimedTabSessions.delete(wid);
         }
       }
+
+      // Resolve any pending detach waiters for this server session.
+      const waiters = this.deactivationWaiters.get(p.sessionId);
+      if (waiters) {
+        this.deactivationWaiters.delete(p.sessionId);
+        for (const resolve of waiters) {
+          try { resolve(); } catch {}
+        }
+      }
+    });
+  }
+
+  /** Wait until relay confirms a session has been deactivated (or timeout).
+   *  Resolves to true if relay ack arrived within timeoutMs, false otherwise.
+   *  Used by detach paths to serialize a subsequent re-attach so it cannot
+   *  race the deactivate_session against an in-flight register_session at the
+   *  relay (which causes phantom sessions to appear / disappear on the phone). */
+  waitForSessionDeactivated(serverSessionId: string, timeoutMs = 3000): Promise<boolean> {
+    if (!serverSessionId) return Promise.resolve(false);
+    return new Promise<boolean>((resolve) => {
+      let settled = false;
+      const finish = (ok: boolean) => {
+        if (settled) return;
+        settled = true;
+        resolve(ok);
+      };
+      const timer = setTimeout(() => {
+        // Remove this waiter from the list so it can't be called later.
+        const arr = this.deactivationWaiters.get(serverSessionId);
+        if (arr) {
+          const i = arr.indexOf(wrapped);
+          if (i >= 0) arr.splice(i, 1);
+          if (arr.length === 0) this.deactivationWaiters.delete(serverSessionId);
+        }
+        finish(false);
+      }, timeoutMs);
+      const wrapped = () => {
+        clearTimeout(timer);
+        finish(true);
+      };
+      const list = this.deactivationWaiters.get(serverSessionId) ?? [];
+      list.push(wrapped);
+      this.deactivationWaiters.set(serverSessionId, list);
     });
   }
 
@@ -1763,32 +1809,57 @@ export class ApprovalBridge {
    *  Sends deactivate_session to relay. Local caches are cleared when
    *  session_deactivated arrives back via WS (handled by constructor listener).
    *  Returns immediately — eventual consistency via sidebar polling. */
+  /** Detach a previously-attached Claude session by claudeSessionId.
+   *  Sends deactivate_session to relay and AWAITS the session_deactivated
+   *  ack (up to 3s) before returning. Awaiting prevents a quick re-sync
+   *  on the sidebar from racing the deactivate against a fresh
+   *  register_session at the relay (which would produce phantom phone
+   *  sessions). Local caches are cleared by the session_deactivated
+   *  listener — if the ack times out we fall back to clearing them here. */
   async detachClaudeSession(claudeSessionId: string): Promise<{ ok: boolean }> {
     if (!claudeSessionId) return { ok: false };
     const serverSessionId = this.sessions.get(claudeSessionId);
     if (!serverSessionId) return { ok: true };
     this.stopClaudeTranscriptSync(claudeSessionId);
 
+    // Arm the waiter BEFORE sending the deactivate, so we cannot miss a
+    // very-fast ack that arrives between sendRaw and waitForSessionDeactivated.
+    const ackPromise = this.waitForSessionDeactivated(serverSessionId, 3000);
+
     this.relay.sendRaw(JSON.stringify({
       type: 'deactivate_session',
       payload: { sessionId: serverSessionId, reason: 'manual_detach' },
     }));
 
-    // Clear local caches immediately so a quick re-attach does not reuse a
-    // server session that is already being deactivated.
-    this.sessions.delete(claudeSessionId);
-    this.transcriptAttachedIds.delete(claudeSessionId);
-    if (this.primarySessionId === serverSessionId) this.primarySessionId = null;
-    for (const [wid, sid] of this.windowSessions) {
-      if (sid === serverSessionId) {
-        this.windowSessions.delete(wid);
-        this.windowLabels.delete(wid);
-        this.activeWindows.delete(wid);
-        this.claimedTabSessions.delete(wid);
+    const acked = await ackPromise;
+
+    // Fallback cleanup: if relay never acked (offline / timeout), we still
+    // need to clear local mappings so the sidebar reflects detached state.
+    if (!acked) {
+      this.sessions.delete(claudeSessionId);
+      this.transcriptAttachedIds.delete(claudeSessionId);
+      if (this.primarySessionId === serverSessionId) this.primarySessionId = null;
+      for (const [wid, sid] of this.windowSessions) {
+        if (sid === serverSessionId) {
+          this.windowSessions.delete(wid);
+          this.windowLabels.delete(wid);
+          this.activeWindows.delete(wid);
+          this.claimedTabSessions.delete(wid);
+        }
       }
     }
 
+    // Clear dedup caches so re-attach replays all transcript entries fresh.
+    this._clearClaudeDedupKeys(claudeSessionId);
+
     return { ok: true };
+  }
+
+  private _clearClaudeDedupKeys(claudeSessionId: string): void {
+    const prefix = `${claudeSessionId}:`;
+    for (const key of this.sentPromptKeys) { if (key.startsWith(prefix)) this.sentPromptKeys.delete(key); }
+    for (const key of this.sentAssistantKeys) { if (key.startsWith(prefix)) this.sentAssistantKeys.delete(key); }
+    for (const key of this.sentAssistantTextKeys) { if (key.startsWith(prefix)) this.sentAssistantTextKeys.delete(key); }
   }
 
   /** Send prune_sessions to relay to clean up finished transcript-attached sessions

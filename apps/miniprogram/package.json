@@ -1,0 +1,13 @@
+{
+  "name": "codekey-miniprogram",
+  "version": "1.0.0",
+  "description": "CodeKey WeChat Mini Program",
+  "main": "app.js",
+  "scripts": {
+    "build:npm": "echo 'Run \"构建 npm\" in WeChat Developer Tool'"
+  },
+  "dependencies": {
+    "mp-html": "^2.1.1"
+  },
+  "miniprogram": "miniprogram_npm"
+}

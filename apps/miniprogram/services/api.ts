@@ -14,7 +14,7 @@ function request<T>(method: HttpMethod, url: string, data?: any): Promise<T> {
       method,
       url,
       data,
-      timeout: 10000,
+      timeout: 5000,
       header: {
         'Content-Type': 'application/json',
         ...(token ? { 'Authorization': `Bearer ${token}` } : {}),

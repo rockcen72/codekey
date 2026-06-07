@@ -304,11 +304,16 @@ export class CodexResumeManager {
     this.resumedServerSessionIds.delete(serverSessionId);
     this.approvalBridge?.removeCodexAttachedSession(localSessionId);
 
+    // Arm waiter BEFORE sending so we cannot miss a fast ack.
+    const ackPromise = this.approvalBridge?.waitForSessionDeactivated(serverSessionId, 3000);
+
     // Notify relay
     this.relay.sendRaw(JSON.stringify({
       type: 'deactivate_session',
       payload: { sessionId: serverSessionId, reason: 'manual_detach' },
     }));
+
+    if (ackPromise) await ackPromise;
 
     console.error('[codex-resume] stopped: local=%s server=%s', localSessionId, serverSessionId);
   }

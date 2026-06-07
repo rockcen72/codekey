@@ -383,6 +383,85 @@
   user-select: text;
 }
 
+/* mp-html inherits page font via tagStyle */
+
+/* mp-html component styles for task_complete markdown */
+mp-html {
+  display: block;
+  width: 100%;
+  font-size: 26rpx;
+  line-height: 1.6;
+  color: var(--ck-text);
+}
+
+mp-html h1, mp-html h2, mp-html h3, mp-html h4, mp-html h5, mp-html h6 {
+  margin: 16rpx 0 8rpx;
+  font-weight: 700;
+  color: var(--ck-text);
+}
+mp-html h1 { font-size: 32rpx; }
+mp-html h2 { font-size: 28rpx; }
+mp-html h3 { font-size: 26rpx; }
+
+mp-html p { margin: 8rpx 0; }
+mp-html ul, mp-html ol { margin: 8rpx 0; padding-left: 32rpx; }
+mp-html li { margin: 4rpx 0; }
+
+mp-html blockquote {
+  margin: 12rpx 0;
+  padding: 8rpx 16rpx;
+  border-left: 4rpx solid var(--ck-primary);
+  background: rgba(234, 88, 12, 0.06);
+  border-radius: 0 8rpx 8rpx 0;
+}
+
+mp-html code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 24rpx;
+  background: #f0f0f0;
+  padding: 2rpx 6rpx;
+  border-radius: 4rpx;
+}
+mp-html pre {
+  margin: 12rpx 0;
+  padding: 16rpx;
+  background: #1c1917;
+  border-radius: 8rpx;
+  overflow-x: auto;
+}
+mp-html pre code {
+  background: transparent;
+  padding: 0;
+  font-size: 24rpx;
+  color: #e7e5e4;
+  line-height: 1.5;
+}
+
+mp-html table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 12rpx 0;
+  font-size: 24rpx;
+}
+mp-html th, mp-html td {
+  border: 1rpx solid var(--ck-border);
+  padding: 8rpx 12rpx;
+  text-align: left;
+}
+mp-html th {
+  background: var(--ck-bg);
+  font-weight: 700;
+}
+mp-html tr:nth-child(even) td {
+  background: rgba(0,0,0,0.02);
+}
+
+mp-html hr {
+  border: none;
+  border-top: 1rpx solid var(--ck-border);
+  margin: 16rpx 0;
+}
+
 .input-options {
   display: flex;
   flex-direction: column;

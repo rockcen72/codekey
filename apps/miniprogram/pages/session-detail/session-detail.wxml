@@ -68,8 +68,8 @@
             <view wx:if="{{item.command}}" class="cmd-line">
               <text class="cmd-line-text mono">{{item.command}}</text>
             </view>
-            <!-- Summary: formatted for task_complete, plain for others -->
-            <text wx:if="{{item.contentFormatted}}" class="event-summary formatted-summary" selectable user-select>{{item.contentFormatted}}</text>
+            <!-- Summary: HTML for task_complete (mp-html), plain for others -->
+            <mp-html wx:if="{{item.contentHtml}}" class="event-summary" content="{{item.contentHtml}}" selectable="{{true}}" tagStyle="{{mpHtmlTagStyle}}"></mp-html>
             <view wx:elif="{{item.summary && item.summary !== item.command}}" class="event-summary">{{item.summary}}</view>
             <view wx:if="{{item.requiresInput && item.inputOptions && item.inputOptions.length}}" class="input-options">
               <button

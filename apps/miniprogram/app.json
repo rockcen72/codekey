@@ -18,5 +18,8 @@
     "scope.camera": {
       "desc": "扫码绑定电脑端的配对码"
     }
+  },
+  "usingComponents": {
+    "mp-html": "/components/mp-html/index"
   }
 }

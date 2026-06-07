@@ -205,10 +205,18 @@ export class OpenCodeSessionManager {
     }
     const serverSessionId = await this.ensureRelaySession(localSessionId);
     this.bridge.removeOpenCodeAttachedSession(localSessionId);
+
+    // Arm waiter BEFORE sending so a fast ack cannot be missed. Awaiting the
+    // ack before returning prevents a quick re-attach from racing the
+    // deactivate against a fresh register_session at the relay.
+    const ackPromise = this.bridge.waitForSessionDeactivated(serverSessionId, 3000);
+
     this.bridge.relay.sendRaw(JSON.stringify({
       type: 'deactivate_session',
       payload: { sessionId: serverSessionId, reason: 'manual_detach' },
     }));
+
+    await ackPromise;
     return true;
   }
 

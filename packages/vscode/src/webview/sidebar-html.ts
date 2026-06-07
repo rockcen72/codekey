@@ -298,8 +298,9 @@ export function renderSessionsContent(state: SidebarState): string {
 function _sessionItemHtml(lang: string | undefined, s: any, extraCls: string): string {
       const isAttached = s.attached;
       const sid = s.sessionId;
-      const btnCls = isAttached ? 'btn-attached' : '';
-      const btnText = isAttached ? i18n(lang, 'Unsync', '取消同步') : i18n(lang, 'Sync', '同步');
+      const isSyncing = s.syncing === true;
+      const btnCls = isSyncing ? 'btn-syncing' : isAttached ? 'btn-attached' : '';
+      const btnText = isSyncing ? '' : isAttached ? i18n(lang, 'Unsync', '取消同步') : i18n(lang, 'Sync', '同步');
       const agent = s.isOpenCodeSession ? 'opencode' : s.isCodexSession ? 'codex' : 'claude-code';
       const isCodex = s.isCodexSession ? 'true' : 'false';
       const isOpenCode = s.isOpenCodeSession ? 'true' : '';
@@ -311,7 +312,7 @@ function _sessionItemHtml(lang: string | undefined, s: any, extraCls: string): s
             <span class="chevron">&#9654;</span>
             <span class="session-title" title="${h(title)}">${h(truncate(title, 60))}</span>
           </span>
-          <button class="btn btn-sm ${btnCls}" data-action="toggleAttachClaudeSession" data-session-id="${h(sid)}" data-title="${h(title)}" data-server-session-id="${h(serverSessionId)}" data-attached="${isAttached ? 'true' : 'false'}"${s.isCodexSession ? ' data-iscodex="true"' : ''}${s.isOpenCodeSession ? ' data-isopencode="true"' : ''}>${btnText}</button>
+          <button class="btn btn-sm ${btnCls}" data-action="toggleAttachClaudeSession" data-session-id="${h(sid)}" data-title="${h(title)}" data-server-session-id="${h(serverSessionId)}" data-attached="${isAttached ? 'true' : 'false'}"${s.isCodexSession ? ' data-iscodex="true"' : ''}${s.isOpenCodeSession ? ' data-isopencode="true"' : ''}>${isSyncing ? '<span class="spinner"></span>' : btnText}</button>
         </div>
         <div class="session-meta">
           <span class="session-cwd">${h(truncate(s.cwd || '', 50))}</span>
@@ -419,8 +420,11 @@ ${rects.join('\n')}
 
 export function renderPairingContent(state: SidebarState): string {
   const p = state.pairing;
-  const isPaired = state.deviceStatus === 'paired';
   const isWaiting = p?.status === 'waiting';
+  const hasLocalCreds = !!state.deviceId && !!state.deviceSecret;
+  // If a pairing flow is actively waiting (code just generated, scan pending),
+  // show the pairing code regardless of stored credentials.
+  const isPaired = (state.deviceStatus === 'paired' || hasLocalCreds) && !isWaiting;
   const method = p?.method || 'code';
   const codeDigits = p?.code || '--------';
   const codeExpires = p?.expiresAt || 0;
@@ -1211,6 +1215,9 @@ body{
   background:rgba(46,204,113,.12);border-color:rgba(46,204,113,.3);color:#2ecc71;
 }
 .btn-attached:hover{background:rgba(46,204,113,.2);border-color:#2ecc71}
+.btn-syncing{background:rgba(128,128,128,.1);border-color:var(--vscode-panel-border,#1e1e2e);pointer-events:none}
+@keyframes spin{to{transform:rotate(360deg)}}
+.spinner{display:inline-block;width:12px;height:12px;border:2px solid var(--vscode-descriptionForeground,#50506e);border-top-color:transparent;border-radius:50%;animation:spin .6s linear infinite;vertical-align:middle}
 .session-meta{
   display:flex;align-items:center;justify-content:space-between;
   margin-top:2px;padding-left:18px;

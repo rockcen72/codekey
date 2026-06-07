@@ -4,74 +4,136 @@ import { getSubscription, type UsageSnapshot } from '../../services/subscription
 
 const app = getApp<any>();
 
-/** Lightweight markdown → readable plain text for WeChat <text> component.
- *  Preserves structure (line breaks, indentation) via CSS white-space: pre-wrap.
- *  Strips markdown syntax noise, keeps content readable. */
-function markdownToFormatted(md: string): string {
+function escapeHtml(str: string): string {
+  return str
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+/** Lightweight markdown → HTML for mp-html component.
+ *  Outputs safe HTML subset supported by mp-html (h1-6, p, ul/ol, table, code, blockquote, hr, strong, em, inline code). */
+function markdownToHtml(md: string): string {
   if (!md) return '';
   const lines = md.split('\n');
   const out: string[] = [];
   let inCode = false;
+  let inList = false;
+  let listType: 'ul' | 'ol' | null = null;
+
+  const flushList = () => {
+    if (inList) {
+      out.push(listType === 'ol' ? '</ol>' : '</ul>');
+      inList = false;
+      listType = null;
+    }
+  };
 
   for (const raw of lines) {
-    // Fenced code block toggle
+    // Fenced code block
     if (raw.trimStart().startsWith('```')) {
+      flushList();
       if (inCode) {
-        out.push('```');
+        out.push('</code></pre>');
         inCode = false;
       } else {
-        out.push('```');
+        out.push('<pre><code>');
         inCode = true;
       }
       continue;
     }
-    if (inCode) { out.push('  ' + raw); continue; }
+    if (inCode) {
+      out.push(escapeHtml(raw));
+      continue;
+    }
 
-    let line = raw;
+    let line = raw.trim();
 
-    // Headers → add blank line before for visual separation
-    if (/^#{1,3}\s?/.test(line)) {
-      const text = line.replace(/^#{1,3}\s?/, '');
-      if (out.length > 0 && out[out.length - 1].trim()) out.push('');
-      out.push(text);
-      out.push('─'.repeat(Math.min(text.length * 2, 30)));
+    // Headers
+    const hMatch = line.match(/^(#{1,6})\s+(.*)$/);
+    if (hMatch) {
+      flushList();
+      const level = hMatch[1].length;
+      out.push(`<h${level}>${escapeHtml(hMatch[2])}</h${level}>`);
       continue;
     }
 
     // Horizontal rule
-    if (/^-{3,}\s*$/.test(line) || /^\*{3,}\s*$/.test(line)) {
-      out.push('─'.repeat(20));
+    if (/^[-*_]{3,}$/.test(line)) {
+      flushList();
+      out.push('<hr>');
       continue;
     }
 
-    // Unordered list → bullet
-    if (/^[-*]\s/.test(line)) {
-      out.push('  • ' + line.replace(/^[-*]\s/, ''));
+    // Unordered list
+    if (/^[-*+]\s+/.test(line)) {
+      if (!inList || listType !== 'ul') { flushList(); out.push('<ul>'); inList = true; listType = 'ul'; }
+      out.push(`<li>${escapeHtml(line.replace(/^[-*+]\s+/, ''))}</li>`);
       continue;
     }
+
     // Ordered list
-    if (/^\d+\.\s/.test(line)) {
-      out.push('  ' + line);
+    if (/^\d+\.\s+/.test(line)) {
+      if (!inList || listType !== 'ol') { flushList(); out.push('<ol>'); inList = true; listType = 'ol'; }
+      out.push(`<li>${escapeHtml(line.replace(/^\d+\.\s+/, ''))}</li>`);
       continue;
     }
 
     // Blockquote
     if (/^>\s?/.test(line)) {
-      out.push('  ❝ ' + line.replace(/^>\s?/, ''));
+      flushList();
+      out.push(`<blockquote>${escapeHtml(line.replace(/^>\s?/, ''))}</blockquote>`);
       continue;
     }
 
-    // Table separator row → skip
-    if (/^\|[-\s|:]+\|$/.test(line.trim())) continue;
-    // Table data row → formatted columns
-    if (/^\|/.test(line) && /\|$/.test(line.trim())) {
+    // Table
+    if (/^\|.*\|$/.test(line)) {
+      flushList();
       const cells = line.split('|').filter(c => c.trim()).map(c => c.trim());
-      out.push('  ' + cells.join('  │  '));
+      const isHeaderSep = /^[-:\s|]+$/.test(line);
+      if (out.length === 0 || !out[out.length - 1].startsWith('<table>')) {
+        out.push('<table>');
+      }
+      const tag = isHeaderSep ? 'th' : 'td';
+      out.push('<tr>' + cells.map(c => `<${tag}>${escapeHtml(c)}</${tag}>`).join('') + '</tr>');
+      if (isHeaderSep) {
+        out.push('</thead><tbody>');
+      } else if (out[out.length - 2]?.includes('<thead')) {
+        // already handled
+      }
       continue;
     }
 
-    // Regular line (keep as-is, preserves markdown inline syntax)
-    out.push(line);
+    // Close table if next line is not table
+    if (out.length > 0 && out[out.length - 1].startsWith('<table>') && !/^\|.*\|$/.test(raw.trim())) {
+      if (out[out.length - 1].includes('<tbody>')) out.push('</tbody>');
+      out.push('</table>');
+    }
+
+    // Paragraph / regular line
+    if (line) {
+      flushList();
+      // Inline formatting: **bold**, *italic*, `code`
+      let html = escapeHtml(line)
+        .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+        .replace(/\*(.+?)\*/g, '<em>$1</em>')
+        .replace(/`(.+?)`/g, '<code>$1</code>');
+      out.push(`<p>${html}</p>`);
+    } else if (out.length > 0 && !out[out.length - 1].startsWith('<') && !out[out.length - 1].startsWith('</')) {
+      // empty line between paragraphs
+      flushList();
+    }
+  }
+
+  flushList();
+  if (inCode) out.push('</code></pre>');
+
+  // Close table if still open
+  if (out.length > 0 && out[out.length - 1].startsWith('<table>')) {
+    if (out[out.length - 1].includes('<tbody>')) out.push('</tbody>');
+    out.push('</table>');
   }
 
   return out.join('\n');
@@ -109,7 +171,7 @@ interface ChatMessage {
   senderName?: string;
   requiresInput?: boolean;
   inputOptions?: { label: string; value: string; description?: string }[];
-  contentFormatted?: string; // formatted text for <text> component (task_complete)
+  contentHtml?: string; // HTML for mp-html component (task_complete markdown)
 }
 
 Page({
@@ -134,6 +196,25 @@ Page({
     sheetReplyText: '',
     dockExpanded: true,
     dockReplyText: '',
+    mpHtmlTagStyle: {
+      h1: 'font-size:32rpx;font-weight:800;margin:14rpx 0 6rpx;display:block',
+      h2: 'font-size:30rpx;font-weight:800;margin:14rpx 0 6rpx;display:block',
+      h3: 'font-size:28rpx;font-weight:800;margin:14rpx 0 6rpx;display:block',
+      h4: 'font-size:26rpx;font-weight:800;margin:14rpx 0 6rpx;display:block',
+      p: 'margin:6rpx 0;line-height:1.6;display:block',
+      ul: 'padding-left:36rpx;margin:8rpx 0;display:block',
+      ol: 'padding-left:36rpx;margin:8rpx 0;display:block',
+      li: 'margin:4rpx 0;line-height:1.6;display:list-item',
+      pre: 'background:#1c1917;color:#e7e5e4;padding:12rpx 16rpx;border-radius:8rpx;font-size:22rpx;line-height:1.5;margin:12rpx 0;white-space:pre-wrap;overflow:auto;display:block',
+      code: 'background:#f1f0ec;padding:2rpx 8rpx;border-radius:4rpx;font-family:monospace;font-size:22rpx;display:inline',
+      blockquote: 'border-left:4rpx solid #d1d5db;padding-left:16rpx;margin:8rpx 0;color:#6b7280;font-style:italic;display:block',
+      hr: 'border:none;border-top:1rpx solid #e5e5e5;margin:16rpx 0;display:block',
+      table: 'width:100%;border-collapse:collapse;margin:8rpx 0;font-size:24rpx;display:table',
+      th: 'padding:6rpx 10rpx;border:1rpx solid #e5e5e5;font-weight:700;background:#f5f5f4;text-align:left;display:table-cell',
+      td: 'padding:6rpx 10rpx;border:1rpx solid #e5e5e5;text-align:left;display:table-cell',
+      strong: 'font-weight:800',
+      em: 'font-style:italic',
+    },
     quotaState: 'hidden' as 'hidden' | 'normal' | 'approaching' | 'exhausted',
     quotaPercent: 0,
     usage: null as UsageSnapshot | null,
@@ -514,7 +595,7 @@ Page({
           type: 'ai',
           side: 'left',
           content: taskText,
-          contentFormatted: markdownToFormatted(taskText),
+          contentHtml: markdownToHtml(taskText),
           displayTime: time,
           typeLabel: '任务完成',
           isTaskComplete: true,

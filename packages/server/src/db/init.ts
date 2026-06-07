@@ -118,6 +118,9 @@ export async function initDb(url: string) {
   await sql`
     CREATE INDEX IF NOT EXISTS idx_device_tokens_token_hash ON device_tokens(token_hash)
   `;
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_events_session_pending ON events(session_id, pending)
+  `;
 
   // ── Subscription system (Phase 1: account model) ──────────
 

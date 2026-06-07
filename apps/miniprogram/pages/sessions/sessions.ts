@@ -106,7 +106,24 @@ Page({
         this.fetchSessions();
       }
     };
-    this._onFetchSessionsBound = () => this.fetchSessions();
+    // WS events: update local list immediately, then refresh from server.
+    this._onSessionRegisteredBound = (payload: any) => {
+      const sid = payload.sessionId;
+      if (!sid || this.data.sessions.some((s: any) => s.id === sid)) return;
+      const entry = { id: sid, status: 'active', agent_type: 'claude-code', displayTitle: '同步中...', displaySubtitle: 'claude-code', connected: true, pendingCount: 0, hasPending: false, metadata: {} };
+      const sessions = [entry, ...this.data.sessions];
+      this.setData({ sessions, activeTotal: sessions.filter((s: any) => s.connected).length });
+      this._applyFilter(sessions);
+      this.fetchSessions(); // background refresh for full data
+    };
+    this._onSessionDeactivatedWsBound = (payload: any) => {
+      const sid = payload.sessionId;
+      if (!sid) return;
+      const sessions = this.data.sessions.filter((s: any) => s.id !== sid);
+      this.setData({ sessions, activeTotal: sessions.filter((s: any) => s.connected).length });
+      this._applyFilter(sessions);
+      this.fetchSessions();
+    };
     this._onWsConnectedBound = () => { this.setData({ wsConnected: true }); this.fetchSessions(); };
     this._onWsDisconnectedBound = () => this.setData({ wsConnected: false });
     this._onDeviceOfflineBound = () => { this.setData({ deviceOnline: false }); this._updateConnectedStates(false); };
@@ -114,8 +131,8 @@ Page({
     this._onQuotaExceededBound = () => { this.fetchSubscription(); };
 
     app.onWsEvent('event_push', this._onEventPushBound);
-    app.onWsEvent('session_registered', this._onFetchSessionsBound);
-    app.onWsEvent('session_deactivated', this._onFetchSessionsBound);
+    app.onWsEvent('session_registered', this._onSessionRegisteredBound);
+    app.onWsEvent('session_deactivated', this._onSessionDeactivatedWsBound);
     app.onWsEvent('session_label_updated', this._onFetchSessionsBound);
     app.onWsEvent('ws_connected', this._onWsConnectedBound);
     app.onWsEvent('ws_disconnected', this._onWsDisconnectedBound);
@@ -138,13 +155,13 @@ Page({
     if (this._onDeviceOfflineBound) app.offWsEvent('device_offline', this._onDeviceOfflineBound);
     if (this._onDeviceOnlineBound) app.offWsEvent('device_online', this._onDeviceOnlineBound);
     if (this._onQuotaExceededBound) app.offWsEvent('quota_exceeded', this._onQuotaExceededBound);
-    if (this._onFetchSessionsBound) {
-      app.offWsEvent('session_registered', this._onFetchSessionsBound);
-      app.offWsEvent('session_deactivated', this._onFetchSessionsBound);
-      app.offWsEvent('session_label_updated', this._onFetchSessionsBound);
-    }
+    if (this._onSessionRegisteredBound) app.offWsEvent('session_registered', this._onSessionRegisteredBound);
+    if (this._onSessionDeactivatedWsBound) app.offWsEvent('session_deactivated', this._onSessionDeactivatedWsBound);
+    if (this._onFetchSessionsBound) app.offWsEvent('session_label_updated', this._onFetchSessionsBound);
     this._onEventPushBound = undefined;
     this._onFetchSessionsBound = undefined;
+    this._onSessionRegisteredBound = undefined;
+    this._onSessionDeactivatedWsBound = undefined;
     this._onWsConnectedBound = undefined;
     this._onWsDisconnectedBound = undefined;
     this._onDeviceOfflineBound = undefined;
@@ -152,7 +169,7 @@ Page({
     this._onQuotaExceededBound = undefined;
   },
 
-  _startPolling() { this._stopPolling(); this._pollTimer = setInterval(() => this.fetchSessions(), 10_000); },
+  _startPolling() { this._stopPolling(); this._pollTimer = setInterval(() => this.fetchSessions(), 5_000); },
   _stopPolling() { if (this._pollTimer) { clearInterval(this._pollTimer); this._pollTimer = undefined; } },
 
   _updateConnectedStates(deviceOnline: boolean) {
@@ -177,12 +194,9 @@ Page({
   },
 
   async fetchSessions() {
-    const requestSeq = (this._sessionFetchSeq || 0) + 1;
-    this._sessionFetchSeq = requestSeq;
     try {
       const api = createApi(getServerUrl());
       const raw = await api.getSessions();
-      if (requestSeq !== this._sessionFetchSeq) return;
       const deviceOnline = this.data.deviceOnline;
       const sessions = raw.map((s: Session) => {
         const pendingCount = Number((s as any).pendingCount || (s as any).pending_count || 0);

@@ -92,6 +92,10 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
   private _claudeAttachInFlight = new Set<string>();
   private _opencodeAttachInFlight = new Set<string>();
   private _codexStaleStopInFlight = new Set<string>();
+  /** Sessions currently being synced/unsynced — shown as spinner in UI. */
+  private _syncInFlight = new Set<string>();
+  /** Debounce rapid sync/unsync toggles — 1s between actions. */
+  private _lastToggleTime = 0;
   /** Track recent user-initiated detach actions. The remote session list
    *  may take a few seconds to reflect the detach (relay processes the
    *  WS deactivate_session async). During this window, ignore the
@@ -207,7 +211,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         this._view.webview.postMessage({
           type: 'stateUpdate',
           approvalsHtml: renderApprovalsContent({
-            deviceStatus: 'unpaired',
+            deviceStatus: 'paired',
             phoneName: '',
             bridge: this._bridgeService.state,
             agents: [],
@@ -456,6 +460,33 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     });
   }
 
+  /** Push only session list state — marks in-flight sync buttons with spinner.
+   *  Skips relay API calls for speed; uses in-memory session + syncInFlight data. */
+  private _pushSessionsOnly(): void {
+    if (!this._view) return;
+    // Build a minimal state with current _syncInFlight markers. The webview
+    // swaps only sessionsContent, leaving other sections unchanged.
+    const creds = loadCredentials();
+    const state: SidebarState = {
+      deviceStatus: creds?.deviceToken ? 'paired' : 'unpaired',
+      phoneName: '',
+      bridge: this._bridgeService.state,
+      agents: [],
+      pendingApprovals: [],
+      sessions: [],
+      events: {},
+      claudeSessions: (this as any)._lastSessions ?? [],
+    };
+    // Mark in-flight sessions so buttons show spinner
+    for (const s of state.claudeSessions) {
+      if (this._syncInFlight.has(s.sessionId)) (s as any).syncing = true;
+    }
+    this._view.webview.postMessage({
+      type: 'stateUpdate',
+      sessionsHtml: renderSessionsContent(state),
+    });
+  }
+
   private _bridgeFetch(url: string, init: RequestInit = {}): Promise<Response> {
     return fetch(url, {
       ...init,
@@ -468,7 +499,11 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
 
     const creds = loadCredentials();
     const bridge = this._bridgeService.state;
-    let deviceStatus: SidebarState['deviceStatus'] = 'unpaired';
+    // Default to 'paired' when we have stored credentials — the bridge WS
+    // health check may lag behind actual connection state. Starting with
+    // 'unpaired' due to stale health data would briefly flash the pairing UI.
+    let deviceStatus: SidebarState['deviceStatus'] =
+      creds?.deviceToken ? 'paired' : 'unpaired';
     let sessions: SessionResponse[] = [];
     let allDeviceSessions: SessionResponse[] = [];
     let allDeviceSessionsFresh = false;
@@ -493,11 +528,8 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         deviceStatus = 'paired';
         subscription = await api.getDeviceSubscription().catch(() => undefined);
       } catch (err) {
-        if (err instanceof ApiError && (err.status === 401 || err.status === 403)) {
-          deviceStatus = 'unpaired';
-        } else {
-          deviceStatus = 'offline';
-        }
+        // Device status is purely credential-based; relay reachability is
+        // communicated via the green dot in renderDeviceContent.
       }
     }
     if (allDeviceSessions.length === 0) allDeviceSessions = sessions;
@@ -855,6 +887,11 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       }
     } catch { /* bridge unreachable */ }
 
+    // Mark in-flight sync operations so UI shows a spinner
+    for (const s of mergedClaudeSessions) {
+      if (this._syncInFlight.has(s.sessionId)) (s as any).syncing = true;
+    }
+
     // Dedup by sessionId — multiple sources (ocStored, listSessions HTTP+disk,
     // allDeviceSessions) can produce duplicates if session IDs diverge or the
     // same session appears from different discovery paths. Keep the last entry
@@ -869,6 +906,9 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         mergedClaudeSessions.push(...seen.values());
       }
     }
+
+    // Save for _pushSessionsOnly (lightweight spinner update without API calls)
+    (this as any)._lastSessions = mergedClaudeSessions;
 
     const state: SidebarState = {
       lang: vscode.env.language,
@@ -981,6 +1021,13 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         this._handleSessionPreview(msg.sessionId, msg.iscodex === true);
         break;
       case 'toggleAttachClaudeSession':
+        // Debounce: ignore actions within 1s of the last toggle to prevent
+        // relay race conditions (deactivate_session vs register_session).
+        if (Date.now() - this._lastToggleTime < 1000) { log('toggle debounced'); break; }
+        this._lastToggleTime = Date.now();
+        const toggleSid = String(msg.sessionId || '');
+        if (toggleSid) this._syncInFlight.add(toggleSid);
+        this._pushSessionsOnly();
         if (msg.isopencode) {
           const sessionId = String(msg.sessionId || '');
           const attached = msg.attached === true;
@@ -1028,6 +1075,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
           }).catch(() => {
             vscode.window.showErrorMessage(`${attached ? 'Detach' : 'Attach'} failed: bridge not available`);
           }).finally(() => {
+            this._syncInFlight.delete(toggleSid);
             this._opencodeAttachInFlight.delete(inFlightKey);
             this._pushState();
           });
@@ -1062,9 +1110,11 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
                   this._recentDetachedAt.set(codexSid, Date.now());
                   this._recentAttachedAt.delete(codexSid);
                 }
+                this._syncInFlight.delete(toggleSid);
                 this._pushState();
               })
               .catch(() => {
+                this._syncInFlight.delete(toggleSid);
                 vscode.window.showErrorMessage('Stop failed: bridge not available');
               });
           } else {
@@ -1080,8 +1130,10 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
                 this._recentAttachedAt.set(codexSid, Date.now());
                 this._recentDetachedAt.delete(codexSid);
               }
+              this._syncInFlight.delete(toggleSid);
               this._pushState();
             }).catch(() => {
+              this._syncInFlight.delete(toggleSid);
               vscode.window.showErrorMessage('Resume failed: bridge not available');
             });
           }
@@ -1102,10 +1154,14 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
                 await SessionStore.remove(this._context, creds.deviceId, msg.sessionId);
               }
             }
+            this._syncInFlight.delete(toggleSid);
+            this._pushState();
+          }).catch(() => {
+            this._syncInFlight.delete(toggleSid);
             this._pushState();
           });
         } else {
-          this.attachClaudeSession(msg.sessionId).then(() => this._pushState());
+          this.attachClaudeSession(msg.sessionId).then(() => { this._syncInFlight.delete(toggleSid); this._pushState(); });
         }
         break;
       case 'detachSession':
@@ -1162,74 +1218,31 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
   }
 
   private async _handlePairingGenerate(): Promise<void> {
-    const creds = loadCredentials();
-    const relayUrl = creds?.relayUrl || 'https://codekey.tinymoney.cn';
+    // Clear old credentials first — the pairing code flow generates fresh ones.
+    // Without this, renderPairingContent sees deviceId+deviceSecret and shows
+    // the "paired" card instead of the pairing code.
+    clearCredentials();
 
-    // No credentials: bootstrap (first-time pair or after unpair)
-    if (!creds?.deviceSecret || !creds?.deviceId) {
-      const deviceSecret = crypto.randomUUID();
-      const deviceSecretHash = crypto.createHash('sha256').update(deviceSecret).digest('hex');
-      try {
-        const resp = await secureFetch(`${relayUrl}/api/v1/devices/pair`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ deviceSecretHash, deviceName: `VS Code (${os.hostname()})` }),
-          signal: AbortSignal.timeout(10000),
-        });
-        if (!resp.ok) {
-          this._pairingState = { code: '', method: 'code', platform: this._pairingState?.platform || 'wechat', status: 'error', statusText: 'Pairing failed', expiresAt: 0 };
-          this._pushState();
-          return;
-        }
-        const result = await resp.json() as { code: string; deviceId: string; expiresIn?: number; pairUrl?: string };
-        // Save new credentials for subsequent re-pair
-        const { saveCredentials } = await import('../auth/credentials.js');
-        saveCredentials({ deviceId: result.deviceId, deviceSecret, relayUrl });
-        await BridgeStatusService.getInstance().stop({ force: true });
-        this._openPairingSocket(result.deviceId, deviceSecret, relayUrl);
-        this._pairingState = {
-          code: String(result.code),
-          method: 'code',
-          platform: this._pairingState?.platform || 'wechat',
-          status: 'waiting',
-          statusText: 'Waiting for scan...',
-          expiresAt: Date.now() + (result.expiresIn ?? 300) * 1000,
-          pairUrl: result.pairUrl || '',
-        };
-        this._pushState();
-      } catch (err) {
-        const msg = (err as Error).message;
-        log(`pairing generate failed: ${msg}`);
-        this._pairingState = { code: '', method: 'code', platform: this._pairingState?.platform || 'wechat', status: 'error', statusText: `Connection failed: ${msg}`, expiresAt: 0 };
-        this._pushState();
-        // Also surface as a notification so the failure is unmissable, even
-        // if the small inline status is overlooked.
-        vscode.window.showErrorMessage(`CodeKey: pairing failed — ${msg}`);
-      }
-      return;
-    }
-
-    const deviceSecretHash = crypto.createHash('sha256').update(creds.deviceSecret).digest('hex');
+    const relayUrl = 'https://codekey.tinymoney.cn';
+    const deviceSecret = crypto.randomUUID();
+    const deviceSecretHash = crypto.createHash('sha256').update(deviceSecret).digest('hex');
     try {
       const resp = await secureFetch(`${relayUrl}/api/v1/devices/pair`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          deviceSecretHash,
-          deviceId: creds.deviceId,
-          deviceName: `VS Code (${os.hostname()})`,
-        }),
+        body: JSON.stringify({ deviceSecretHash, deviceName: `VS Code (${os.hostname()})` }),
         signal: AbortSignal.timeout(10000),
       });
       if (!resp.ok) {
-        const err = await resp.json().catch(() => ({ error: resp.statusText }));
-        this._pairingState = { code: '', method: 'code', platform: this._pairingState?.platform || 'wechat', status: 'error', statusText: `Pairing failed: ${(err as Record<string, unknown>).error || ''}`, expiresAt: 0 };
+        this._pairingState = { code: '', method: 'code', platform: this._pairingState?.platform || 'wechat', status: 'error', statusText: 'Pairing failed', expiresAt: 0 };
         this._pushState();
         return;
       }
-      const result = await resp.json() as { code: string; expiresIn?: number; pairUrl?: string };
+      const result = await resp.json() as { code: string; deviceId: string; expiresIn?: number; pairUrl?: string };
+      const { saveCredentials } = await import('../auth/credentials.js');
+      saveCredentials({ deviceId: result.deviceId, deviceSecret, relayUrl });
       await BridgeStatusService.getInstance().stop({ force: true });
-      this._openPairingSocket(creds.deviceId, creds.deviceSecret, relayUrl);
+      this._openPairingSocket(result.deviceId, deviceSecret, relayUrl);
       this._pairingState = {
         code: String(result.code),
         method: 'code',
@@ -1242,11 +1255,12 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       this._pushState();
     } catch (err) {
       const msg = (err as Error).message;
-      log(`pairing generate (with creds) failed: ${msg}`);
+      log(`pairing generate failed: ${msg}`);
       this._pairingState = { code: '', method: 'code', platform: this._pairingState?.platform || 'wechat', status: 'error', statusText: `Connection failed: ${msg}`, expiresAt: 0 };
       this._pushState();
       vscode.window.showErrorMessage(`CodeKey: pairing failed — ${msg}`);
     }
+
   }
 
   private _closePairingSocket(): void {
