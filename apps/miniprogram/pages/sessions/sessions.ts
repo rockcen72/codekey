@@ -238,7 +238,10 @@ Page({
       content: '将从列表中移除此会话。如果会话仍处于连接状态，将同时解除关联。',
       success: (res) => {
         if (!res.confirm) { this._closeAllSwipes(); return; }
-        if (session.connected && app.globalData.wsConnected) app.sendWs({ type: 'detach_session', payload: { sessionId } });
+        if (session.connected && app.globalData.wsConnected) {
+          app.sendWs({ type: 'detach_session', payload: { sessionId, reason: 'manual_detach' } });
+        }
+        createApi(getServerUrl()).hideSession(sessionId).catch(() => {});
         const updated = sessions.filter((s: any) => s.id !== sessionId);
         this.setData({ sessions: updated, pendingTotal: updated.reduce((sum, s) => sum + (s.pendingCount || 0), 0), activeTotal: updated.filter((s: any) => s.connected).length });
         this._applyFilter(updated);

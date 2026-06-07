@@ -1,6 +1,6 @@
 import { getClientToken, clearAuth } from './storage';
 
-type HttpMethod = 'GET' | 'POST' | 'DELETE';
+type HttpMethod = 'GET' | 'POST' | 'DELETE' | 'PATCH';
 
 interface ApiError {
   error: string;
@@ -100,6 +100,10 @@ export function createApi(serverUrl: string) {
 
     unbindDevice(id: string): Promise<void> {
       return request<void>('DELETE', `${api}/devices/${id}`);
+    },
+
+    hideSession(sessionId: string): Promise<void> {
+      return request<void>('PATCH', `${api}/sessions/${sessionId}/hide`);
     },
   };
 }
