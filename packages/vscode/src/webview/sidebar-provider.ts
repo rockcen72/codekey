@@ -91,9 +91,45 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
   private _claudeAttachInFlight = new Set<string>();
   private _opencodeAttachInFlight = new Set<string>();
   private _codexStaleStopInFlight = new Set<string>();
+  /** Track recent user-initiated detach actions. The remote session list
+   *  may take a few seconds to reflect the detach (relay processes the
+   *  WS deactivate_session async). During this window, ignore the
+   *  `remote` fallback so the UI updates immediately. */
+  private _recentDetachedAt = new Map<string, number>();
+  /** Track recent user-initiated attach actions. The remote session list
+   *  may take a few seconds to include the newly-registered session.
+   *  During this window, treat the session as attached even if remote
+   *  doesn't have it yet — bridge has authoritatively registered it. */
+  private _recentAttachedAt = new Map<string, number>();
   private _pushInFlight = false;
   private _pushQueued = false;
   private _approvalPollInFlight = false;
+
+  /** Window during which a recent user-driven detach/attach overrides
+   *  the lagging `remote` list. Long enough to absorb the WS round-trip
+   *  + DB write + next sidebar poll, short enough that a real out-of-band
+   *  re-attach (mp re-syncs from phone) still wins after the window. */
+  private static readonly RECENT_ACTION_WINDOW_MS = 15_000;
+
+  private _isRecentlyDetached(sessionId: string): boolean {
+    const at = this._recentDetachedAt.get(sessionId);
+    if (!at) return false;
+    if (Date.now() - at > SidebarProvider.RECENT_ACTION_WINDOW_MS) {
+      this._recentDetachedAt.delete(sessionId);
+      return false;
+    }
+    return true;
+  }
+
+  private _isRecentlyAttached(sessionId: string): boolean {
+    const at = this._recentAttachedAt.get(sessionId);
+    if (!at) return false;
+    if (Date.now() - at > SidebarProvider.RECENT_ACTION_WINDOW_MS) {
+      this._recentAttachedAt.delete(sessionId);
+      return false;
+    }
+    return true;
+  }
 
   constructor(private _context: vscode.ExtensionContext) {}
 
@@ -194,6 +230,8 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         body: JSON.stringify({ claudeSessionId }),
       });
       if (res.ok) {
+        this._recentDetachedAt.set(claudeSessionId, Date.now());
+        this._recentAttachedAt.delete(claudeSessionId);
         const creds = loadCredentials();
         if (creds?.deviceId) {
           await SessionStore.remove(this._context, creds.deviceId, claudeSessionId);
@@ -295,6 +333,8 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         body: JSON.stringify({ sessionId }),
       });
       if (res.ok) {
+        this._recentAttachedAt.set(sessionId, Date.now());
+        this._recentDetachedAt.delete(sessionId);
         const creds = loadCredentials();
         if (creds?.deviceId) {
           await SessionStore.add(this._context, creds.deviceId, sessionId);
@@ -609,9 +649,17 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     for (const s of mergedClaudeSessions) {
       if (ocStoredIds.has(s.sessionId)) {
         const remote = remoteOpenCodeByLocalId.get(s.sessionId);
+        const bridgeAttached = attachedSessions.includes(s.sessionId);
+        // Authoritative: if bridge says attached, it's attached. If bridge
+        // says not attached AND user recently detached, honor the user
+        // action (relay sessions list lags ~1-5s). Otherwise fall back to
+        // remote so bridge-restart scenarios still show attached state.
+        const isAttached = bridgeAttached
+          || (this._isRecentlyAttached(s.sessionId))
+          || (!!remote && !this._isRecentlyDetached(s.sessionId));
         (s as any).isOpenCodeSession = true;
-        (s as any).attached = attachedSessions.includes(s.sessionId) || !!remote;
-        (s as any).canDetach = attachedSessions.includes(s.sessionId) || !!remote;
+        (s as any).attached = isAttached;
+        (s as any).canDetach = isAttached;
         if (remote) {
           (s as any).serverSessionId = remote.serverSessionId;
           if (remote.title) (s as any).title = remote.title;
@@ -655,11 +703,26 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
             if (existingIds.has(cs.sessionId)) continue;
             existingIds.add(cs.sessionId);
             const remote = remoteCodexByLocalId.get(cs.sessionId);
-            // If the full remote list failed, keep local "attached" state conservative.
-            // Only auto-stop stale resume sessions after a fresh all-device session list proves
-            // the remote Codex session is gone.
-            const isAttached = attachedSessions.includes(cs.sessionId) && (!allDeviceSessionsFresh || !!remote);
-            if (allDeviceSessionsFresh && attachedSessions.includes(cs.sessionId) && !remote) {
+            const bridgeAttached = attachedSessions.includes(cs.sessionId);
+            // Authoritative: bridge attached → attached. Recent user attach
+            // (relay sessions list lags) → attached. Otherwise fall back to
+            // remote only when not recently detached, mirroring OpenCode.
+            //
+            // Auto-stop stale resume sessions only when:
+            //   - relay's full session list is fresh
+            //   - bridge thinks attached
+            //   - remote has no record
+            //   - user hasn't taken a recent attach action (so we don't
+            //     race-kill a just-started resume before relay observes it)
+            const isAttached = bridgeAttached
+              || this._isRecentlyAttached(cs.sessionId)
+              || (!!remote && !this._isRecentlyDetached(cs.sessionId));
+            if (
+              allDeviceSessionsFresh
+              && bridgeAttached
+              && !remote
+              && !this._isRecentlyAttached(cs.sessionId)
+            ) {
               this._autoStopStaleCodexSession(cs.sessionId);
             }
             mergedClaudeSessions.push({
@@ -685,15 +748,20 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         if (ocBody.sessions) {
           for (const s of ocBody.sessions) {
             if (!s.id) continue;
+            const remote = remoteOpenCodeByLocalId.get(s.id);
+            const bridgeAttached = attachedSessions.includes(s.id);
+            const isAttached = bridgeAttached
+              || this._isRecentlyAttached(s.id)
+              || (!!remote && !this._isRecentlyDetached(s.id));
             const item = {
               sessionId: s.id,
               title: openCodeSessionTitle(s),
               cwd: s.directory || '',
               updatedAt: s.time?.updated ? new Date(s.time.updated).toISOString() : '',
-              attached: attachedSessions.includes(s.id) || remoteOpenCodeByLocalId.has(s.id),
-              canDetach: attachedSessions.includes(s.id) || remoteOpenCodeByLocalId.has(s.id),
+              attached: isAttached,
+              canDetach: isAttached,
               isOpenCodeSession: true,
-              serverSessionId: remoteOpenCodeByLocalId.get(s.id)?.serverSessionId,
+              serverSessionId: remote?.serverSessionId,
             };
             const existing = mergedClaudeSessions.find(ms => ms.sessionId === s.id);
             if (existing) {
@@ -845,6 +913,13 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
               const body = await res.json().catch(() => ({} as Record<string, unknown>));
               vscode.window.showErrorMessage(`${attached ? 'Detach' : 'Attach'} failed: ${(body as Record<string, unknown>).error || res.statusText}`);
             } else {
+              if (attached) {
+                this._recentDetachedAt.set(sessionId, Date.now());
+                this._recentAttachedAt.delete(sessionId);
+              } else {
+                this._recentAttachedAt.set(sessionId, Date.now());
+                this._recentDetachedAt.delete(sessionId);
+              }
               const creds = loadCredentials();
               if (creds?.deviceId) {
                 if (!attached) {
@@ -864,22 +939,56 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         }
         if (msg.iscodex) {
           // Codex session: Attach = start resume, Detach = stop resume
-          const url = msg.attached
-            ? `${this._bridgeService.getBridgeUrl()}/v1/codex-sessions/stop`
-            : `${this._bridgeService.getBridgeUrl()}/v1/codex-sessions/resume`;
-          this._bridgeFetch(url, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ sessionId: msg.sessionId }),
-          }).then(async (res) => {
-            if (!res.ok) {
-              const body = await res.json().catch(() => ({} as Record<string, unknown>));
-              vscode.window.showErrorMessage(`${msg.attached ? 'Stop' : 'Resume'} failed: ${(body as Record<string, unknown>).error || res.statusText}`);
-            }
-            this._pushState();
-          }).catch(() => {
-            vscode.window.showErrorMessage(`${msg.attached ? 'Stop' : 'Resume'} failed: bridge not available`);
-          });
+          const codexSid = String(msg.sessionId || '');
+          const bridgeUrl = this._bridgeService.getBridgeUrl();
+          if (msg.attached) {
+            // Detach: look up serverSessionId from active sessions so the relay
+            // always gets a deactivate_session even if the bridge restarted and
+            // lost its in-memory localToServer map.
+            interface ActiveSession { localSession: { sessionId: string }; serverSessionId: string }
+            this._bridgeFetch(`${bridgeUrl}/v1/codex-sessions/active`)
+              .then(activeResp => activeResp.ok ? activeResp.json() as Promise<{ sessions: ActiveSession[] }> : Promise.resolve({ sessions: [] }))
+              .catch((): { sessions: ActiveSession[] } => ({ sessions: [] }))
+              .then((activeBody) => {
+                const match = activeBody.sessions?.find(s => s.localSession.sessionId === codexSid);
+                const serverSessionId = match?.serverSessionId || '';
+                return this._bridgeFetch(`${bridgeUrl}/v1/codex-sessions/stop`, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ sessionId: codexSid, serverSessionId }),
+                });
+              })
+              .then(async (res) => {
+                if (!res.ok) {
+                  const body = await res.json().catch(() => ({} as Record<string, unknown>));
+                  vscode.window.showErrorMessage(`Stop failed: ${(body as Record<string, unknown>).error || res.statusText}`);
+                } else if (codexSid) {
+                  this._recentDetachedAt.set(codexSid, Date.now());
+                  this._recentAttachedAt.delete(codexSid);
+                }
+                this._pushState();
+              })
+              .catch(() => {
+                vscode.window.showErrorMessage('Stop failed: bridge not available');
+              });
+          } else {
+            this._bridgeFetch(`${bridgeUrl}/v1/codex-sessions/resume`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ sessionId: codexSid }),
+            }).then(async (res) => {
+              if (!res.ok) {
+                const body = await res.json().catch(() => ({} as Record<string, unknown>));
+                vscode.window.showErrorMessage(`Resume failed: ${(body as Record<string, unknown>).error || res.statusText}`);
+              } else if (codexSid) {
+                this._recentAttachedAt.set(codexSid, Date.now());
+                this._recentDetachedAt.delete(codexSid);
+              }
+              this._pushState();
+            }).catch(() => {
+              vscode.window.showErrorMessage('Resume failed: bridge not available');
+            });
+          }
         } else if (msg.attached) {
           // Already attached — detach from relay and forget the explicit sync.
           this._bridgeFetch(`${this._bridgeService.getBridgeUrl()}/v1/detach-session`, {
@@ -890,6 +999,8 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
             if (!res.ok) {
               vscode.window.showErrorMessage(`Detach failed: ${res.statusText}`);
             } else {
+              this._recentDetachedAt.set(msg.sessionId, Date.now());
+              this._recentAttachedAt.delete(msg.sessionId);
               const creds = loadCredentials();
               if (creds?.deviceId) {
                 await SessionStore.remove(this._context, creds.deviceId, msg.sessionId);
@@ -908,6 +1019,8 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
           body: JSON.stringify({ claudeSessionId: msg.sessionId }),
         }).then(async (res) => {
           if (res.ok) {
+            this._recentDetachedAt.set(msg.sessionId, Date.now());
+            this._recentAttachedAt.delete(msg.sessionId);
             const creds = loadCredentials();
             if (creds?.deviceId) {
               await SessionStore.remove(this._context, creds.deviceId, msg.sessionId);

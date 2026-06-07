@@ -357,8 +357,8 @@ function handleRequest(req: IncomingMessage, res: ServerResponse, bridge: Approv
     readJsonBody(req, res).then((rawBody) => {
       const body = rawBody as any;
       try {
-        const { sessionId } = body;
-        codexResumeManager.stopResume(sessionId).then(() => {
+        const { sessionId, serverSessionId } = body;
+        codexResumeManager.stopResume(sessionId, serverSessionId).then(() => {
           res.writeHead(200, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ ok: true }));
         }).catch((err: Error) => {

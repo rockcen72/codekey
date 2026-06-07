@@ -271,10 +271,27 @@ export class CodexResumeManager {
 
   /**
    * Stop a resumed session: clean up runtime, watcher, relay registration.
+   * @param localSessionId — Codex local session UUID
+   * @param knownServerSessionId — relay server session ID (caller looked it up);
+   *   used as fallback when localToServer doesn't have the mapping (e.g. bridge restart).
    */
-  async stopResume(localSessionId: string): Promise<void> {
-    const serverSessionId = this.localToServer.get(localSessionId);
-    if (!serverSessionId) return;
+  async stopResume(localSessionId: string, knownServerSessionId?: string): Promise<void> {
+    // Look up serverSessionId: prefer in-memory map, fall back to caller-provided id
+    // or scan sessions map for a matching localSession.
+    let serverSessionId = this.localToServer.get(localSessionId);
+    if (!serverSessionId) {
+      for (const [sid, state] of this.sessions) {
+        if (state.localSession.sessionId === localSessionId) {
+          serverSessionId = sid;
+          break;
+        }
+      }
+    }
+    if (!serverSessionId) serverSessionId = knownServerSessionId;
+    if (!serverSessionId) {
+      console.error('[codex-resume] stopResume: no serverSessionId for local=%s, sending deactivate anyway is not possible', localSessionId);
+      return;
+    }
 
     const state = this.sessions.get(serverSessionId);
     if (state) {

@@ -637,20 +637,36 @@ export class OpenCodeSessionManager {
 
     if (!sessionID || !messageID) return;
     let serverSessionId = this.opencodeSessionToRelayId.get(sessionID);
+
+    // Check for input_required BEFORE the unmapped-session gate — approvals
+    // need to auto-register (same as CC's handleApproval), but regular
+    // text/tool events for unmapped sessions must NOT create new relay
+    // sessions. Without this check, every assistant reply on any local
+    // OpenCode session would appear as a new session on the phone.
+    const key = `part:${partID}`;
+    const inputCard = tryFormatInputRequiredEvent(part, 'opencode')
+      || tryFormatInputRequiredEvent(props, 'opencode');
+
     if (!serverSessionId) {
-      // Auto-register on first response — CC does this via hook events
-      console.error('[opencode] onMessagePartUpdated: registering session %s on-the-fly', sessionID);
-      this.ensureRelaySession(sessionID).then((sid) => {
-        // Defer — next SSE event for this session will find the mapping
-      }).catch(() => {});
+      if (inputCard) {
+        // Auto-register for approval events only — matches CC pattern
+        console.error('[opencode] onMessagePartUpdated: auto-registering session %s for input_required', sessionID);
+        this.ensureRelaySession(sessionID).then((sid) => {
+          this.bridge.sendEventToRelay(sid, {
+            clientEventId: inputCard.requestId || `oc-input:${partID || messageID}`,
+            sessionId: sid,
+            agent: 'opencode',
+            eventType: 'input_required',
+            data: inputCard,
+          });
+        }).catch(() => {});
+      }
+      // Skip all other events for unmapped sessions (text, tool, etc.)
       return;
     }
 
-    const key = `part:${partID}`;
     if (this.deliveredMessageParts.has(key)) return;
 
-    const inputCard = tryFormatInputRequiredEvent(part, 'opencode')
-      || tryFormatInputRequiredEvent(props, 'opencode');
     if (inputCard) {
       this.deliveredMessageParts.add(key);
       this.bridge.sendEventToRelay(serverSessionId, {

@@ -78,7 +78,7 @@ export async function startCodexSession(context: vscode.ExtensionContext): Promi
       }).catch(err => debug('[Codex] failed to register approval with bridge:', err));
     },
     onInput: (req: ServerRequestMessage) => {
-      const card = formatInputRequiredEvent(req, 'codex');
+      const card = formatInputRequiredEvent({ id: req.id, params: req.params }, 'codex');
       const correlationId = String(req.id);
       pendingInputs.set(correlationId, card.questions);
       fetch(`${bridgeUrl()}/v1/codex/event`, {
