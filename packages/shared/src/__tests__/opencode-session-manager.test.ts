@@ -179,6 +179,136 @@ describe('OpenCodeSessionManager event handling', () => {
       }
     });
 
+    it('replies to OpenCode approvals through the current permission endpoint', async () => {
+      const originalFetch = globalThis.fetch;
+      const fetchSpy = vi.fn(async () => ({ ok: true }) as Response);
+      globalThis.fetch = fetchSpy as any;
+      try {
+        await (manager as any).handleSSEEvent({
+          type: 'permission.asked',
+          properties: {
+            id: 'perm-reply',
+            permission: 'Bash',
+            sessionID: 'oc-session-reply',
+            metadata: { command: 'npm test' },
+            time: { created: Date.now() },
+          },
+        });
+
+        const handled = await manager.handleApprovalForward('oc-perm:perm-reply', 'approve');
+
+        expect(handled).toBe(true);
+        expect(bridge.getPendingApprovals()).toEqual([]);
+        expect(fetchSpy).toHaveBeenCalledWith(
+          'http://127.0.0.1:4096/permission/perm-reply/reply',
+          expect.objectContaining({
+            method: 'POST',
+            body: JSON.stringify({ reply: 'once' }),
+          }),
+        );
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
+    it('re-discovers OpenCode port before each approval forward (handles restart race)', async () => {
+      // Regression: if OpenCode restarts between the permission event and
+      // the phone's decision, the SSE may not have reconnected yet but the
+      // fetch still needs the new port. Verify refreshOpenCodeUrl is called.
+      const refreshSpy = vi.spyOn(manager as any, 'refreshOpenCodeUrl');
+      const originalFetch = globalThis.fetch;
+      const fetchSpy = vi.fn(async () => ({ ok: true }) as Response);
+      globalThis.fetch = fetchSpy as any;
+      try {
+        await (manager as any).handleSSEEvent({
+          type: 'permission.asked',
+          properties: {
+            id: 'perm-rebind',
+            permission: 'Bash',
+            sessionID: 'oc-session-rebind',
+            metadata: { command: 'echo hi' },
+            time: { created: Date.now() },
+          },
+        });
+
+        await manager.handleApprovalForward('oc-perm:perm-rebind', 'approve');
+
+        expect(refreshSpy).toHaveBeenCalled();
+        // Happy path: fetch was called with the current port (4096 from test setup)
+        expect(fetchSpy).toHaveBeenCalledWith(
+          'http://127.0.0.1:4096/permission/perm-rebind/reply',
+          expect.objectContaining({ method: 'POST' }),
+        );
+      } finally {
+        globalThis.fetch = originalFetch;
+        refreshSpy.mockRestore();
+      }
+    });
+
+    it('error message includes the request URL (so phone can show why it failed)', async () => {
+      // The previous error was 'OpenCode reply returned 404' with no URL. If
+      // OpenCode renames the endpoint again, the user / dev needs to know
+      // which one. Verify the URL is in the error message.
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = vi.fn(async () => ({ status: 500, ok: false } as Response)) as any;
+      try {
+        await (manager as any).handleSSEEvent({
+          type: 'permission.asked',
+          properties: {
+            id: 'perm-fail',
+            permission: 'Bash',
+            sessionID: 'oc-session-fail',
+            metadata: { command: 'rm -rf /' },
+            time: { created: Date.now() },
+          },
+        });
+
+        await manager.handleApprovalForward('oc-perm:perm-fail', 'approve');
+
+        // dump relay.sent for debugging if assertion fails
+        const errorEvent = (relay as any).sent.find((s: string) =>
+          s.includes('"eventType":"error"'),
+        );
+        expect(errorEvent, `relay.sent was: ${JSON.stringify((relay as any).sent)}`).toBeDefined();
+        const parsed = JSON.parse(errorEvent!);
+        const flat = JSON.stringify(parsed);
+        expect(flat).toContain('http://127.0.0.1:4096/permission/perm-fail/reply');
+        expect(flat).toContain('500');
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
+    it('accepts permissionId/permission_id field names for requestID (defense vs OpenCode schema changes)', async () => {
+      // OpenCode renamed the requestID field in newer versions. Make sure
+      // we still extract a valid id from permissionId / permission_id and
+      // produce a bridge-level pending approval for the phone to see.
+      await (manager as any).handleSSEEvent({
+        type: 'permission.asked',
+        properties: {
+          permissionId: 'perm-camel',
+          permission: 'Bash',
+          sessionID: 'oc-session-camel',
+          metadata: { command: 'ls' },
+          time: { created: Date.now() },
+        },
+      });
+      expect(bridge.getPendingApprovals().length).toBe(1);
+      expect(bridge.getPendingApprovals()[0].toolName).toBe('Bash');
+
+      await (manager as any).handleSSEEvent({
+        type: 'permission.asked',
+        properties: {
+          permission_id: 'perm-snake',
+          permission: 'Bash',
+          sessionID: 'oc-session-snake',
+          metadata: { command: 'ls' },
+          time: { created: Date.now() },
+        },
+      });
+      expect(bridge.getPendingApprovals().length).toBe(2);
+    });
+
     it('clears local pending approval on permission.replied SSE', async () => {
       await (manager as any).handleSSEEvent({
         type: 'permission.asked',

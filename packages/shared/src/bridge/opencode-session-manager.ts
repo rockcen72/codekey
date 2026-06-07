@@ -287,6 +287,22 @@ export class OpenCodeSessionManager {
 
   // ── SSE connection ──────────────────────────────────────
 
+  /** Re-discover OpenCode's port and update the cached baseUrl if changed.
+   *  Cheap (just reads a file via discoverOpenCodePort). Safe to call before
+   *  any HTTP fetch — OpenCode may have restarted between an approval event
+   *  arriving via SSE and the phone's reply coming back, in which case the
+   *  SSE might not have reconnected yet but the fetch still needs the new
+   *  port. */
+  private refreshOpenCodeUrl(): void {
+    const newPort = discoverOpenCodePort();
+    if (newPort && newPort !== this._port) {
+      const newUrl = `http://127.0.0.1:${newPort}`;
+      console.error('[opencode] refreshOpenCodeUrl: port changed %d -> %d', this._port, newPort);
+      this.opencodeBaseUrl = newUrl;
+      this._port = newPort;
+    }
+  }
+
   private scheduleReconnect(): void {
     if (this._stopped) return;
     if (this._reconnectTimer) {
@@ -294,13 +310,7 @@ export class OpenCodeSessionManager {
       this._reconnectTimer = null;
     }
     // Re-discover port on reconnect (OpenCode may have restarted)
-    const newPort = discoverOpenCodePort();
-    if (newPort && newPort !== this._port) {
-      const newUrl = `http://127.0.0.1:${newPort}`;
-      console.error('[opencode] port changed %d -> %d, switching', this._port, newPort);
-      this.opencodeBaseUrl = newUrl;
-      this._port = newPort;
-    }
+    this.refreshOpenCodeUrl();
     const delay = this._reconnectDelay;
     this._reconnectDelay = Math.min(
       this._reconnectDelay * BACKOFF_MULTIPLIER,
@@ -403,9 +413,15 @@ export class OpenCodeSessionManager {
   // ── Permission handling ─────────────────────────────────
 
   private async onPermissionUpdated(props: Record<string, unknown>): Promise<void> {
-    const requestID = (props.id || props.requestID || props.permissionID) as string;
+    // requestID and permissionType field names have changed across OpenCode
+    // versions. Accept all known candidates so a new build doesn't silently
+    // drop permission events as malformed (which leaves the phone waiting
+    // forever and surfaces as "approval callback failed" on retry).
+    const requestID = (props.id || props.requestID || props.permissionID
+      || props.permissionId || props.permission_id) as string;
     const sessionID = props.sessionID as string;
-    const permissionType = (props.type || props.permission) as string;
+    const permissionType = (props.type || props.permission
+      || props.permissionType || props.permission_type) as string;
     const title = props.title as string;
     const metadata = (props.metadata as Record<string, unknown>) ?? {};
 
@@ -448,7 +464,8 @@ export class OpenCodeSessionManager {
   }
 
   private onPermissionReplied(props: Record<string, unknown>): void {
-    const requestID = (props.id || props.requestID || props.permissionID) as string;
+    const requestID = (props.id || props.requestID || props.permissionID
+      || props.permissionId || props.permission_id) as string;
     if (!requestID) return;
     const clientEventId = `oc-perm:${requestID}`;
     const entry = this.permissionMap.get(clientEventId);
@@ -712,21 +729,30 @@ export class OpenCodeSessionManager {
       ?? (clientEventId ? this.permissionMap.get(clientEventId) : undefined);
     if (!entry) return false;
 
+    // Re-discover the port right before each approval forward. If OpenCode
+    // restarted between the permission trigger and the phone decision, the SSE
+    // may not have reconnected yet (or just reconnected with a new port), and
+    // the cached this.opencodeBaseUrl would point at a dead port. discoverOpenCodePort
+    // is cheap (just reads a file), so call it on every decision.
+    this.refreshOpenCodeUrl();
+
     try {
       const reply = decision === 'approve' ? 'once' : 'reject';
-      const resp = await fetch(`${this.opencodeBaseUrl}/permission/${encodeURIComponent(entry.requestID)}/reply`, {
+      const newUrl = `${this.opencodeBaseUrl}/permission/${encodeURIComponent(entry.requestID)}/reply`;
+      const resp = await fetch(newUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ reply }),
       });
       if (resp.status === 404 || resp.status === 410) {
-        const legacyResp = await fetch(`${this.opencodeBaseUrl}/session/${encodeURIComponent(entry.localSessionID)}/permissions/${encodeURIComponent(entry.requestID)}`, {
+        const legacyUrl = `${this.opencodeBaseUrl}/session/${encodeURIComponent(entry.localSessionID)}/permissions/${encodeURIComponent(entry.requestID)}`;
+        const legacyResp = await fetch(legacyUrl, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ response: reply }),
         });
-        if (!legacyResp.ok) throw new Error(`OpenCode reply returned ${legacyResp.status}`);
-      } else if (!resp.ok) throw new Error(`OpenCode reply returned ${resp.status}`);
+        if (!legacyResp.ok) throw new Error(`OpenCode reply (legacy ${legacyUrl}) returned ${legacyResp.status}`);
+      } else if (!resp.ok) throw new Error(`OpenCode reply (${newUrl}) returned ${resp.status}`);
     } catch (err) {
       this.bridge.sendErrorToRelay(entry.serverSessionId, `审批回写失败: ${err}`);
       return true;
@@ -748,6 +774,9 @@ export class OpenCodeSessionManager {
   async handleCommand(sessionId: string, text: string, claudeSessionId?: string): Promise<void> {
     const opencodeSessionId = claudeSessionId || this.resolveLocalSessionId(sessionId) || sessionId;
     console.error('[opencode] handleCommand: sessionId=%s opencodeSessionId=%s', sessionId.slice(0, 8), opencodeSessionId.slice(0, 8));
+
+    // Re-discover port before fetch — same rationale as handleApprovalForward.
+    this.refreshOpenCodeUrl();
 
     // Ensure mapping exists for SSE event forwarding
     if (claudeSessionId && !this.opencodeSessionToRelayId.has(claudeSessionId)) {
