@@ -528,6 +528,41 @@ describe('ApprovalBridge canonical sessions', () => {
     }
   });
 
+  it('session_deactivated event clears Codex and OpenCode attached ids (regression: cancel-sync kept button "synced")', async () => {
+    const relay = new FakeRelay();
+    const bridge = new ApprovalBridge(relay as any);
+
+    // Codex: add with serverSessionId so the new localId→serverId map is populated
+    bridge.addCodexAttachedSession('codex-local-1', 'server-codex-1');
+    bridge.addCodexAttachedSession('codex-local-2', 'server-codex-2');
+
+    // OpenCode: also tracked via this.sessions (set by attachOpenCodeSession /
+    // ensureSession in production). The session_deactivated handler reads from
+    // this.sessions to resolve localId → serverSessionId.
+    (bridge as any)._opencodeAttachedIds.add('opencode-local-1');
+    (bridge as any).sessions.set('opencode-local-1', 'server-opencode-1');
+    (bridge as any)._opencodeAttachedIds.add('opencode-local-2');
+    (bridge as any).sessions.set('opencode-local-2', 'server-opencode-2');
+
+    // Sanity: all four show up as attached
+    expect(bridge.getAttachedSessionIds().sort()).toEqual(
+      ['codex-local-1', 'codex-local-2', 'opencode-local-1', 'opencode-local-2'].sort(),
+    );
+
+    // Deactivate one of each — only those should clear
+    relay.emit('session_deactivated', { sessionId: 'server-codex-1' });
+    relay.emit('session_deactivated', { sessionId: 'server-opencode-2' });
+
+    expect(bridge.getAttachedSessionIds().sort()).toEqual(
+      ['codex-local-2', 'opencode-local-1'].sort(),
+    );
+    // Internal Maps / Sets also clean
+    expect((bridge as any)._codexAttachedIds.has('codex-local-1')).toBe(false);
+    expect((bridge as any)._codexAttachedToServer.has('codex-local-1')).toBe(false);
+    expect((bridge as any)._opencodeAttachedIds.has('opencode-local-2')).toBe(false);
+    expect((bridge as any).sessions.has('opencode-local-2')).toBe(false);
+  });
+
   it('reconcileAttachedSessions re-registers transcript sessions absent from relay response', async () => {
     const relay = new FakeRelay();
     const bridge = new ApprovalBridge(relay as any);

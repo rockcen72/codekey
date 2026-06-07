@@ -211,16 +211,20 @@ export class ApprovalBridge {
 
   /** Codex resumed session IDs — stored separately so reconcileAttachedSessions doesn't touch them. */
   private _codexAttachedIds = new Set<string>();
+  /** Codex localId → serverSessionId, so session_deactivated can clean up. */
+  private _codexAttachedToServer = new Map<string, string>();
   private codexLocalIdCache: { expiresAt: number; ids: Set<string> } = { expiresAt: 0, ids: new Set() };
 
   /** Register a Codex resumed session ID so getAttachedSessionIds() includes it. */
-  addCodexAttachedSession(localSessionId: string): void {
+  addCodexAttachedSession(localSessionId: string, serverSessionId?: string): void {
     this._codexAttachedIds.add(localSessionId);
+    if (serverSessionId) this._codexAttachedToServer.set(localSessionId, serverSessionId);
   }
 
   /** Remove a Codex resumed session ID from attached tracking. */
   removeCodexAttachedSession(localSessionId: string): void {
     this._codexAttachedIds.delete(localSessionId);
+    this._codexAttachedToServer.delete(localSessionId);
   }
 
   /** OpenCode session IDs registered via ensureSession — included in getAttachedSessionIds(). */
@@ -407,17 +411,46 @@ export class ApprovalBridge {
 
       this.pendingPhoneDeliveryCount.delete(p.sessionId);
 
+      // First pass: identify all localIds to clean up. Snapshot before
+      // mutating this.sessions so downstream loops can still resolve
+      // localId → serverSessionId.
       const deactivatedClaudeSessionIds: string[] = [];
+      const deactivatedOpencodeLocalIds: string[] = [];
 
-      // Remove from sessions map by serverSessionId
       for (const [csid, ssid] of this.sessions) {
         if (ssid === p.sessionId) {
           deactivatedClaudeSessionIds.push(csid);
-          this.sessions.delete(csid);
-          if (this.primarySessionId === ssid) {
-            this.primarySessionId = null;
+          if (this._opencodeAttachedIds.has(csid)) {
+            deactivatedOpencodeLocalIds.push(csid);
           }
         }
+      }
+
+      // Codex uses _codexAttachedToServer (codex-resume-manager keeps its
+      // own localToServer internally; the bridge maintains this parallel
+      // map populated when addCodexAttachedSession is called).
+      const deactivatedCodexLocalIds: string[] = [];
+      for (const [localId, serverId] of this._codexAttachedToServer) {
+        if (serverId === p.sessionId) {
+          deactivatedCodexLocalIds.push(localId);
+        }
+      }
+
+      // Second pass: delete. CC map first, then CC transcript + opencode sets,
+      // then codex sets.
+      for (const csid of deactivatedClaudeSessionIds) {
+        this.sessions.delete(csid);
+        if (this.primarySessionId === csid) {
+          this.primarySessionId = null;
+        }
+        this.transcriptAttachedIds.delete(csid);
+      }
+      for (const localId of deactivatedOpencodeLocalIds) {
+        this._opencodeAttachedIds.delete(localId);
+      }
+      for (const localId of deactivatedCodexLocalIds) {
+        this._codexAttachedIds.delete(localId);
+        this._codexAttachedToServer.delete(localId);
       }
 
       // Clean up windowSessions referencing this sessionId
@@ -428,11 +461,6 @@ export class ApprovalBridge {
           this.activeWindows.delete(wid);
           this.claimedTabSessions.delete(wid);
         }
-      }
-
-      // Also clean up transcriptAttachedIds for matching claudeSessionIds.
-      for (const csid of deactivatedClaudeSessionIds) {
-        this.transcriptAttachedIds.delete(csid);
       }
     });
   }

@@ -152,7 +152,7 @@ export class CodexResumeManager {
     this.localToServer.set(localSession.sessionId, serverSessionId);
 
     // Register with ApprovalBridge so getAttachedSessionIds() includes this session (like CC)
-    this.approvalBridge?.addCodexAttachedSession(localSession.sessionId);
+    this.approvalBridge?.addCodexAttachedSession(localSession.sessionId, serverSessionId);
 
     // Push last 3 transcript messages to relay so phone has minimal context
     this._forwardRecentHistory(serverSessionId, localSession.transcriptPath).catch(() => {});
