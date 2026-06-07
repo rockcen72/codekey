@@ -223,7 +223,11 @@ export function authRoutes(sql: postgres.Sql) {
         // Treat as 500 — the next call will succeed.
         return reply.code(500).send({ error: 'binding_state_inconsistent' });
       }
-      if (!isFirstBind && owner!.user_id !== userId) {
+      // owner.user_id is BIGSERIAL → postgres.js returns it as a string
+      // (to preserve precision for >2^53). The middleware decodes the
+      // JWT's sub claim with Number(), so userId is a JS number. Compare
+      // both as numbers.
+      if (!isFirstBind && Number(owner!.user_id) !== userId) {
         return reply.code(403).send({ error: 'device bound to another user' });
       }
 

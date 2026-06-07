@@ -14,9 +14,9 @@ export function sessionRoutes(sql: postgres.Sql) {
       const [session] = await sql`
         INSERT INTO sessions (device_id, agent_type, status, metadata)
         VALUES (${deviceAuth.deviceId}, ${agentType}, 'active', '{}')
-        RETURNING id, created_at
+        RETURNING id, started_at
       `;
-      return { sessionId: session.id, createdAt: session.created_at };
+      return { sessionId: session.id, createdAt: session.started_at };
     });
 
     // List sessions — scoped to own device, optionally filtered by windowId.

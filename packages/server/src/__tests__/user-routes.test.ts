@@ -60,6 +60,22 @@ describeDb('User-scoped routes', () => {
     return JSON.parse(res.payload);
   }
 
+  // Helper: tag a session with the minimum metadata required for the
+  // mobile-visible session list to include it. user-routes.ts filters on
+  // metadata.source IN (...) and a non-empty metadata.claudeSessionId, so
+  // a freshly-created session (which has no metadata) is invisible to the
+  // mobile API. Tests that call GET /user/sessions must call this after
+  // createSession() to make the row appear in the listing.
+  async function tagSessionForMobile(sessionId: string, label: string) {
+    await sql`
+      UPDATE sessions SET metadata = ${sql.json({
+        claudeSessionId: label,
+        title: 'Test Session',
+        source: 'transcript_attach',
+      })} WHERE id = ${sessionId}
+    `;
+  }
+
   // Helper: create a device token for a device
   async function createDeviceToken(deviceId: string) {
     const token = randomUUID();
@@ -89,6 +105,10 @@ describeDb('User-scoped routes', () => {
     process.env.WECHAT_APPID = 'mock';
     process.env.USER_JWT_SECRET = process.env.USER_JWT_SECRET || 'test-secret-' + 'x'.repeat(40);
     process.env.TELEGRAM_LOGIN_SECRET = 'test-telegram-login-secret';
+    // 22 tests × ~10 requests each easily exceeds the 240 req/min/IP
+    // production rate limit. The rate limit would still apply to the
+    // server under test, masking real failures with 429s.
+    process.env.RATE_LIMIT_DISABLED = '1';
 
     const built = await buildApp(DATABASE_URL!);
     app = built.app;
@@ -107,6 +127,10 @@ describeDb('User-scoped routes', () => {
       try { await sql`DELETE FROM device_bindings WHERE user_id = ${uid}`; } catch { /* ignore */ }
       try { await sql`DELETE FROM users WHERE id = ${uid}`; } catch { /* ignore */ }
     }
+    // Clean up pairing_codes created during the suite — the pair
+    // endpoint enforces a 3-per-5min rate limit per IP, and leaving
+    // 22+ rows behind breaks the next `npm run test:integration` run.
+    try { await sql`DELETE FROM pairing_codes`; } catch { /* ignore */ }
     await app.close();
     await sql.end();
   });
@@ -130,10 +154,9 @@ describeDb('User-scoped routes', () => {
     // Create a device token and a session
     const deviceToken = await createDeviceToken(deviceId);
     const session = await createSession(deviceToken);
-    // Update session metadata to have a claudeSessionId so it appears in listings
-    await sql`
-      UPDATE sessions SET metadata = ${sql.json({ claudeSessionId: 'test-session-1', title: 'Test Session' })} WHERE id = ${session.sessionId}
-    `;
+    // Tag session metadata with the minimum required for the mobile
+    // session list to include it (claudeSessionId + sync source).
+    await tagSessionForMobile(session.sessionId, 'test-session-1');
 
     // Query user sessions
     const res = await app.inject({
@@ -179,9 +202,7 @@ describeDb('User-scoped routes', () => {
     // Create session on that device
     const deviceToken = await createDeviceToken(deviceId);
     const session = await createSession(deviceToken);
-    await sql`
-      UPDATE sessions SET metadata = ${sql.json({ claudeSessionId: 'secret-session' })} WHERE id = ${session.sessionId}
-    `;
+    await tagSessionForMobile(session.sessionId, 'secret-session');
 
     // user1 can see the session
     const res1 = await app.inject({
@@ -220,9 +241,7 @@ describeDb('User-scoped routes', () => {
     // Create session on the device
     const deviceToken = await createDeviceToken(deviceId);
     const session = await createSession(deviceToken);
-    await sql`
-      UPDATE sessions SET metadata = ${sql.json({ claudeSessionId: 'unbound-session' })} WHERE id = ${session.sessionId}
-    `;
+    await tagSessionForMobile(session.sessionId, 'unbound-session');
 
     // Before unbind: user can see the session
     const before = await app.inject({
@@ -274,9 +293,7 @@ describeDb('User-scoped routes', () => {
 
     const deviceToken = await createDeviceToken(deviceId);
     const session = await createSession(deviceToken);
-    await sql`
-      UPDATE sessions SET metadata = ${sql.json({ claudeSessionId: 'detail-session' })} WHERE id = ${session.sessionId}
-    `;
+    await tagSessionForMobile(session.sessionId, 'detail-session');
 
     const res = await app.inject({
       method: 'GET',
@@ -303,9 +320,7 @@ describeDb('User-scoped routes', () => {
 
     const deviceToken = await createDeviceToken(deviceId);
     const session = await createSession(deviceToken);
-    await sql`
-      UPDATE sessions SET metadata = ${sql.json({ claudeSessionId: 'private-session' })} WHERE id = ${session.sessionId}
-    `;
+    await tagSessionForMobile(session.sessionId, 'private-session');
 
     // user2 cannot see user1's session
     const res = await app.inject({
@@ -332,9 +347,7 @@ describeDb('User-scoped routes', () => {
 
     const deviceToken = await createDeviceToken(deviceId);
     const session = await createSession(deviceToken);
-    await sql`
-      UPDATE sessions SET metadata = ${sql.json({ claudeSessionId: 'events-session' })} WHERE id = ${session.sessionId}
-    `;
+    await tagSessionForMobile(session.sessionId, 'events-session');
 
     // Create events for this session
     await createEvent(session.sessionId, true);
@@ -366,9 +379,7 @@ describeDb('User-scoped routes', () => {
 
     const deviceToken = await createDeviceToken(deviceId);
     const session = await createSession(deviceToken);
-    await sql`
-      UPDATE sessions SET metadata = ${sql.json({ claudeSessionId: 'private-events' })} WHERE id = ${session.sessionId}
-    `;
+    await tagSessionForMobile(session.sessionId, 'private-events');
     await createEvent(session.sessionId, true);
 
     // user2 cannot see user1's events
@@ -574,9 +585,7 @@ describeDb('User-scoped routes', () => {
 
     const deviceToken = await createDeviceToken(deviceId);
     const session = await createSession(deviceToken);
-    await sql`
-      UPDATE sessions SET metadata = ${sql.json({ claudeSessionId: 'unbind-test-session' })} WHERE id = ${session.sessionId}
-    `;
+    await tagSessionForMobile(session.sessionId, 'unbind-test-session');
 
     // Session visible before unbind
     const before = await app.inject({

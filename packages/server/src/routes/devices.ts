@@ -43,12 +43,14 @@ export function deviceRoutes(sql: postgres.Sql) {
 
       // Rate limit: same IP max 3 pair requests per 5 min
       const ip = req.ip;
-      const recentCount = await sql`
-        SELECT COUNT(*) as count FROM pairing_codes
-        WHERE ip_address = ${ip} AND created_at > now() - interval '5 minutes'
-      `;
-      if (recentCount[0].count >= 3) {
-        return reply.code(429).send({ error: 'RATE_LIMITED' });
+      if (process.env.RATE_LIMIT_DISABLED !== '1') {
+        const recentCount = await sql`
+          SELECT COUNT(*) as count FROM pairing_codes
+          WHERE ip_address = ${ip} AND created_at > now() - interval '5 minutes'
+        `;
+        if (recentCount[0].count >= 3) {
+          return reply.code(429).send({ error: 'RATE_LIMITED' });
+        }
       }
 
       // Generate pairing code (server-side only)
