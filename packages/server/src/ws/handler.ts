@@ -756,11 +756,18 @@ export function wsHandler(sql: postgres.Sql) {
       if (msg.type === 'resolve_event') {
         const eventId = msg.payload?.eventId;
         if (!eventId) return;
-        // Try to find the event by id OR by clientEventId in the data field
+        // Don't filter by pending=true — the event may already be marked
+        // non-pending by handleApprovalResponse. We still need to broadcast
+        // resolve so mini-program removes the stale card.
+        // Don't overwrite existing decision (approve/deny/pause/reply) —
+        // only set resolved_by_bridge when no decision has been recorded yet.
         sql`
-          UPDATE events SET pending = false, decision = 'resolved_by_bridge'
-          WHERE pending = true AND (id = ${eventId} OR data->>'clientEventId' = ${eventId})
-        `.then(() => {
+          UPDATE events SET pending = false,
+            decision = CASE WHEN decision IS NULL OR decision = '' THEN 'resolved_by_bridge' ELSE decision END
+          WHERE (id = ${eventId} OR data->>'clientEventId' = ${eventId})
+          RETURNING session_id
+        `.then((rows: any[]) => {
+          const sessionId = rows?.[0]?.session_id;
           // Broadcast to mini program clients so they remove the stale approval
           const mpList = clientClients.get(deviceId!);
           if (mpList) {
@@ -768,7 +775,7 @@ export function wsHandler(sql: postgres.Sql) {
               if (mp.socket.readyState === mp.socket.OPEN) {
                 mp.socket.send(JSON.stringify({
                   type: 'event_resolved',
-                  payload: { eventId },
+                  payload: { eventId, sessionId },
                 }));
               }
             }

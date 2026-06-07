@@ -3,6 +3,12 @@
 日期: 2026-06-07
 状态: 已审核，待实施
 
+### 补充发现: Unsync 按钮状态不更新
+
+**根因**: CC 会话 `attached` 状态没有 `_isRecentlyDetached` 本地覆盖（与 OpenCode/Codex 不一致）。`_pushStateInner()` 依赖 relay API，失败时 catch 块只推审批数据不推 session 状态。
+
+**修复**: `sidebar-provider.ts:724` 加 `&& !this._isRecentlyDetached(s.sessionId)`
+
 ### 审核结论
 
 | 方案 | 评价 | 说明 |

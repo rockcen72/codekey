@@ -4,6 +4,79 @@ import { getSubscription, type UsageSnapshot } from '../../services/subscription
 
 const app = getApp<any>();
 
+/** Lightweight markdown → readable plain text for WeChat <text> component.
+ *  Preserves structure (line breaks, indentation) via CSS white-space: pre-wrap.
+ *  Strips markdown syntax noise, keeps content readable. */
+function markdownToFormatted(md: string): string {
+  if (!md) return '';
+  const lines = md.split('\n');
+  const out: string[] = [];
+  let inCode = false;
+
+  for (const raw of lines) {
+    // Fenced code block toggle
+    if (raw.trimStart().startsWith('```')) {
+      if (inCode) {
+        out.push('```');
+        inCode = false;
+      } else {
+        out.push('```');
+        inCode = true;
+      }
+      continue;
+    }
+    if (inCode) { out.push('  ' + raw); continue; }
+
+    let line = raw;
+
+    // Headers → add blank line before for visual separation
+    if (/^#{1,3}\s?/.test(line)) {
+      const text = line.replace(/^#{1,3}\s?/, '');
+      if (out.length > 0 && out[out.length - 1].trim()) out.push('');
+      out.push(text);
+      out.push('─'.repeat(Math.min(text.length * 2, 30)));
+      continue;
+    }
+
+    // Horizontal rule
+    if (/^-{3,}\s*$/.test(line) || /^\*{3,}\s*$/.test(line)) {
+      out.push('─'.repeat(20));
+      continue;
+    }
+
+    // Unordered list → bullet
+    if (/^[-*]\s/.test(line)) {
+      out.push('  • ' + line.replace(/^[-*]\s/, ''));
+      continue;
+    }
+    // Ordered list
+    if (/^\d+\.\s/.test(line)) {
+      out.push('  ' + line);
+      continue;
+    }
+
+    // Blockquote
+    if (/^>\s?/.test(line)) {
+      out.push('  ❝ ' + line.replace(/^>\s?/, ''));
+      continue;
+    }
+
+    // Table separator row → skip
+    if (/^\|[-\s|:]+\|$/.test(line.trim())) continue;
+    // Table data row → formatted columns
+    if (/^\|/.test(line) && /\|$/.test(line.trim())) {
+      const cells = line.split('|').filter(c => c.trim()).map(c => c.trim());
+      out.push('  ' + cells.join('  │  '));
+      continue;
+    }
+
+    // Regular line (keep as-is, preserves markdown inline syntax)
+    out.push(line);
+  }
+
+  return out.join('\n');
+}
+
 const RISK_LABELS: Record<string, string> = {
   low: '低风险',
   medium: '中风险',
@@ -36,6 +109,7 @@ interface ChatMessage {
   senderName?: string;
   requiresInput?: boolean;
   inputOptions?: { label: string; value: string; description?: string }[];
+  contentFormatted?: string; // formatted text for <text> component (task_complete)
 }
 
 Page({
@@ -58,6 +132,8 @@ Page({
     primaryPendingEvent: null as ChatMessage | null,
     hasPrimaryPendingEvent: false,
     sheetReplyText: '',
+    dockExpanded: true,
+    dockReplyText: '',
     quotaState: 'hidden' as 'hidden' | 'normal' | 'approaching' | 'exhausted',
     quotaPercent: 0,
     usage: null as UsageSnapshot | null,
@@ -163,9 +239,36 @@ Page({
       this.fetchSubscription();
     };
 
+    this._onEventResolvedBound = (payload: any) => {
+      if (payload.sessionId !== this.data.sessionId) return;
+      // Immediately dismiss the resolved event locally — don't wait for fetchDetail.
+      const eventId = payload.eventId;
+      if (eventId) {
+        const messages = [...this.data.chatMessages];
+        const idx = messages.findIndex((m: ChatMessage) => m.eventId === eventId && m.pending);
+        if (idx !== -1) {
+          messages[idx].pending = false;
+          messages[idx].decision = 'resolved';
+          messages[idx].decisionText = '已在桌面端处理';
+          messages[idx].accent = 'neutral';
+          messages[idx].canApprove = false;
+          messages[idx].kindBadge = 'DONE';
+          const primaryPendingEvent = this.getPrimaryPendingEvent(messages);
+          this.setData({
+            chatMessages: messages,
+            primaryPendingEvent,
+            hasPrimaryPendingEvent: !!primaryPendingEvent,
+          });
+        }
+      }
+      // Still fetch to get authoritative state from server
+      this.fetchDetail();
+    };
+
     this._onAuthFailedBound = () => { wx.redirectTo({ url: '/pages/login/login' }); };
 
     app.onWsEvent('event_push', this._onEventPushBound);
+    app.onWsEvent('event_resolved', this._onEventResolvedBound);
     app.onWsEvent('session_deactivated', this._onSessionDeactivatedBound);
     app.onWsEvent('auth_failed', this._onAuthFailedBound);
     app.onWsEvent('ws_connected', this._onWsConnectedBound);
@@ -183,6 +286,7 @@ Page({
   },
 
   unsubscribeWs() {
+    if (this._onEventResolvedBound) app.offWsEvent('event_resolved', this._onEventResolvedBound);
     if (this._onAuthFailedBound) app.offWsEvent('auth_failed', this._onAuthFailedBound);
     if (this._onEventPushBound) app.offWsEvent('event_push', this._onEventPushBound);
     if (this._onSessionDeactivatedBound) app.offWsEvent('session_deactivated', this._onSessionDeactivatedBound);
@@ -193,6 +297,7 @@ Page({
     if (this._onWsErrorBound) app.offWsEvent('error', this._onWsErrorBound);
     if (this._onSessionLabelUpdatedBound) app.offWsEvent('session_label_updated', this._onSessionLabelUpdatedBound);
     if (this._onQuotaExceededBound) app.offWsEvent('quota_exceeded', this._onQuotaExceededBound);
+    this._onEventResolvedBound = undefined;
     this._onEventPushBound = undefined;
     this._onSessionDeactivatedBound = undefined;
     this._onWsConnectedBound = undefined;
@@ -250,6 +355,32 @@ Page({
         api.getSession(this.data.sessionId),
         api.getSessionEvents(this.data.sessionId),
       ]);
+
+      // Detect stale pending events: if a previously-pending event is no longer
+      // pending in the fresh data (desktop approved, timeout, etc.), mark it
+      // resolved locally. This catches cases where the event_resolved WS
+      // message was lost (background, weak network, reconnect gap).
+      const freshEventMap = new Map<string, any>();
+      for (const e of rawEvents) freshEventMap.set(e.id, e);
+      const stalePending = this.data.chatMessages.filter(
+        (m: ChatMessage) => m.pending && m.type === 'ai' && m.eventId
+      );
+      for (const msg of stalePending) {
+        const fresh = freshEventMap.get(msg.eventId);
+        if (!fresh || !fresh.pending) {
+          // Event resolved on server but we missed the WS notification
+          const idx = this.data.chatMessages.indexOf(msg);
+          if (idx !== -1) {
+            this.data.chatMessages[idx].pending = false;
+            this.data.chatMessages[idx].decision = fresh?.decision || 'resolved';
+            this.data.chatMessages[idx].decisionText = this.getDecisionText(fresh?.decision || 'resolved_by_bridge');
+            this.data.chatMessages[idx].accent = 'neutral';
+            this.data.chatMessages[idx].canApprove = false;
+            this.data.chatMessages[idx].kindBadge = 'DONE';
+          }
+        }
+      }
+
       this.setData({
         session: {
           ...session,
@@ -383,6 +514,7 @@ Page({
           type: 'ai',
           side: 'left',
           content: taskText,
+          contentFormatted: markdownToFormatted(taskText),
           displayTime: time,
           typeLabel: '任务完成',
           isTaskComplete: true,
@@ -615,6 +747,7 @@ Page({
       case 'deny': return '已拒绝';
       case 'pause': return '已暂缓';
       case 'reply': return '已回复';
+      case 'resolved_by_bridge': return '已在桌面端处理';
       default: return decision;
     }
   },
@@ -722,6 +855,69 @@ Page({
   pauseEvent(e: any) {
     const eventId = e.currentTarget.dataset.id;
     this.sendDecision(eventId, 'pause');
+  },
+
+  // ── Dock overlay ──
+
+  toggleDockExpand() {
+    this.setData({ dockExpanded: !this.data.dockExpanded });
+  },
+
+  onDockReplyInput(e: any) {
+    this.setData({ dockReplyText: e.detail.value });
+  },
+
+  sendDockReply() {
+    const text = this.data.dockReplyText.trim();
+    if (!text || !this.data.primaryPendingEvent) return;
+
+    const eventId = this.data.primaryPendingEvent.eventId;
+    app.sendWs({
+      type: 'approval_response',
+      payload: { sessionId: this.data.sessionId, eventId, decision: 'reply', message: text },
+    });
+
+    // Optimistic UI: mark resolved, add user bubble
+    const messages = [...this.data.chatMessages];
+    const aiIdx = messages.findIndex((m: ChatMessage) => m.eventId === eventId && m.type === 'ai');
+    if (aiIdx !== -1) {
+      messages[aiIdx].pending = false;
+      messages[aiIdx].decision = 'reply';
+      messages[aiIdx].decisionText = '已回复';
+      messages[aiIdx].accent = 'neutral';
+      messages[aiIdx].canApprove = false;
+      messages.splice(aiIdx + 1, 0, {
+        id: `reply-${eventId}-${Date.now()}`,
+        type: 'user',
+        side: 'right',
+        content: text,
+        displayTime: '',
+        typeLabel: '',
+        isTaskComplete: false,
+        command: '',
+        summary: '',
+        risk_level: '',
+        riskText: '',
+        pending: false,
+        decision: 'reply',
+        decisionText: '已回复',
+        canApprove: false,
+        eventId,
+        accent: 'neutral',
+        agentClass: 'unknown',
+        kindBadge: '',
+        senderName: '你',
+      });
+    }
+
+    const primaryPendingEvent = this.getPrimaryPendingEvent(messages);
+    this.setData({
+      chatMessages: messages,
+      primaryPendingEvent,
+      hasPrimaryPendingEvent: !!primaryPendingEvent,
+      dockReplyText: '',
+    });
+    setTimeout(() => this.fetchDetail(), 1500);
   },
 
   sendDecision(eventId: string, decision: string) {

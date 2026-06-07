@@ -100,7 +100,7 @@
   flex: 1;
   height: 0;
   box-sizing: border-box;
-  padding: 10rpx 24rpx 300rpx;
+  padding: 10rpx 24rpx 140rpx;
 }
 
 /* System markers */
@@ -370,6 +370,19 @@
   word-break: break-word;
 }
 
+.formatted-summary {
+  display: block;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 25rpx;
+  line-height: 1.65;
+  color: var(--ck-text);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  padding: 4rpx 0;
+  -webkit-user-select: text;
+  user-select: text;
+}
+
 .input-options {
   display: flex;
   flex-direction: column;
@@ -597,134 +610,305 @@
   opacity: 0.8;
 }
 
-/* ── Floating approval focus ── */
-
-.approval-focus {
-  position: fixed;
-  left: 26rpx;
-  right: 26rpx;
-  top: 52%;
-  z-index: 80;
-  transform: translateY(-50%);
-  pointer-events: none;
-}
-
-.focus-card {
-  pointer-events: auto;
-  padding: 22rpx;
-  border: 1rpx solid rgba(28, 25, 23, 0.08);
-  border-radius: 22rpx;
-  background: rgba(252, 250, 248, 0.96);
-  box-shadow: 0 18rpx 52rpx rgba(28, 25, 23, 0.18);
-  backdrop-filter: blur(18rpx);
-}
-
-.focus-card.agent-claude {
-  border-color: rgba(234, 88, 12, 0.18);
-}
-
-.focus-card.agent-codex {
-  border-color: rgba(34, 197, 94, 0.2);
-}
-
-.focus-card.agent-opencode {
-  border-color: rgba(92, 156, 245, 0.22);
-}
-
-.focus-top {
+/* Pending hint in inline card (replaces action buttons) */
+.pending-hint {
   display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 18rpx;
+  align-items: center;
+  gap: 8rpx;
+  padding: 8rpx 0 2rpx;
+  font-size: 21rpx;
+  color: var(--ck-muted);
 }
 
-.focus-title-wrap {
+.pending-hint .pulse-dot {
+  width: 8rpx;
+  height: 8rpx;
+  border-radius: 50%;
+  background: var(--ck-warning);
+  animation: pulse-glow 1.6s ease-in-out infinite;
+}
+
+@keyframes pulse-glow {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.5; transform: scale(0.8); }
+}
+
+/* ── Floating approval command dock ── */
+
+.approval-dock {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 80;
+  padding: 0 20rpx 20rpx;
+  padding-bottom: calc(20rpx + env(safe-area-inset-bottom));
+  pointer-events: none;
+  animation: dock-slide-up 320ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes dock-slide-up {
+  from { transform: translateY(100%); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+
+.dock-card {
+  pointer-events: auto;
+  border-radius: 24rpx;
+  overflow: hidden;
+  background: #fefdfb;
+  border: 1rpx solid rgba(28, 25, 23, 0.1);
+  box-shadow: 0 -4rpx 40rpx rgba(28, 25, 23, 0.12), 0 2rpx 12rpx rgba(28, 25, 23, 0.06);
+}
+
+.dock-card.agent-claude {
+  border-color: rgba(234, 88, 12, 0.2);
+  box-shadow: 0 -4rpx 40rpx rgba(234, 88, 12, 0.08), 0 2rpx 12rpx rgba(28, 25, 23, 0.06);
+}
+
+.dock-card.agent-codex {
+  border-color: rgba(34, 197, 94, 0.22);
+  box-shadow: 0 -4rpx 40rpx rgba(34, 197, 94, 0.08), 0 2rpx 12rpx rgba(28, 25, 23, 0.06);
+}
+
+.dock-card.agent-opencode {
+  border-color: rgba(92, 156, 245, 0.22);
+  box-shadow: 0 -4rpx 40rpx rgba(92, 156, 245, 0.08), 0 2rpx 12rpx rgba(28, 25, 23, 0.06);
+}
+
+/* Collapsed summary bar */
+.dock-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16rpx;
+  padding: 20rpx 24rpx;
+  min-height: 52rpx;
+}
+
+.dock-bar-left {
+  display: flex;
+  align-items: center;
+  gap: 12rpx;
   flex: 1;
   min-width: 0;
 }
 
-.focus-kicker {
-  display: block;
-  margin-bottom: 6rpx;
-  color: var(--ck-muted);
+.dock-pulse {
+  width: 12rpx;
+  height: 12rpx;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: #f59e0b;
+  animation: pulse-glow 1.6s ease-in-out infinite;
+}
+
+.agent-claude .dock-pulse { background: #ea580c; }
+.agent-codex .dock-pulse { background: #22c55e; }
+.agent-opencode .dock-pulse { background: #5c9cf5; }
+
+.dock-kicker {
+  flex-shrink: 0;
   font-size: 21rpx;
   font-weight: 700;
-  letter-spacing: 0;
+  color: var(--ck-muted);
+  letter-spacing: 0.5rpx;
 }
 
-.focus-title {
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-  overflow: hidden;
+.dock-title {
+  flex: 1;
+  min-width: 0;
+  font-size: 27rpx;
+  font-weight: 700;
   color: var(--ck-text);
-  font-size: 30rpx;
-  font-weight: 800;
-  line-height: 1.35;
-  word-break: break-word;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.focus-command {
-  margin-top: 16rpx;
+.dock-bar-right {
+  display: flex;
+  align-items: center;
+  gap: 12rpx;
+  flex-shrink: 0;
+}
+
+.dock-chevron {
+  font-size: 20rpx;
+  color: var(--ck-subtle);
+  transition: transform 200ms ease;
+}
+
+/* Expanded body */
+.dock-body {
+  padding: 0 24rpx 22rpx;
+  animation: dock-expand 240ms ease-out;
+}
+
+@keyframes dock-expand {
+  from { opacity: 0; transform: translateY(-8rpx); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.dock-command {
+  margin-bottom: 16rpx;
   padding: 14rpx 16rpx;
   border-radius: 12rpx;
-  background: #272321;
+  background: #1c1917;
   overflow: hidden;
 }
 
-.focus-command-text {
+.dock-command-text {
   display: -webkit-box;
   -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
+  -webkit-line-clamp: 3;
   overflow: hidden;
-  color: #f4f1ed;
+  color: #e7e5e4;
   font-size: 22rpx;
-  line-height: 1.45;
+  line-height: 1.5;
   word-break: break-all;
 }
 
-.focus-actions {
-  display: grid;
-  grid-template-columns: 1fr 1fr 92rpx 92rpx;
+/* Input options */
+.dock-options {
+  display: flex;
+  flex-direction: column;
+  gap: 10rpx;
+  margin-bottom: 16rpx;
+}
+
+.dock-option-btn {
+  width: 100%;
+  padding: 14rpx 18rpx;
+  border-radius: 12rpx;
+  border: 1rpx solid var(--ck-border);
+  background: var(--ck-bg);
+  text-align: left;
+}
+
+.dock-option-btn:active {
+  background: var(--ck-border);
+}
+
+.dock-option-label {
+  display: block;
+  font-size: 26rpx;
+  font-weight: 700;
+  color: var(--ck-text);
+}
+
+.dock-option-desc {
+  display: block;
+  margin-top: 4rpx;
+  font-size: 22rpx;
+  color: var(--ck-muted);
+  line-height: 1.4;
+}
+
+/* Inline text reply */
+.dock-reply {
+  display: flex;
+  align-items: center;
   gap: 12rpx;
-  margin-top: 18rpx;
+  margin-bottom: 16rpx;
+  padding: 10rpx 10rpx 10rpx 18rpx;
+  border-radius: 16rpx;
+  background: #f5f3ef;
+  border: 1rpx solid rgba(28, 25, 23, 0.06);
 }
 
-.focus-actions.single {
-  grid-template-columns: 1fr;
+.dock-reply-input {
+  flex: 1;
+  min-width: 0;
+  height: 56rpx;
+  font-size: 26rpx;
+  color: var(--ck-text);
 }
 
-.focus-btn,
-.focus-icon-btn {
-  height: 88rpx;
-  line-height: 88rpx;
-  border-radius: 18rpx;
-  font-size: 28rpx;
+.dock-reply-send {
+  flex-shrink: 0;
+  height: 56rpx;
+  line-height: 56rpx;
+  padding: 0 22rpx;
+  border-radius: 12rpx;
+  background: var(--ck-border);
+  color: var(--ck-subtle);
+  font-size: 24rpx;
+  font-weight: 700;
+  transition: background 140ms ease, color 140ms ease;
+}
+
+.dock-reply-send.active {
+  background: #1c1917;
+  color: #fff;
+}
+
+.dock-reply-send:active {
+  transform: scale(0.97);
+}
+
+/* Action buttons */
+.dock-actions {
+  display: flex;
+  gap: 12rpx;
+}
+
+.dock-btn {
+  flex: 1;
+  height: 80rpx;
+  line-height: 80rpx;
+  border-radius: 14rpx;
+  font-size: 26rpx;
   font-weight: 800;
   text-align: center;
+  transition: transform 100ms ease, opacity 100ms ease;
 }
 
-.focus-btn.primary {
+.dock-btn.full {
+  flex: 1;
+}
+
+.dock-btn.primary {
   color: #fff;
-  background: #161412;
+  background: #1c1917;
 }
 
-.focus-btn.danger {
-  color: #8f1d1d;
-  background: #fff1f1;
-}
-
-.focus-icon-btn {
-  color: var(--ck-muted);
-  background: #f1eee9;
-  font-size: 23rpx;
-  font-weight: 700;
-}
-
-.focus-btn:active,
-.focus-icon-btn:active {
+.dock-btn.primary:active {
+  background: #292524;
   transform: scale(0.98);
-  opacity: 0.86;
+}
+
+.dock-btn.danger {
+  color: #991b1b;
+  background: #fef2f2;
+  border: 1rpx solid #fecaca;
+}
+
+.dock-btn.danger:active {
+  background: #fee2e2;
+  transform: scale(0.98);
+}
+
+.dock-btn.ghost {
+  color: var(--ck-muted);
+  background: #f5f3ef;
+  border: 1rpx solid rgba(28, 25, 23, 0.06);
+}
+
+.dock-btn.ghost:active {
+  background: #e7e5e4;
+  transform: scale(0.98);
+}
+
+.dock-btn.outline {
+  color: var(--ck-text);
+  background: transparent;
+  border: 1rpx solid var(--ck-border);
+}
+
+.dock-btn.outline:active {
+  background: var(--ck-bg);
+  transform: scale(0.98);
 }
 
 /* ── Composer: image button + pill input + circular send button ── */

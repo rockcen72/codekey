@@ -68,8 +68,9 @@
             <view wx:if="{{item.command}}" class="cmd-line">
               <text class="cmd-line-text mono">{{item.command}}</text>
             </view>
-            <!-- Summary if different from command -->
-            <view wx:if="{{item.summary && item.summary !== item.command}}" class="event-summary">{{item.summary}}</view>
+            <!-- Summary: formatted for task_complete, plain for others -->
+            <text wx:if="{{item.contentFormatted}}" class="event-summary formatted-summary" selectable user-select>{{item.contentFormatted}}</text>
+            <view wx:elif="{{item.summary && item.summary !== item.command}}" class="event-summary">{{item.summary}}</view>
             <view wx:if="{{item.requiresInput && item.inputOptions && item.inputOptions.length}}" class="input-options">
               <button
                 wx:for="{{item.inputOptions}}"
@@ -102,20 +103,12 @@
               <text wx:if="{{item.displayTime}}" class="event-time">{{item.displayTime}}</text>
             </view>
 
-            <!-- Action buttons for pending -->
-            <view wx:if="{{item.pending && item.requiresInput}}" class="action-bar">
-              <button class="action-btn outline" data-id="{{item.eventId}}" bindtap="openApprovalSheet">回复</button>
-            </view>
-            <view wx:elif="{{item.pending && item.canApprove}}" class="action-bar">
-              <button class="action-btn primary" data-id="{{item.eventId}}" catchtap="approveEvent">批准</button>
-              <button class="action-btn secondary" data-id="{{item.eventId}}" catchtap="denyEvent">拒绝</button>
-              <button class="action-btn ghost" data-id="{{item.eventId}}" catchtap="pauseEvent">暂缓</button>
-              <button class="action-btn outline" data-id="{{item.eventId}}" bindtap="openApprovalSheet">回复</button>
-            </view>
-            <view wx:elif="{{item.pending}}" class="action-bar">
-              <button class="action-btn outline" data-id="{{item.eventId}}" bindtap="openApprovalSheet">查看详情</button>
-              <button class="action-btn ghost" data-id="{{item.eventId}}" catchtap="denyEvent">拒绝</button>
-              <button class="action-btn ghost" data-id="{{item.eventId}}" catchtap="pauseEvent">暂缓</button>
+            <!-- Pending hint: action buttons live in the floating overlay -->
+            <view wx:if="{{item.pending}}" class="action-bar">
+              <view class="pending-hint">
+                <view class="pulse-dot"></view>
+                <text>请使用下方操作栏处理</text>
+              </view>
             </view>
           </view>
         </view>
@@ -123,34 +116,74 @@
     </block>
   </scroll-view>
 
-  <!-- Floating approval focus card -->
-  <view class="approval-focus" wx:if="{{hasPrimaryPendingEvent && !approvalSheetOpen}}">
-    <view class="focus-card accent-{{primaryPendingEvent.accent}} agent-{{primaryPendingEvent.agentClass}}">
-      <view class="focus-top">
-        <view class="focus-title-wrap">
-          <text class="focus-kicker">{{primaryPendingEvent.requiresInput ? '需要选择' : '等待审批'}}</text>
-          <text class="focus-title">{{primaryPendingEvent.summary || primaryPendingEvent.command || primaryPendingEvent.typeLabel}}</text>
+  <!-- Floating approval command dock -->
+  <view class="approval-dock {{dockExpanded ? 'expanded' : ''}}" wx:if="{{hasPrimaryPendingEvent && !approvalSheetOpen}}">
+    <view class="dock-card agent-{{primaryPendingEvent.agentClass}}">
+      <!-- Collapsed summary bar: tap to expand -->
+      <view class="dock-bar" bindtap="toggleDockExpand">
+        <view class="dock-bar-left">
+          <view class="dock-pulse"></view>
+          <text class="dock-kicker">{{primaryPendingEvent.requiresInput ? '需要选择' : '等待审批'}}</text>
+          <text class="dock-title">{{primaryPendingEvent.summary || primaryPendingEvent.command || primaryPendingEvent.typeLabel}}</text>
         </view>
-        <text wx:if="{{primaryPendingEvent.riskText}}" class="risk-tag {{primaryPendingEvent.risk_level}}">{{primaryPendingEvent.riskText}}</text>
+        <view class="dock-bar-right">
+          <text wx:if="{{primaryPendingEvent.riskText}}" class="risk-tag {{primaryPendingEvent.risk_level}}">{{primaryPendingEvent.riskText}}</text>
+          <text class="dock-chevron">{{dockExpanded ? '▼' : '▲'}}</text>
+        </view>
       </view>
 
-      <view wx:if="{{primaryPendingEvent.command}}" class="focus-command">
-        <text class="focus-command-text mono">{{primaryPendingEvent.command}}</text>
-      </view>
+      <!-- Expanded detail area -->
+      <view class="dock-body" wx:if="{{dockExpanded}}">
+        <!-- Command preview -->
+        <view wx:if="{{primaryPendingEvent.command}}" class="dock-command">
+          <text class="dock-command-text mono">{{primaryPendingEvent.command}}</text>
+        </view>
 
-      <view wx:if="{{primaryPendingEvent.requiresInput}}" class="focus-actions single">
-        <button class="focus-btn primary" data-id="{{primaryPendingEvent.eventId}}" bindtap="openApprovalSheet">选择 / 回复</button>
-      </view>
-      <view wx:elif="{{primaryPendingEvent.canApprove}}" class="focus-actions">
-        <button class="focus-btn primary" data-id="{{primaryPendingEvent.eventId}}" catchtap="approveEvent">批准</button>
-        <button class="focus-btn danger" data-id="{{primaryPendingEvent.eventId}}" catchtap="denyEvent">拒绝</button>
-        <button class="focus-icon-btn" data-id="{{primaryPendingEvent.eventId}}" catchtap="pauseEvent">暂缓</button>
-        <button class="focus-icon-btn" data-id="{{primaryPendingEvent.eventId}}" bindtap="openApprovalSheet">详情</button>
-      </view>
-      <view wx:else class="focus-actions">
-        <button class="focus-btn primary" data-id="{{primaryPendingEvent.eventId}}" bindtap="openApprovalSheet">查看详情</button>
-        <button class="focus-icon-btn" data-id="{{primaryPendingEvent.eventId}}" catchtap="denyEvent">拒绝</button>
-        <button class="focus-icon-btn" data-id="{{primaryPendingEvent.eventId}}" catchtap="pauseEvent">暂缓</button>
+        <!-- Input options for input_required -->
+        <view wx:if="{{primaryPendingEvent.requiresInput && primaryPendingEvent.inputOptions && primaryPendingEvent.inputOptions.length}}" class="dock-options">
+          <button
+            wx:for="{{primaryPendingEvent.inputOptions}}"
+            wx:key="value"
+            class="dock-option-btn"
+            data-id="{{primaryPendingEvent.eventId}}"
+            data-value="{{item.value}}"
+            catchtap="chooseInputOption"
+          >
+            <text class="dock-option-label">{{item.label}}</text>
+            <text wx:if="{{item.description}}" class="dock-option-desc">{{item.description}}</text>
+          </button>
+        </view>
+
+        <!-- Inline text reply -->
+        <view class="dock-reply">
+          <input
+            class="dock-reply-input"
+            placeholder="{{primaryPendingEvent.requiresInput ? '输入选择或说明...' : '回复 Agent...'}}"
+            value="{{dockReplyText}}"
+            bindinput="onDockReplyInput"
+            confirm-type="send"
+            bindconfirm="sendDockReply"
+          />
+          <view class="dock-reply-send {{dockReplyText ? 'active' : ''}}" bindtap="sendDockReply">
+            <text>发送</text>
+          </view>
+        </view>
+
+        <!-- Action buttons -->
+        <view wx:if="{{primaryPendingEvent.requiresInput}}" class="dock-actions">
+          <button class="dock-btn primary full" data-id="{{primaryPendingEvent.eventId}}" bindtap="openApprovalSheet">展开详情</button>
+        </view>
+        <view wx:elif="{{primaryPendingEvent.canApprove}}" class="dock-actions">
+          <button class="dock-btn primary" data-id="{{primaryPendingEvent.eventId}}" catchtap="approveEvent">批准</button>
+          <button class="dock-btn danger" data-id="{{primaryPendingEvent.eventId}}" catchtap="denyEvent">拒绝</button>
+          <button class="dock-btn ghost" data-id="{{primaryPendingEvent.eventId}}" catchtap="pauseEvent">暂缓</button>
+          <button class="dock-btn outline" data-id="{{primaryPendingEvent.eventId}}" bindtap="openApprovalSheet">详情</button>
+        </view>
+        <view wx:else class="dock-actions">
+          <button class="dock-btn outline" data-id="{{primaryPendingEvent.eventId}}" bindtap="openApprovalSheet">查看详情</button>
+          <button class="dock-btn ghost" data-id="{{primaryPendingEvent.eventId}}" catchtap="denyEvent">拒绝</button>
+          <button class="dock-btn ghost" data-id="{{primaryPendingEvent.eventId}}" catchtap="pauseEvent">暂缓</button>
+        </view>
       </view>
     </view>
   </view>

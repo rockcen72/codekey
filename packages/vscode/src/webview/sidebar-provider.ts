@@ -20,6 +20,7 @@ import {
   renderSessionsContent,
   renderSubscribe,
   type SidebarState,
+  type PendingApprovalItem,
   type PairingState,
 } from './sidebar-html.js';
 import { loadConversation, loadCodexConversation } from '@codekey/shared/bridge';
@@ -104,6 +105,10 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
   private _pushInFlight = false;
   private _pushQueued = false;
   private _approvalPollInFlight = false;
+  /** Consecutive 404 responses from bridge /v1/pending-approvals. After 5,
+   *  fall back to a 30s retry interval instead of 1s polling. */
+  private _approvalPoll404Count = 0;
+  private _approvalPollRetryTimer?: ReturnType<typeof setTimeout>;
 
   /** Window during which a recent user-driven detach/attach overrides
    *  the lagging `remote` list. Long enough to absorb the WS round-trip
@@ -161,13 +166,22 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     try {
       const resp = await this._bridgeFetch(`${this._bridgeService.getBridgeUrl()}/v1/pending-approvals`);
       if (!resp.ok) {
-        // Endpoint missing → old bridge. Stop polling, fall back to relay path.
         if (resp.status === 404) {
+          this._approvalPoll404Count++;
+          // Immediately fall back to _pushStateInner's relay fallback
           this._bridgeSupportsPendingApprovals = false;
-          this._stopApprovalPolling();
+          if (this._approvalPoll404Count >= 5) {
+            // 5 consecutive 404s — stop busy-polling, retry after 30s
+            this._stopApprovalPolling();
+            this._approvalPollRetryTimer = setTimeout(() => {
+              this._approvalPoll404Count = 0;
+              this._startApprovalPolling();
+            }, 30_000);
+          }
         }
         return;
       }
+      this._approvalPoll404Count = 0;
       this._bridgeSupportsPendingApprovals = true;
       const body = await resp.json() as { approvals?: BridgePendingApproval[] };
       const next = body.approvals ?? [];
@@ -176,6 +190,35 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       if (sig === this._lastApprovalSig) return;
       this._lastApprovalSig = sig;
       this._bridgeApprovals = next;
+      // Push approval-only state to webview immediately (decoupled from full state sync).
+      // This ensures approvals render even if _pushStateInner (relay-dependent) fails.
+      if (this._view) {
+        const pendingApprovals: PendingApprovalItem[] = next.map(a => ({
+          id: a.id,
+          serverEventId: a.serverEventId,
+          agentType: a.agentType,
+          command: a.command || '(unknown)',
+          summary: a.summary || a.command || '(unknown)',
+          toolName: a.toolName || '',
+          agent: agentDisplayName(a.agentType),
+          risk: a.risk,
+          serverSessionId: a.serverSessionId,
+        }));
+        this._view.webview.postMessage({
+          type: 'stateUpdate',
+          approvalsHtml: renderApprovalsContent({
+            deviceStatus: 'unpaired',
+            phoneName: '',
+            bridge: this._bridgeService.state,
+            agents: [],
+            pendingApprovals,
+            sessions: [],
+            events: {},
+            claudeSessions: [],
+          }),
+          approvalCount: pendingApprovals.length,
+        });
+      }
       this._pushState().catch(err => log(`_pushState (approval-driven) failed: ${err?.stack || err}`));
     } catch {
       // bridge unreachable, leave previous state
@@ -362,6 +405,12 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       await this._pushStateInner();
     } catch (err: any) {
       log(`_pushState failed: ${err?.stack || err}`);
+      // Push approval state only (data already in memory, no relay calls needed)
+      if (this._bridgeApprovals.length > 0) {
+        try {
+          await this._pushStateApprovalsOnly();
+        } catch {}
+      }
       if (this._view && this._firstPush) {
         this._view.webview.html = `<!DOCTYPE html><html><body style="background:#0f0f18;color:#e8e8f0;padding:20px;font-family:sans-serif;font-size:12px"><h3 style="color:#f74d4d">CodeKey error</h3><pre style="white-space:pre-wrap;word-break:break-word;font-size:11px">${String(err?.stack || err).replace(/&/g,'&amp;').replace(/</g,'&lt;')}</pre></body></html>`;
         this._firstPush = false;
@@ -373,6 +422,38 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         void this._pushState();
       }
     }
+  }
+
+  /** Push only the approvals section to the webview, skipping full state sync.
+   *  Used as a fallback when _pushStateInner fails (relay/credentials unavailable)
+   *  but we have approval data in memory from the bridge. */
+  private async _pushStateApprovalsOnly(): Promise<void> {
+    if (!this._view) return;
+    const pendingApprovals: PendingApprovalItem[] = this._bridgeApprovals.map(a => ({
+      id: a.id,
+      serverEventId: a.serverEventId,
+      agentType: a.agentType,
+      command: a.command || '(unknown)',
+      summary: a.summary || a.command || '(unknown)',
+      toolName: a.toolName || '',
+      agent: agentDisplayName(a.agentType),
+      risk: a.risk,
+      serverSessionId: a.serverSessionId,
+    }));
+    this._view.webview.postMessage({
+      type: 'stateUpdate',
+      approvalsHtml: renderApprovalsContent({
+        deviceStatus: 'unpaired',
+        phoneName: '',
+        bridge: this._bridgeService.state,
+        agents: [],
+        pendingApprovals,
+        sessions: [],
+        events: {},
+        claudeSessions: [],
+      }),
+      approvalCount: pendingApprovals.length,
+    });
   }
 
   private _bridgeFetch(url: string, init: RequestInit = {}): Promise<Response> {
@@ -640,7 +721,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     const mergedClaudeSessions = filteredSessions.map(s => ({
       ...s,
       title: relayTitleByClaudeSessionId.get(s.sessionId) || s.title,
-      attached: attachedSessions.includes(s.sessionId),
+      attached: attachedSessions.includes(s.sessionId) && !this._isRecentlyDetached(s.sessionId),
       canDetach: canDetach,
     }));
 
