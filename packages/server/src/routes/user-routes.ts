@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import type postgres from 'postgres';
 import { userTokenAuth } from '../auth/user-middleware.js';
+import { clientClients, pcClients } from '../ws/connection-registry.js';
 
 /**
  * User-scoped routes — authenticated via user_token (JWT).
@@ -111,6 +112,47 @@ export function userRoutes(sql: postgres.Sql) {
         ORDER BY db.bound_at DESC
       `;
       return devices;
+    });
+
+    // ── DELETE /api/v1/user/devices/:id ────────────────────
+    // Unbind a device (soft delete + revoke tokens + notify WS clients).
+    fastify.delete('/user/devices/:id', { preHandler: [userTokenAuth()] }, async (req, reply) => {
+      const userId = req.userAuth!.userId;
+      const { id: deviceId } = req.params as { id: string };
+
+      const [binding] = await sql<{ unbound_at: string | null }[]>`
+        UPDATE device_bindings
+        SET unbound_at = now()
+        WHERE device_id = ${deviceId}
+          AND user_id = ${userId}
+          AND unbound_at IS NULL
+        RETURNING unbound_at
+      `;
+      if (!binding) {
+        return reply.code(404).send({ error: 'device not found' });
+      }
+
+      await sql`UPDATE device_tokens SET revoked = true WHERE device_id = ${deviceId}`;
+
+      // Close all mini program WS connections for this device
+      const mpList = clientClients.get(deviceId);
+      if (mpList) {
+        for (const mp of mpList) {
+          if (mp.socket.readyState === mp.socket.OPEN) {
+            mp.socket.send(JSON.stringify({ type: 'auth_failed', code: 'DEVICE_UNBOUND' }));
+            mp.socket.close(4001, 'device unbound');
+          }
+        }
+        clientClients.delete(deviceId);
+      }
+
+      // Notify PC bridge if connected
+      const pc = pcClients.get(deviceId);
+      if (pc && pc.socket.readyState === pc.socket.OPEN) {
+        pc.socket.send(JSON.stringify({ type: 'auth_failed', code: 'DEVICE_UNBOUND' }));
+      }
+
+      return { success: true, deviceId, unboundAt: binding.unbound_at };
     });
   };
 }

@@ -214,9 +214,9 @@ export function authRoutes(sql: postgres.Sql) {
       const isFirstBind = !!inserted[0];
 
       // Conflict: device already has a binding. Read the current
-      // owner to decide the response.
-      const [owner] = isFirstBind ? [] : await sql<{ user_id: number }[]>`
-        SELECT user_id FROM device_bindings WHERE device_id = ${deviceId}
+      // owner and unbound_at to decide the response.
+      const [owner] = isFirstBind ? [] : await sql<{ user_id: number; unbound_at: string | null }[]>`
+        SELECT user_id, unbound_at FROM device_bindings WHERE device_id = ${deviceId}
       `;
       if (!isFirstBind && !owner) {
         // Vanishing race: ON CONFLICT fired but the row is gone.
@@ -225,6 +225,20 @@ export function authRoutes(sql: postgres.Sql) {
       }
       if (!isFirstBind && owner!.user_id !== userId) {
         return reply.code(403).send({ error: 'device bound to another user' });
+      }
+
+      // Same-user re-pair after unbind: clear unbound_at so the
+      // device reappears in all "WHERE unbound_at IS NULL" queries.
+      // Guarded with unbound_at IS NOT NULL so a concurrent unbind
+      // (which sets unbound_at = now()) is not silently overwritten.
+      if (!isFirstBind && owner!.unbound_at) {
+        await sql`
+          UPDATE device_bindings
+          SET unbound_at = NULL, bound_at = now()
+          WHERE device_id = ${deviceId}
+            AND user_id = ${userId}
+            AND unbound_at IS NOT NULL
+        `;
       }
 
       // Success path (first bind OR same-user re-claim): auto-claim

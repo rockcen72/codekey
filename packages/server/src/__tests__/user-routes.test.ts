@@ -463,4 +463,299 @@ describeDb('User-scoped routes', () => {
     });
     expect(res.statusCode).toBe(401);
   });
+
+  // ── DELETE /api/v1/user/devices/:id ────────────────────────────
+
+  it('user/devices/:id DELETE: unbinds device and returns 200', async () => {
+    const { userId, token } = await createTelegramUser();
+    cleanupUserIds.push(userId);
+
+    const { deviceId, clientToken } = await createDeviceAndClient('unbind-target');
+    await app.inject({
+      method: 'POST',
+      url: '/api/v1/auth/claim-device',
+      headers: { authorization: `Bearer ${token}` },
+      payload: { clientToken },
+    });
+
+    // Verify device appears in listing before unbind
+    const before = await app.inject({
+      method: 'GET',
+      url: '/api/v1/user/devices',
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect(before.statusCode).toBe(200);
+    expect(JSON.parse(before.payload).some((d: any) => d.id === deviceId)).toBe(true);
+
+    // Unbind
+    const res = await app.inject({
+      method: 'DELETE',
+      url: `/api/v1/user/devices/${deviceId}`,
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.payload);
+    expect(body.success).toBe(true);
+    expect(body.deviceId).toBe(deviceId);
+    expect(body.unboundAt).toBeTruthy();
+
+    // Device no longer appears in listing
+    const after = await app.inject({
+      method: 'GET',
+      url: '/api/v1/user/devices',
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect(after.statusCode).toBe(200);
+    expect(JSON.parse(after.payload).some((d: any) => d.id === deviceId)).toBe(false);
+
+    // Tokens revoked
+    const tokens = await sql`
+      SELECT COUNT(*) as count FROM device_tokens
+      WHERE device_id = ${deviceId} AND revoked = true
+    `;
+    expect(Number(tokens[0].count)).toBeGreaterThanOrEqual(1);
+  });
+
+  it('user/devices/:id DELETE: 404 for unbound or non-existent device', async () => {
+    const { userId, token } = await createTelegramUser();
+    cleanupUserIds.push(userId);
+
+    // Already-unbound device
+    const { deviceId, clientToken } = await createDeviceAndClient('already-unbound');
+    await app.inject({
+      method: 'POST',
+      url: '/api/v1/auth/claim-device',
+      headers: { authorization: `Bearer ${token}` },
+      payload: { clientToken },
+    });
+    await sql`UPDATE device_bindings SET unbound_at = now() WHERE device_id = ${deviceId}`;
+
+    const res = await app.inject({
+      method: 'DELETE',
+      url: `/api/v1/user/devices/${deviceId}`,
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect(res.statusCode).toBe(404);
+  });
+
+  it('user/devices/:id DELETE: cannot unbind another user\'s device', async () => {
+    const { userId: user1Id, token: token1 } = await createTelegramUser();
+    const { token: token2 } = await createTelegramUser();
+    cleanupUserIds.push(user1Id);
+
+    const { deviceId, clientToken } = await createDeviceAndClient('other-user-device');
+    await app.inject({
+      method: 'POST',
+      url: '/api/v1/auth/claim-device',
+      headers: { authorization: `Bearer ${token1}` },
+      payload: { clientToken },
+    });
+
+    // user2 tries to unbind user1's device
+    const res = await app.inject({
+      method: 'DELETE',
+      url: `/api/v1/user/devices/${deviceId}`,
+      headers: { authorization: `Bearer ${token2}` },
+    });
+    expect(res.statusCode).toBe(404);
+  });
+
+  it('user/devices/:id DELETE: unbinds device — sessions no longer visible', async () => {
+    const { userId, token } = await createTelegramUser();
+    cleanupUserIds.push(userId);
+
+    const { deviceId, clientToken } = await createDeviceAndClient('unbind-sessions');
+    await app.inject({
+      method: 'POST',
+      url: '/api/v1/auth/claim-device',
+      headers: { authorization: `Bearer ${token}` },
+      payload: { clientToken },
+    });
+
+    const deviceToken = await createDeviceToken(deviceId);
+    const session = await createSession(deviceToken);
+    await sql`
+      UPDATE sessions SET metadata = ${sql.json({ claudeSessionId: 'unbind-test-session' })} WHERE id = ${session.sessionId}
+    `;
+
+    // Session visible before unbind
+    const before = await app.inject({
+      method: 'GET',
+      url: '/api/v1/user/sessions?history=1',
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect(JSON.parse(before.payload).some((s: any) => s.id === session.sessionId)).toBe(true);
+
+    // Unbind
+    const res = await app.inject({
+      method: 'DELETE',
+      url: `/api/v1/user/devices/${deviceId}`,
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect(res.statusCode).toBe(200);
+
+    // Session no longer visible after unbind
+    const after = await app.inject({
+      method: 'GET',
+      url: '/api/v1/user/sessions?history=1',
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect(JSON.parse(after.payload).some((s: any) => s.id === session.sessionId)).toBe(false);
+  });
+
+  // ── claim-device re-pair after unbind ────────────────────────────
+
+  it('claim-device: same user re-claim after unbind clears unbound_at', async () => {
+    const { userId, token } = await createTelegramUser();
+    cleanupUserIds.push(userId);
+
+    const { deviceId, clientToken } = await createDeviceAndClient('re-pair-device');
+
+    // First claim
+    const claim1 = await app.inject({
+      method: 'POST',
+      url: '/api/v1/auth/claim-device',
+      headers: { authorization: `Bearer ${token}` },
+      payload: { clientToken },
+    });
+    expect(claim1.statusCode).toBe(200);
+    expect(JSON.parse(claim1.payload).success).toBe(true);
+
+    // Unbind
+    const unbind = await app.inject({
+      method: 'DELETE',
+      url: `/api/v1/user/devices/${deviceId}`,
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect(unbind.statusCode).toBe(200);
+
+    // Device should NOT appear in listing
+    const afterUnbind = await app.inject({
+      method: 'GET',
+      url: '/api/v1/user/devices',
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect(JSON.parse(afterUnbind.payload).some((d: any) => d.id === deviceId)).toBe(false);
+
+    // Same-user re-claim needs a new clientToken because the old one
+    // was revoked by the unbind. Insert it directly for the same device.
+    const newClientToken = randomUUID();
+    const newClientHash = createHash('sha256').update(newClientToken).digest('hex');
+    await sql`
+      INSERT INTO device_tokens (device_id, token_type, token_hash, label, expires_at)
+      VALUES (${deviceId}, 'client', ${newClientHash}, 're-pair-client', now() + interval '30 days')
+    `;
+
+    const claim2 = await app.inject({
+      method: 'POST',
+      url: '/api/v1/auth/claim-device',
+      headers: { authorization: `Bearer ${token}` },
+      payload: { clientToken: newClientToken },
+    });
+    expect(claim2.statusCode).toBe(200);
+    const claim2Body = JSON.parse(claim2.payload);
+    expect(claim2Body.success).toBe(true);
+    expect(claim2Body.alreadyBound).toBe(true);
+
+    // Device should appear in listing again (unbound_at cleared)
+    const afterReclaim = await app.inject({
+      method: 'GET',
+      url: '/api/v1/user/devices',
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect(JSON.parse(afterReclaim.payload).some((d: any) => d.id === deviceId)).toBe(true);
+  });
+
+  it('claim-device: other user cannot claim device bound to another user (even after unbind by different user)', async () => {
+    const { userId: user1Id, token: token1 } = await createTelegramUser();
+    const { token: token2 } = await createTelegramUser();
+    cleanupUserIds.push(user1Id);
+
+    const { deviceId, clientToken } = await createDeviceAndClient('other-owned');
+
+    // user1 claims device
+    await app.inject({
+      method: 'POST',
+      url: '/api/v1/auth/claim-device',
+      headers: { authorization: `Bearer ${token1}` },
+      payload: { clientToken },
+    });
+
+    // user2 tries to claim — should get 403
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/v1/auth/claim-device',
+      headers: { authorization: `Bearer ${token2}` },
+      payload: { clientToken },
+    });
+    expect(res.statusCode).toBe(403);
+  });
+
+  it('user/devices/:id DELETE: 401 without user JWT', async () => {
+    const fakeId = randomUUID();
+    const res = await app.inject({
+      method: 'DELETE',
+      url: `/api/v1/user/devices/${fakeId}`,
+    });
+    expect(res.statusCode).toBe(401);
+  });
+
+  it('user/devices/:id DELETE: leaves other bound devices alone', async () => {
+    const { userId, token } = await createTelegramUser();
+    cleanupUserIds.push(userId);
+
+    const keep = await createDeviceAndClient('keep-this');
+    const drop = await createDeviceAndClient('unbind-this');
+
+    for (const d of [keep, drop]) {
+      const claim = await app.inject({
+        method: 'POST',
+        url: '/api/v1/auth/claim-device',
+        headers: { authorization: `Bearer ${token}` },
+        payload: { clientToken: d.clientToken },
+      });
+      expect(claim.statusCode).toBe(200);
+    }
+
+    const before = await app.inject({
+      method: 'GET',
+      url: '/api/v1/user/devices',
+      headers: { authorization: `Bearer ${token}` },
+    });
+    const beforeIds = (JSON.parse(before.payload) as Array<{ id: string }>).map((d) => d.id);
+    expect(beforeIds).toContain(keep.deviceId);
+    expect(beforeIds).toContain(drop.deviceId);
+
+    const res = await app.inject({
+      method: 'DELETE',
+      url: `/api/v1/user/devices/${drop.deviceId}`,
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect(res.statusCode).toBe(200);
+
+    const after = await app.inject({
+      method: 'GET',
+      url: '/api/v1/user/devices',
+      headers: { authorization: `Bearer ${token}` },
+    });
+    const afterIds = (JSON.parse(after.payload) as Array<{ id: string }>).map((d) => d.id);
+    expect(afterIds).toEqual([keep.deviceId]);
+  });
+
+  it('claim-device: fresh bind (no prior row) returns 200 without alreadyBound', async () => {
+    const { userId, token } = await createTelegramUser();
+    cleanupUserIds.push(userId);
+
+    const { clientToken } = await createDeviceAndClient('first-time-bind');
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/v1/auth/claim-device',
+      headers: { authorization: `Bearer ${token}` },
+      payload: { clientToken },
+    });
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.payload);
+    expect(body.success).toBe(true);
+    expect(body.alreadyBound).toBeUndefined();
+  });
 });
