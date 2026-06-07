@@ -774,6 +774,21 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       }
     } catch { /* bridge unreachable */ }
 
+    // Dedup by sessionId — multiple sources (ocStored, listSessions HTTP+disk,
+    // allDeviceSessions) can produce duplicates if session IDs diverge or the
+    // same session appears from different discovery paths. Keep the last entry
+    // which has the freshest metadata from the live API.
+    {
+      const seen = new Map<string, typeof mergedClaudeSessions[0]>();
+      for (const s of mergedClaudeSessions) {
+        seen.set(s.sessionId, s);
+      }
+      if (seen.size !== mergedClaudeSessions.length) {
+        mergedClaudeSessions.length = 0;
+        mergedClaudeSessions.push(...seen.values());
+      }
+    }
+
     const state: SidebarState = {
       lang: vscode.env.language,
       deviceStatus,

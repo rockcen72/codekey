@@ -526,14 +526,13 @@ Page({
 
       if (e.type === 'user_prompt') {
         const prompt = e.data?.prompt || e.data?.summary || '';
-        // Use original transcript timestamp if available, fallback to DB created_at
         const displayTime = e.data?.timestamp
           ? this.formatTime(e.data.timestamp)
           : time;
         messages.push({
           id: e.id,
-          type: 'user',
-          side: 'right',
+          type: eventAgentType ? 'ai' : 'user',
+          side: eventAgentType ? 'left' : 'right',
           content: prompt,
           displayTime,
           typeLabel: '',
@@ -548,9 +547,9 @@ Page({
           canApprove: false,
           eventId: e.id,
           accent: 'neutral',
-          agentClass: 'unknown',
+          agentClass: eventAgentType ? agentClass : 'unknown',
           kindBadge: '',
-          senderName: '你',
+          senderName: eventAgentType ? agentName : '你',
         });
         continue;
       }
