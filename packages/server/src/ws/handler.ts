@@ -345,7 +345,8 @@ export function wsHandler(sql: postgres.Sql) {
             payload: { clientRequestId, sessionId, claudeSessionId },
           }));
 
-          const visibleToMiniProgram = !!claudeSessionId;
+          const visibleSource = source === 'transcript_attach' || source === 'resume' || source === 'opencode' || source === 'opencode_attach' || source === 'managed_codex_relay';
+          const visibleToMiniProgram = !!claudeSessionId && visibleSource;
           const mpList = visibleToMiniProgram ? clientClients.get(deviceId!) : undefined;
           if (mpList) {
             for (const mp of mpList) {
@@ -903,7 +904,8 @@ export function wsHandler(sql: postgres.Sql) {
           socket.send(JSON.stringify({ type: 'error', code: 'INVALID_PAYLOAD' }));
           return;
         }
-        finishSession(sessionId, socket).then((result) => {
+        const reason: string | undefined = msg.payload?.reason;
+        finishSession(sessionId, socket, reason).then((result) => {
           if (!result.ok) {
             socket.send(JSON.stringify({ type: 'error', code: result.code }));
           }

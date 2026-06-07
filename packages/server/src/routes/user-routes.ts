@@ -46,6 +46,7 @@ export function userRoutes(sql: postgres.Sql) {
             AND db.unbound_at IS NULL
             AND coalesce(s.metadata->>'claudeSessionId', '') <> ''
             AND coalesce(s.metadata->>'hideFromMobileHistory', '') <> 'true'
+            AND coalesce(s.metadata->>'source', '') IN ('transcript_attach', 'resume', 'opencode', 'opencode_attach', 'managed_codex_relay')
             ${activeFilter}
       `;
       if (windowId) {

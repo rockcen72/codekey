@@ -30,6 +30,10 @@ export function sessionRoutes(sql: postgres.Sql) {
       // transcript_attach. Hook-created sessions (source='hook') also need to
       // appear so the sidebar can overlay their relay-synced titles on the
       // local transcript list.
+      // Mobile apps use this endpoint without windowId; sidebar uses it with windowId.
+      const sourceFilter = windowId
+        ? sql``
+        : sql`AND coalesce(s.metadata->>'source', '') IN ('transcript_attach', 'resume', 'opencode', 'opencode_attach', 'managed_codex_relay')`;
       const statusFilter = includeHistory
         ? sql`AND (s.status IN ('active', 'paused') OR (s.status = 'finished' AND s.finished_at > now() - interval '7 days'))`
         : sql`AND s.status = 'active'`;
@@ -47,6 +51,7 @@ export function sessionRoutes(sql: postgres.Sql) {
           WHERE s.device_id = ${deviceAuth.deviceId}
             AND coalesce(s.metadata->>'claudeSessionId', '') <> ''
             AND coalesce(s.metadata->>'hideFromMobileHistory', '') <> 'true'
+            ${sourceFilter}
             ${statusFilter}
       `;
       if (windowId) {
@@ -103,6 +108,22 @@ export function sessionRoutes(sql: postgres.Sql) {
       `;
       if (!session) return reply.code(404).send({ error: 'not found' });
       await sql`DELETE FROM sessions WHERE id = ${id}`;
+      return { success: true };
+    });
+
+    // Hide session from mobile history — any valid token (client or device)
+    fastify.patch('/sessions/:id/hide', { preHandler: [tokenAuth(sql)] }, async (req, reply) => {
+      const { deviceAuth } = req as unknown as { deviceAuth: { deviceId: string } };
+      const { id } = req.params as { id: string };
+      const [session] = await sql`
+        SELECT id FROM sessions WHERE id = ${id} AND device_id = ${deviceAuth.deviceId}
+      `;
+      if (!session) return reply.code(404).send({ error: 'not found' });
+      await sql`
+        UPDATE sessions
+        SET metadata = metadata || ${sql.json({ hideFromMobileHistory: 'true' })}
+        WHERE id = ${id}
+      `;
       return { success: true };
     });
   };

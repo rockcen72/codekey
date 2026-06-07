@@ -1214,18 +1214,17 @@ export class ApprovalBridge {
     console.error('[bridge] handleHookEvent(%s): session=%s, codekeyWindowId=%s, fallback=%s, resolved=%s',
       body.eventType, claudeSessionId, body.codekeyWindowId || '(none)', this._getActiveWindowId() || '(none)', windowId || '(none)');
 
-    let serverSessionId: string;
-    try {
-      serverSessionId = await this.ensureSession(claudeSessionId, windowId);
-    } catch {
-      console.error('[bridge] no session for hook event (claudeSessionId=%s)', claudeSessionId);
-      return;
-    }
-
     const inputCard = tryFormatInputRequiredEvent(body.data, 'claude-code-hook')
       || tryFormatInputRequiredEvent(body.rawEvent, 'claude-code-hook')
       || tryFormatInputRequiredEvent(body, 'claude-code-hook');
     if (inputCard) {
+      let serverSessionId: string;
+      try {
+        serverSessionId = await this.ensureSession(claudeSessionId, windowId);
+      } catch {
+        console.error('[bridge] no session for input_required (claudeSessionId=%s)', claudeSessionId);
+        return;
+      }
       const clientEventId = inputCard.requestId || `cc-input:${claudeSessionId}:${Date.now()}`;
       const relayMsg: SessionEventMessage = {
         type: 'event',
@@ -1261,6 +1260,23 @@ export class ApprovalBridge {
 
     if (!body.data || (body.eventType !== 'task_complete' && body.eventType !== 'session_idle')) {
       console.error('[bridge] ignoring unsupported hook event: event=%s session=%s', body.eventType, claudeSessionId);
+      return;
+    }
+
+    // For status events (task_complete / session_idle), only forward if we
+    // already have a relay session — don't create one just for status updates.
+    // This matches Codex's pattern: sessions are created on-demand by approvals
+    // (handleApproval) or explicit sync (attachClaudeSession), not by every hook.
+    if (!hasKnownSession) {
+      console.error('[bridge] no session for status hook event, skipping (event=%s session=%s)', body.eventType, claudeSessionId);
+      return;
+    }
+
+    let serverSessionId: string;
+    try {
+      serverSessionId = await this.ensureSession(claudeSessionId, windowId);
+    } catch {
+      console.error('[bridge] no session for hook event (claudeSessionId=%s)', claudeSessionId);
       return;
     }
 
