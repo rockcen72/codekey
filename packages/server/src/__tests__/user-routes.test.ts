@@ -767,4 +767,157 @@ describeDb('User-scoped routes', () => {
     expect(body.success).toBe(true);
     expect(body.alreadyBound).toBeUndefined();
   });
+
+  // ── POST /api/v1/events/:id/approval-response ───────────
+
+  it('approval-response: returns 400 for invalid decision', async () => {
+    const { userId, token } = await createTelegramUser();
+    cleanupUserIds.push(userId);
+    const { deviceId, clientToken } = await createDeviceAndClient('approval-invalid');
+    await app.inject({
+      method: 'POST',
+      url: '/api/v1/auth/claim-device',
+      headers: { authorization: `Bearer ${token}` },
+      payload: { clientToken },
+    });
+    const deviceToken = await createDeviceToken(deviceId);
+    const session = await createSession(deviceToken);
+    const event = await createEvent(session.sessionId);
+
+    const res = await app.inject({
+      method: 'POST',
+      url: `/api/v1/events/${event.id}/approval-response`,
+      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+      payload: { decision: 'nonsense' },
+    });
+    expect(res.statusCode).toBe(400);
+    expect(JSON.parse(res.payload).error).toBe('invalid decision');
+  });
+
+  it('approval-response: returns 404 for non-existent event', async () => {
+    const { userId, token } = await createTelegramUser();
+    cleanupUserIds.push(userId);
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/v1/events/00000000-0000-0000-0000-000000000000/approval-response',
+      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+      payload: { decision: 'approve' },
+    });
+    expect(res.statusCode).toBe(404);
+    expect(JSON.parse(res.payload).error).toBe('EVENT_NOT_FOUND');
+  });
+
+  it('approval-response: returns 403 if user does not own the device', async () => {
+    const { userId: owner1, token: token1 } = await createTelegramUser();
+    const { token: token2 } = await createTelegramUser();
+    cleanupUserIds.push(owner1);
+
+    const { deviceId, clientToken } = await createDeviceAndClient('approval-owner');
+    await app.inject({
+      method: 'POST',
+      url: '/api/v1/auth/claim-device',
+      headers: { authorization: `Bearer ${token1}` },
+      payload: { clientToken },
+    });
+
+    const deviceToken = await createDeviceToken(deviceId);
+    const session = await createSession(deviceToken);
+    const event = await createEvent(session.sessionId);
+
+    const res = await app.inject({
+      method: 'POST',
+      url: `/api/v1/events/${event.id}/approval-response`,
+      headers: { authorization: `Bearer ${token2}`, 'content-type': 'application/json' },
+      payload: { decision: 'approve' },
+    });
+    expect(res.statusCode).toBe(403);
+    expect(JSON.parse(res.payload).error).toBe('ACCESS_DENIED');
+  });
+
+  it('approval-response: returns 403 for approve on high-risk event', async () => {
+    const { userId, token } = await createTelegramUser();
+    cleanupUserIds.push(userId);
+    const { deviceId, clientToken } = await createDeviceAndClient('approval-highrisk');
+    await app.inject({
+      method: 'POST',
+      url: '/api/v1/auth/claim-device',
+      headers: { authorization: `Bearer ${token}` },
+      payload: { clientToken },
+    });
+
+    const deviceToken = await createDeviceToken(deviceId);
+    const session = await createSession(deviceToken);
+    const [event] = await sql`
+      INSERT INTO events (session_id, type, data, pending, risk_level)
+      VALUES (${session.sessionId}, 'permission_request', ${sql.json({ command: 'rm -rf /', clientEventId: randomUUID() })}, true, 'high')
+      RETURNING id, session_id, type, pending
+    `;
+
+    const res = await app.inject({
+      method: 'POST',
+      url: `/api/v1/events/${event.id}/approval-response`,
+      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+      payload: { decision: 'approve' },
+    });
+    expect(res.statusCode).toBe(403);
+    expect(JSON.parse(res.payload).error).toBe('RISK_TOO_HIGH');
+  });
+
+  it('approval-response: returns 409 when event already responded', async () => {
+    const { userId, token } = await createTelegramUser();
+    cleanupUserIds.push(userId);
+    const { deviceId, clientToken } = await createDeviceAndClient('approval-cas');
+    await app.inject({
+      method: 'POST',
+      url: '/api/v1/auth/claim-device',
+      headers: { authorization: `Bearer ${token}` },
+      payload: { clientToken },
+    });
+
+    const deviceToken = await createDeviceToken(deviceId);
+    const session = await createSession(deviceToken);
+    const event = await createEvent(session.sessionId);
+
+    // Simulate a previous approval by updating the DB directly
+    await sql`UPDATE events SET pending = false, decision = 'deny' WHERE id = ${event.id}`;
+
+    const res = await app.inject({
+      method: 'POST',
+      url: `/api/v1/events/${event.id}/approval-response`,
+      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+      payload: { decision: 'approve' },
+    });
+    expect(res.statusCode).toBe(409);
+    expect(JSON.parse(res.payload).error).toBe('ALREADY_RESPONDED');
+  });
+
+  it('approval-response: returns 503 when bridge is not connected', async () => {
+    const { userId, token } = await createTelegramUser();
+    cleanupUserIds.push(userId);
+    const { deviceId, clientToken } = await createDeviceAndClient('approval-no-bridge');
+    await app.inject({
+      method: 'POST',
+      url: '/api/v1/auth/claim-device',
+      headers: { authorization: `Bearer ${token}` },
+      payload: { clientToken },
+    });
+
+    const deviceToken = await createDeviceToken(deviceId);
+    const session = await createSession(deviceToken);
+    const event = await createEvent(session.sessionId);
+
+    const res = await app.inject({
+      method: 'POST',
+      url: `/api/v1/events/${event.id}/approval-response`,
+      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+      payload: { decision: 'deny' },
+    });
+    expect(res.statusCode).toBe(503);
+    expect(JSON.parse(res.payload).error).toBe('BRIDGE_NOT_CONNECTED');
+
+    const [updated] = await sql`SELECT pending, decision FROM events WHERE id = ${event.id}`;
+    expect(updated.pending).toBe(true);
+    expect(updated.decision).toBeNull();
+  });
 });
