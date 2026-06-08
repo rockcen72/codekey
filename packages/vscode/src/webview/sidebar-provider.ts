@@ -23,7 +23,7 @@ import {
   type PendingApprovalItem,
   type PairingState,
 } from './sidebar-html.js';
-import { loadConversation, loadCodexConversation } from '@codekey/shared/bridge';
+import { loadConversation, loadCodexConversation, normalizeCodexSessionTitle } from '@codekey/shared/bridge';
 import { log } from '../log.js';
 import { secureFetch } from '../util/secure-fetch.js';
 
@@ -71,6 +71,19 @@ function openCodeSessionTitle(session: any): string {
     return title;
   }
   return 'OpenCode session';
+}
+
+function codexSessionTitle(session: any, remote?: SessionResponse): string {
+  const localTitle = normalizeCodexSessionTitle(session?.title);
+  if (localTitle) return localTitle;
+
+  const remoteTitle = normalizeCodexSessionTitle(remote?.title);
+  if (remoteTitle) return remoteTitle;
+
+  const metadataTitle = normalizeCodexSessionTitle((remote?.metadata as Record<string, unknown> | undefined)?.title);
+  if (metadataTitle) return metadataTitle;
+
+  return session?.sessionId ? String(session.sessionId).slice(0, 8) : 'Codex session';
 }
 
 export class SidebarProvider implements vscode.WebviewViewProvider {
@@ -840,7 +853,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
             }
             mergedClaudeSessions.push({
               sessionId: cs.sessionId,
-              title: remote?.title || cs.title || cs.sessionId.slice(0, 8),
+              title: codexSessionTitle(cs, remote),
               cwd: cs.cwd || '',
               updatedAt: cs.updatedAt || '',
               attached: isAttached,

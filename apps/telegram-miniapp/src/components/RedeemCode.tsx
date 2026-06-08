@@ -7,11 +7,11 @@ interface Props {
 }
 
 const REDEEM_ERRORS: Record<string, string> = {
-  invalid_format: 'Invalid code format',
-  not_found: 'Code not found',
-  product_mismatch: 'Code does not match this product',
-  already_used: 'Code already used',
-  void: 'Code has expired',
+  invalid_format: '兑换码格式不正确',
+  not_found: '兑换码不存在',
+  product_mismatch: '兑换码不适用于当前产品',
+  already_used: '兑换码已被使用',
+  void: '兑换码已失效',
 };
 
 export function RedeemCode({ onRedeemed }: Props) {
@@ -30,11 +30,11 @@ export function RedeemCode({ onRedeemed }: Props) {
         method: 'POST',
         body: JSON.stringify({ code: code.trim() }),
       });
-      setSuccess(`Activated ${result.plan} for ${result.durationDays} days`);
+      setSuccess(`已激活 ${result.plan}，有效期 ${result.durationDays} 天`);
       setCode('');
       onRedeemed();
     } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Redeem failed';
+      const msg = err instanceof Error ? err.message : '兑换失败';
       // Try to extract server error code
       const known = Object.keys(REDEEM_ERRORS).find(k => msg.toLowerCase().includes(k));
       setError(known ? REDEEM_ERRORS[known] : msg);
@@ -61,7 +61,7 @@ export function RedeemCode({ onRedeemed }: Props) {
           disabled={!code.trim() || busy}
           onClick={() => void handleRedeem()}
         >
-          {busy ? '...' : 'Redeem'}
+          {busy ? '...' : '兑换'}
         </button>
       </div>
       {error ? <p className="error-text redeem-msg">{error}</p> : null}

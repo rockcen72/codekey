@@ -6,53 +6,34 @@ interface Props {
 
 const TIER_LABEL: Record<string, string> = {
   free: 'Free',
-  trial: 'Trial',
+  trial: '试用',
   pro: 'Pro',
 };
 
-function formatExpiry(expiresAt: string | null): string | null {
+function daysRemaining(expiresAt: string | null): number | null {
   if (!expiresAt) return null;
-  const d = new Date(expiresAt);
-  const now = new Date();
-  const diffMs = d.getTime() - now.getTime();
-  const diffDays = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
-  if (diffDays <= 0) return 'Expired';
-  if (diffDays === 1) return 'Expires today';
-  if (diffDays <= 3) return `${diffDays} days left`;
-  return `Until ${d.toLocaleDateString()}`;
+  return Math.ceil((new Date(expiresAt).getTime() - Date.now()) / 86_400_000);
 }
 
 export function SubscriptionPill({ subscription }: Props) {
   const { tier, usage, expiresAt } = subscription;
-  const expiryText = tier !== 'free' ? formatExpiry(expiresAt) : null;
-  const isExpiringSoon = tier !== 'free' && expiresAt && (() => {
-    const d = new Date(expiresAt);
-    const now = new Date();
-    return Math.ceil((d.getTime() - now.getTime()) / (1000 * 60 * 60 * 24)) <= 3;
-  })();
+  const days = daysRemaining(expiresAt);
+  const quotaState = tier === 'free' && usage
+    ? usage.used >= usage.limit
+      ? 'exhausted'
+      : usage.used >= Math.floor(usage.limit * 0.8)
+        ? 'approaching'
+        : 'normal'
+    : 'hidden';
+  const isExpiringSoon = tier !== 'free' && days !== null && days >= 0 && days <= 3;
+  const label = tier === 'free' && usage
+    ? quotaState === 'exhausted'
+      ? 'Free · 已用完'
+      : `Free · ${usage.used}/${usage.limit}`
+    : tier === 'trial' && days !== null && days >= 0
+      ? `试用 · ${days}天`
+      : TIER_LABEL[tier] || tier.toUpperCase();
+  const className = isExpiringSoon ? 'sub-pill-expiring' : `sub-pill-${quotaState === 'hidden' ? `tier-${tier}` : quotaState}`;
 
-  const usagePct = tier === 'free' && usage ? Math.round((usage.used / usage.limit) * 100) : 0;
-  const usageClass = usagePct >= 100 ? 'exhausted' : usagePct >= 80 ? 'approaching' : 'normal';
-
-  return (
-    <div className="subscription-info">
-      <span className="subscription-bar">
-        <span className={`subscription-pill tier-${tier}`}>{TIER_LABEL[tier] || tier.toUpperCase()}</span>
-        {expiryText ? <span className="expiry-text">{expiryText}</span> : null}
-      </span>
-      {tier === 'free' && usage ? (
-        <div className="usage-bar-wrapper">
-          <div className="usage-bar">
-            <div className={`usage-bar-fill usage-bar-${usageClass}`} style={{ width: `${Math.min(usagePct, 100)}%` }} />
-          </div>
-          <span className={`usage-text usage-text-${usageClass}`}>
-            {usage.used}/{usage.limit} this month
-          </span>
-        </div>
-      ) : null}
-      {isExpiringSoon ? (
-        <div className="expiry-warning">Subscription expiring soon</div>
-      ) : null}
-    </div>
-  );
+  return <span className={`sub-pill ${className}`}>{label}</span>;
 }

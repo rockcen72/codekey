@@ -7,6 +7,42 @@ function escapeHtml(str: string): string {
     .replace(/'/g, '&#39;');
 }
 
+export function compactMarkdownWhitespace(md: string): string {
+  if (!md) return '';
+
+  const out: string[] = [];
+  let inCode = false;
+  let pendingBlank = false;
+
+  for (const raw of md.replace(/\r\n?/g, '\n').split('\n')) {
+    const line = raw.trimEnd();
+    if (line.trimStart().startsWith('```')) {
+      if (pendingBlank && out.length > 0) out.push('');
+      pendingBlank = false;
+      inCode = !inCode;
+      out.push(line);
+      continue;
+    }
+
+    if (inCode) {
+      out.push(raw);
+      continue;
+    }
+
+    const trimmed = line.trim();
+    if (!trimmed) {
+      pendingBlank = out.length > 0;
+      continue;
+    }
+
+    if (pendingBlank) out.push('');
+    pendingBlank = false;
+    out.push(trimmed);
+  }
+
+  return out.join('\n').trim();
+}
+
 /** Lightweight markdown → HTML (mirrors WeChat mini program's markdownToHtml).
  *  Outputs safe HTML subset: h1-6, p, ul/ol, pre/code, blockquote, hr,
  *  inline strong/em/code, and ASCII/Markdown tables. */

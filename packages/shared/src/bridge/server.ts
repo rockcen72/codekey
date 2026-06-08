@@ -6,6 +6,7 @@ import { resolve } from 'node:path';
 import { ApprovalBridge, type HookEventBody } from './handler.js';
 import { CodexRelay } from './codex-relay.js';
 import { CodexResumeManager } from './codex-resume-manager.js';
+import { discoverLocalSessions, normalizeCodexSessionTitle } from './codex-local-session-resolver.js';
 import { type OpenCodeSessionManager } from './opencode-session-manager.js';
 import { listRecentClaudeTranscripts, loadConversation } from './claude-transcripts.js';
 
@@ -468,7 +469,16 @@ function handleRequest(req: IncomingMessage, res: ServerResponse, bridge: Approv
         if (codexResumeManager) {
           const active = codexResumeManager.getActiveSessions();
           const found = active.find(a => a.localSession.sessionId === codexSessionId);
-          if (found) serverSessionId = found.serverSessionId;
+          if (found) {
+            serverSessionId = found.serverSessionId;
+            const label = normalizeCodexSessionTitle(found.localSession.title);
+            if (label) {
+              bridge.relay.sendRaw(JSON.stringify({
+                type: 'update_session_label',
+                payload: { sessionId: serverSessionId, label },
+              }));
+            }
+          }
           if (!serverSessionId) {
             res.writeHead(200, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({ ok: true, bypass: true, reason: 'codex_session_not_resumed' }));
@@ -494,6 +504,9 @@ function handleRequest(req: IncomingMessage, res: ServerResponse, bridge: Approv
         // Step 2: Register on relay if not already active
         if (!serverSessionId) {
           const regClientRequestId = randomUUID();
+          const localSession = discoverLocalSessions(50, input.cwd || undefined)
+            .find(s => s.sessionId === codexSessionId);
+          const sessionTitle = normalizeCodexSessionTitle(localSession?.title) || 'Codex Session';
 
           // Wrap registration in a promise with timeout
           const regResult = await new Promise<string | null>((resolve) => {
@@ -525,11 +538,13 @@ function handleRequest(req: IncomingMessage, res: ServerResponse, bridge: Approv
                 clientRequestId: regClientRequestId,
                 metadata: {
                   claudeSessionId: codexSessionId,
+                  title: sessionTitle,
                   source: 'codex_hook',
                   runtime: 'codex-hooks',
                   cwd: input.cwd || '',
                   hookEventName: 'PermissionRequest',
                 },
+                sessionLabel: sessionTitle,
               },
             }));
           });

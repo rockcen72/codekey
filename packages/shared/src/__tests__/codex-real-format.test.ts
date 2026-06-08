@@ -12,7 +12,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { EventEmitter } from 'node:events';
-import { discoverLocalSessions, loadCodexConversation } from '../bridge/codex-local-session-resolver.js';
+import { discoverLocalSessions, loadCodexConversation, normalizeCodexSessionTitle } from '../bridge/codex-local-session-resolver.js';
 import { CodexResumeManager } from '../bridge/codex-resume-manager.js';
 import { CodexTranscriptWatcher, type TranscriptEvent } from '../bridge/codex-transcript-watcher.js';
 
@@ -106,6 +106,88 @@ describe('Codex real transcript format', () => {
 
       const sessions = discoverLocalSessions(20);
       expect(sessions).toHaveLength(1);
+    });
+
+    it('skips Codex subagent transcripts from the local session list', () => {
+      const dir = path.join(tmpHome, 'sessions', '2026', '06', '01');
+      mkdirSync(dir, { recursive: true });
+      const file = path.join(dir, 'rollout-subagent.jsonl');
+      writeFileSync(file, [
+        JSON.stringify({
+          type: 'session_meta',
+          payload: { id: 'subagent-session', cwd: tmpHome, source: 'vscode' },
+        }),
+        JSON.stringify({
+          timestamp: '2026-06-01T08:00:00.000Z',
+          type: 'response_item',
+          payload: {
+            type: 'message',
+            role: 'user',
+            content: [{ type: 'input_text', text: 'The following is the Codex agent running as a subagent for an internal task.' }],
+          },
+        }),
+      ].join('\n'), 'utf8');
+
+      expect(discoverLocalSessions(20).map(s => s.sessionId)).not.toContain('subagent-session');
+    });
+
+    it('keeps normal Codex sessions that mention a subagent later in the transcript', () => {
+      const dir = path.join(tmpHome, 'sessions', '2026', '06', '01');
+      mkdirSync(dir, { recursive: true });
+      const file = path.join(dir, 'rollout-main-with-subagent.jsonl');
+      writeFileSync(file, [
+        JSON.stringify({
+          type: 'session_meta',
+          payload: { id: 'main-session', cwd: tmpHome, source: 'vscode' },
+        }),
+        JSON.stringify({
+          timestamp: '2026-06-01T08:00:00.000Z',
+          type: 'event_msg',
+          payload: { type: 'user_message', message: '修复侧边栏最新会话显示' },
+        }),
+        JSON.stringify({
+          timestamp: '2026-06-01T08:01:00.000Z',
+          type: 'response_item',
+          payload: {
+            type: 'message',
+            role: 'user',
+            content: [{ type: 'input_text', text: 'The following is the Codex agent running as a subagent for an internal task.' }],
+          },
+        }),
+      ].join('\n'), 'utf8');
+
+      expect(discoverLocalSessions(20)).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          sessionId: 'main-session',
+          title: '修复侧边栏最新会话显示',
+        }),
+      ]));
+    });
+
+    it('uses the first real user prompt when session_index title is only a session id', () => {
+      const dir = path.join(tmpHome, 'sessions', '2026', '06', '01');
+      mkdirSync(dir, { recursive: true });
+      const sessionId = '019e8231-a3f7-7c43-8dfb-f2107c803690';
+      const file = path.join(dir, `rollout-${sessionId}.jsonl`);
+      writeFileSync(path.join(tmpHome, 'session_index.jsonl'), JSON.stringify({
+        id: sessionId,
+        thread_name: sessionId,
+        updated_at: '2026-06-01T08:01:00.000Z',
+      }) + '\n', 'utf8');
+      writeFileSync(file, [
+        JSON.stringify({
+          type: 'session_meta',
+          payload: { id: sessionId, cwd: tmpHome, source: 'vscode' },
+        }),
+        JSON.stringify({
+          timestamp: '2026-06-01T08:00:00.000Z',
+          type: 'event_msg',
+          payload: { type: 'user_message', message: '修复 Telegram 会话标题' },
+        }),
+      ].join('\n'), 'utf8');
+
+      expect(discoverLocalSessions(20)[0].title).toBe('修复 Telegram 会话标题');
+      expect(normalizeCodexSessionTitle(sessionId)).toBeUndefined();
     });
   });
 

@@ -4,6 +4,60 @@ import { userTokenAuth } from '../auth/user-middleware.js';
 import { clientClients, pcClients } from '../ws/connection-registry.js';
 import { validateAndApplyApproval } from '../services/approval.js';
 
+function isEncodedCodexTitle(title: unknown, metadata: Record<string, unknown>): boolean {
+  if (typeof title !== 'string' || !title.trim()) return true;
+  const value = title.trim();
+  const claudeSessionId = typeof metadata.claudeSessionId === 'string' ? metadata.claudeSessionId : '';
+  return value === claudeSessionId
+    || (!!claudeSessionId && value === claudeSessionId.slice(0, 8))
+    || /^[0-9a-f]{8}$/i.test(value)
+    || /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value)
+    || /^codex-\d+-[a-z0-9]+$/i.test(value);
+}
+
+function titleFromEventData(data: unknown): string {
+  if (!data || typeof data !== 'object') return '';
+  const record = data as Record<string, unknown>;
+  const value = record.prompt || record.summary || record.message;
+  if (typeof value !== 'string') return '';
+  return value.replace(/\s+/g, ' ').trim().slice(0, 100);
+}
+
+async function applyCodexDerivedTitles(sql: postgres.Sql, rows: any[]): Promise<any[]> {
+  const targetIds = rows
+    .filter((row) => {
+      const metadata = row.metadata && typeof row.metadata === 'object' ? row.metadata as Record<string, unknown> : {};
+      return row.agent_type === 'codex' && isEncodedCodexTitle(metadata.title, metadata);
+    })
+    .map((row) => row.id);
+  if (targetIds.length === 0) return rows;
+
+  const titleRows = await sql`
+    SELECT DISTINCT ON (session_id) session_id, data
+    FROM events
+    WHERE session_id = ANY(${sql.array(targetIds)}::uuid[])
+      AND type = 'user_prompt'
+    ORDER BY session_id, created_at ASC
+  `;
+  const titleBySession = new Map<string, string>();
+  for (const row of titleRows) {
+    const title = titleFromEventData((row as any).data);
+    if (title) titleBySession.set((row as any).session_id, title);
+  }
+
+  return rows.map((row) => {
+    const title = titleBySession.get(row.id);
+    if (!title) return row;
+    return {
+      ...row,
+      metadata: {
+        ...(row.metadata || {}),
+        title,
+      },
+    };
+  });
+}
+
 /**
  * User-scoped routes — authenticated via user_token (JWT).
  *
@@ -55,7 +109,7 @@ export function userRoutes(sql: postgres.Sql) {
         query = sql`${query} AND s.metadata->>'windowId' = ${windowId}`;
       }
       query = sql`${query}) ranked WHERE rn = 1 ORDER BY CASE WHEN status = 'active' THEN 0 ELSE 1 END, last_active_at DESC`;
-      return await query;
+      return await applyCodexDerivedTitles(sql, await query);
     });
 
     // ── GET /api/v1/user/sessions/:id ──────────────────────
@@ -74,7 +128,7 @@ export function userRoutes(sql: postgres.Sql) {
           AND db.unbound_at IS NULL
       `;
       if (!session) return reply.code(404).send({ error: 'not found' });
-      return session;
+      return (await applyCodexDerivedTitles(sql, [session]))[0];
     });
 
     // ── GET /api/v1/user/sessions/:id/events ────────────────

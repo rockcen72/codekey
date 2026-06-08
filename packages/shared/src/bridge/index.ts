@@ -19,7 +19,7 @@ export { CodexRelay } from './codex-relay.js';
 export { loadConversation } from './claude-transcripts.js';
 
 // Codex Resume Runtime (P0.5 + P1)
-export { discoverLocalSessions, findMostRecentSession, codexConfigDir, loadCodexConversation, isSystemGeneratedContext } from './codex-local-session-resolver.js';
+export { discoverLocalSessions, findMostRecentSession, codexConfigDir, loadCodexConversation, isSystemGeneratedContext, normalizeCodexSessionTitle } from './codex-local-session-resolver.js';
 export type { CodexLocalSession, CodexConversationEntry } from './codex-local-session-resolver.js';
 
 export { CodexResumeRuntime } from './codex-resume-runtime.js';

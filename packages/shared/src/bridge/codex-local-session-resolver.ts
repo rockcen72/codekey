@@ -44,6 +44,21 @@ interface TranscriptMetaPayload {
   cli_version?: string;
 }
 
+const TITLE_SCAN_BYTES = 2 * 1024 * 1024;
+
+function readFileHead(filePath: string, maxBytes: number): string {
+  const fd = openSync(filePath, 'r');
+  try {
+    const stat = fstatSync(fd);
+    const readSize = Math.min(stat.size, maxBytes);
+    const buf = Buffer.alloc(readSize);
+    const bytesRead = readSync(fd, buf, 0, readSize, 0);
+    return buf.toString('utf8', 0, bytesRead);
+  } finally {
+    closeSync(fd);
+  }
+}
+
 /**
  * Parse ~/.codex/session_index.jsonl for quick session listing.
  * Returns entries in file order (newest first, as Codex writes them).
@@ -131,26 +146,36 @@ function lastTranscriptTimestamp(filePath: string): string {
 function extractFirstUserMessage(transcriptPath: string): string {
   if (!existsSync(transcriptPath)) return '';
   try {
-    const fd = openSync(transcriptPath, 'r');
-    try {
-      const buf = Buffer.alloc(65536);
-      const bytesRead = readSync(fd, buf, 0, 65536, 0);
-      const text = buf.toString('utf8', 0, bytesRead);
-      const lines = text.split('\n');
-      for (const line of lines) {
-        if (!line.trim()) continue;
-        try {
-          const obj = JSON.parse(line);
-          const msg = extractUserMsgText(obj);
-          const visible = msg ? cleanCodexDisplayText(msg) : '';
-          if (visible) return visible.slice(0, 100);
-        } catch { /* skip */ }
-      }
-    } finally {
-      closeSync(fd);
+    const lines = readFileHead(transcriptPath, TITLE_SCAN_BYTES).split('\n');
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      try {
+        const obj = JSON.parse(line);
+        const msg = extractUserMsgText(obj);
+        const visible = msg ? cleanCodexDisplayText(msg) : '';
+        if (visible) return visible.replace(/\s+/g, ' ').trim().slice(0, 100);
+      } catch { /* skip */ }
     }
   } catch { /* ignore */ }
   return '';
+}
+
+function transcriptStartsWithCodexSubagentContext(transcriptPath: string): boolean {
+  if (!existsSync(transcriptPath)) return false;
+  try {
+    const lines = readFileHead(transcriptPath, TITLE_SCAN_BYTES).split('\n');
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      try {
+        const obj = JSON.parse(line);
+        const msg = extractUserMsgText(obj);
+        if (!msg) continue;
+        if (isCodexSubagentContext(msg)) return true;
+        if (cleanCodexDisplayText(msg)) return false;
+      } catch { /* skip */ }
+    }
+  } catch { /* ignore */ }
+  return false;
 }
 
 /** Extract user message text from any known transcript envelope format. */
@@ -192,6 +217,28 @@ function extractUserMsgText(obj: Record<string, unknown>): string | null {
 /** Skip auto-injected environment context blocks. */
 function isAutoContext(text: string): boolean {
   return cleanCodexDisplayText(text).length === 0;
+}
+
+function isCodexSessionIdLike(text: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(text)
+    || /^[0-9a-f]{8}$/i.test(text)
+    || /^codex-\d+-[a-z0-9]+$/i.test(text);
+}
+
+export function isCodexSubagentContext(text: string): boolean {
+  const t = text.trim();
+  return /^The following is the Codex agent\b/i.test(t)
+    || /^You are the Codex agent running as a subagent\b/i.test(t)
+    || (/\bsubagent\b/i.test(t) && /\bCodex agent\b/i.test(t));
+}
+
+export function normalizeCodexSessionTitle(title: unknown): string | undefined {
+  if (typeof title !== 'string') return undefined;
+  const cleaned = cleanCodexDisplayText(title).replace(/\s+/g, ' ').trim();
+  if (!cleaned) return undefined;
+  if (isCodexSessionIdLike(cleaned)) return undefined;
+  if (isCodexSubagentContext(cleaned)) return undefined;
+  return cleaned.slice(0, 100);
 }
 
 /**
@@ -273,11 +320,16 @@ export function discoverLocalSessions(limit = 20, cwd?: string): CodexLocalSessi
 
     const sessionId = meta.id;
     const indexEntry = indexByName.get(sessionId);
+    const title = normalizeCodexSessionTitle(indexEntry?.thread_name) || extractFirstUserMessage(transcriptPath);
+
+    if (isCodexSubagentContext(String(indexEntry?.thread_name || '')) || transcriptStartsWithCodexSubagentContext(transcriptPath)) {
+      continue;
+    }
 
     const session: CodexLocalSession = {
       sessionId,
       cwd: meta.cwd || '',
-      title: indexEntry?.thread_name || extractFirstUserMessage(transcriptPath) || sessionId.slice(0, 8),
+      title: title || sessionId.slice(0, 8),
       transcriptPath,
       source: meta.source || 'unknown',
       updatedAt: lastTranscriptTimestamp(transcriptPath) || indexEntry?.updated_at || '',
@@ -390,6 +442,7 @@ export function cleanCodexDisplayText(text: string): string {
     .trim();
 
   if (!t) return '';
+  if (isCodexSubagentContext(t)) return '';
   if (isSystemGeneratedContext(t)) return '';
   if (/^#\s*AGENTS\.md instructions/i.test(t)) return '';
   if (/^#\s*Context from my IDE/i.test(t)) return '';

@@ -11,7 +11,11 @@ import { tryFormatInputRequiredEvent } from './input-card.js';
 interface OpenCodeSessionInfo {
   id: string;
   title?: string;
+  name?: string;
   directory?: string;
+  type?: string;
+  subagent?: boolean;
+  metadata?: Record<string, unknown>;
   time?: { created?: number; updated?: number };
 }
 
