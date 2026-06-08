@@ -67,3 +67,11 @@ export interface ApprovalResponseResult {
   eventId: string;
   decision: string;
 }
+
+export interface RedeemResult {
+  success: boolean;
+  product: string;
+  plan: string;
+  durationDays: number;
+  afterExpiresAt: string;
+}

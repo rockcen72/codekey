@@ -28,7 +28,7 @@ export function SettingsPage({ auth }: Props) {
       setUnbindTarget(null);
       await devices.refresh();
     } catch (err) {
-      setError(err instanceof Error ? err.message : '解绑失败');
+      setError(err instanceof Error ? err.message : 'Unbind failed');
     } finally {
       setBusy(false);
     }
@@ -37,18 +37,18 @@ export function SettingsPage({ auth }: Props) {
   return (
     <main className="shell">
       <header className="page-header">
-        <button className="ghost-button" type="button" onClick={() => navigate('/')}>返回</button>
-        <h1>设备管理</h1>
+        <button className="ghost-button" type="button" onClick={() => navigate('/')}>Back</button>
+        <h1>Device Management</h1>
       </header>
 
-      {devices.loading ? <div className="notice">加载中</div> : null}
+      {devices.loading ? <div className="notice">Loading...</div> : null}
       {devices.error ? <div className="notice error-text">{devices.error}</div> : null}
       {error ? <div className="notice error-text">{error}</div> : null}
 
       {devices.devices.length === 0 && !devices.loading ? (
         <div className="empty-state">
-          <h2>还没有绑定设备</h2>
-          <p>在桌面端生成配对码后，在这里完成绑定。</p>
+          <h2>No devices bound</h2>
+          <p>Generate a pairing code on your desktop, then enter it here.</p>
         </div>
       ) : (
         <section className="device-manage-list">
@@ -56,14 +56,14 @@ export function SettingsPage({ auth }: Props) {
             <div className="device-manage-item" key={d.id}>
               <div className="device-manage-info">
                 <DeviceBadge name={d.device_name} deviceId={d.id} />
-                <span className="muted">绑定于 {formatDate(d.bound_at)}</span>
+                <span className="muted">Bound {formatDate(d.bound_at)}</span>
               </div>
               <button
                 className="ghost-button danger-button"
                 type="button"
                 onClick={() => setUnbindTarget(d)}
               >
-                解绑
+                Unbind
               </button>
             </div>
           ))}
@@ -73,21 +73,21 @@ export function SettingsPage({ auth }: Props) {
       {unbindTarget ? (
         <div className="modal-backdrop" onClick={() => setUnbindTarget(null)}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
-            <h2>确认解绑</h2>
+            <h2>Confirm Unbind</h2>
             <p>
-              解绑后该设备的所有会话将无法在手机端查看。
+              All sessions from this device will be removed from your phone.
               <br />
-              设备：<strong>{unbindTarget.device_name || '未命名设备'}</strong>
+              Device: <strong>{unbindTarget.device_name || 'Unnamed Device'}</strong>
               <br />
-              ID：<code>{unbindTarget.id.slice(-6)}</code>
+              ID: <code>{unbindTarget.id.slice(-6)}</code>
             </p>
             {error ? <p className="error-text">{error}</p> : null}
             <div className="modal-actions">
               <button className="ghost-button" type="button" onClick={() => setUnbindTarget(null)} disabled={busy}>
-                取消
+                Cancel
               </button>
               <button className="primary-button danger-confirm" type="button" onClick={() => void confirmUnbind()} disabled={busy}>
-                {busy ? '解绑中' : '确认解绑'}
+                {busy ? 'Unbinding...' : 'Unbind'}
               </button>
             </div>
           </div>

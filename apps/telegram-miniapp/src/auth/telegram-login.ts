@@ -9,7 +9,7 @@ async function waitForInitData(): Promise<string> {
     if (initData) return initData;
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
-  throw new Error('未检测到 Telegram initData，请从 Telegram Mini App 按钮打开');
+  throw new Error('Telegram initData not detected. Please open this from a Telegram Mini App button.');
 }
 
 export async function loginWithTelegram(): Promise<TelegramLoginResult> {

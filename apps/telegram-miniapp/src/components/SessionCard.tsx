@@ -20,7 +20,7 @@ export function SessionCard({ session }: Props) {
         <span>{session.agent_type}</span>
         <span>{formatDate(session.last_active_at)}</span>
       </div>
-      {session.pending_count > 0 ? <div className="pending-count">{session.pending_count} 个待处理请求</div> : null}
+      {session.pending_count > 0 ? <div className="pending-count">{session.pending_count} pending</div> : null}
     </Link>
   );
 }

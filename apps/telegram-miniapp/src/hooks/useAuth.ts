@@ -25,7 +25,7 @@ export function useAuth(): AuthState {
       setUserToken(result.token);
       setToken(result.token);
     } catch (err) {
-      setError(err instanceof Error ? err.message : '登录失败');
+      setError(err instanceof Error ? err.message : 'Login failed');
       clearUserToken();
       setToken(null);
     } finally {

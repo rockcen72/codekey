@@ -14,7 +14,7 @@ export function useDevices(enabled: boolean) {
     try {
       setDevices(await userRequest<UserDevice[]>('/api/v1/user/devices'));
     } catch (err) {
-      setError(err instanceof Error ? err.message : '设备加载失败');
+      setError(err instanceof Error ? err.message : 'Failed to load devices');
     } finally {
       setLoading(false);
     }

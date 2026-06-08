@@ -14,7 +14,7 @@ export function useSubscription(enabled: boolean) {
     try {
       setSubscription(await userRequest<SubscriptionStatus>('/api/v1/subscription'));
     } catch (err) {
-      setError(err instanceof Error ? err.message : '订阅加载失败');
+      setError(err instanceof Error ? err.message : 'Failed to load subscription');
     } finally {
       setLoading(false);
     }

@@ -29,10 +29,10 @@ const ALLOWED_DECISIONS: Record<string, string[]> = {
 };
 
 const DECISION_LABEL: Record<string, string> = {
-  approve: '批准',
-  deny: '拒绝',
-  pause: '暂停',
-  reply: '回复',
+  approve: 'Approve',
+  deny: 'Deny',
+  pause: 'Pause',
+  reply: 'Reply',
 };
 
 // ── Toast (lightweight) ─────────────────────────────
@@ -67,7 +67,6 @@ function EventRow({ event, resolvedDecision, onDecision }: {
   const allowed = risk ? (ALLOWED_DECISIONS[risk] ?? ['deny', 'pause']) : ['deny', 'pause'];
   const isHighRisk = risk === 'high' || risk === 'critical';
 
-  // Use resolvedDecision (optimistic or stale-pending) if event is still pending in data
   const effectiveDecision = resolvedDecision ?? event.decision;
   const effectivePending = event.pending && !resolvedDecision;
 
@@ -84,7 +83,7 @@ function EventRow({ event, resolvedDecision, onDecision }: {
   if (event.type === 'session_idle') {
     return (
       <div className="event-system">
-        <span className="event-system-text">AI 代理等待指令中...</span>
+        <span className="event-system-text">Agent is idle, waiting for instructions...</span>
         <span className="event-system-time">{formatDate(event.created_at)}</span>
       </div>
     );
@@ -95,10 +94,10 @@ function EventRow({ event, resolvedDecision, onDecision }: {
     return (
       <article className="event-row">
         <div className="event-header">
-          <span className="event-type event-type-command_started">命令执行</span>
+          <span className="event-type event-type-command_started">Command</span>
           <span className="kind-badge kind-badge-running">RUNNING</span>
         </div>
-        <div className="event-summary">电脑端已接收，正在交给 Agent 处理...</div>
+        <div className="event-summary">Received by desktop, handing off to Agent...</div>
         {command ? <div className="event-command"><code>{command}</code></div> : null}
         <div className="event-footer">
           <span className="event-time">{formatDate(event.created_at)}</span>
@@ -110,15 +109,15 @@ function EventRow({ event, resolvedDecision, onDecision }: {
   return (
     <article className={`event-row${effectivePending ? ' event-pending' : ''}`}>
       <div className="event-header">
-        {event.type === 'approval_required' ? <span className="event-type event-type-approval_required">审批请求</span> : null}
-        {event.type === 'input_required' ? <span className="event-type event-type-input_required">输入请求</span> : null}
-        {event.type === 'user_prompt' ? <span className="event-type event-type-user_prompt">用户指令</span> : null}
-        {event.type === 'task_complete' ? <span className="event-type event-type-task_complete">任务完成</span> : null}
-        {event.type === 'error' ? <span className="event-type event-type-error">错误</span> : null}
+        {event.type === 'approval_required' ? <span className="event-type event-type-approval_required">Approval</span> : null}
+        {event.type === 'input_required' ? <span className="event-type event-type-input_required">Input</span> : null}
+        {event.type === 'user_prompt' ? <span className="event-type event-type-user_prompt">Prompt</span> : null}
+        {event.type === 'task_complete' ? <span className="event-type event-type-task_complete">Task Complete</span> : null}
+        {event.type === 'error' ? <span className="event-type event-type-error">Error</span> : null}
         {event.type === 'task_complete' ? <span className="kind-badge kind-badge-done">DONE</span> : null}
         {event.type === 'input_required' && effectivePending ? <span className="kind-badge kind-badge-input">INPUT</span> : null}
         {risk ? <span className={`risk-badge risk-${risk}`}>{risk}</span> : null}
-        {effectivePending ? <span className="pending-badge">待处理</span> : null}
+        {effectivePending ? <span className="pending-badge">Pending</span> : null}
       </div>
       {summary ? <div className="event-summary">{summary}</div> : null}
       {command && command !== summary ? <div className="event-command"><code>{command}</code></div> : null}
@@ -127,14 +126,14 @@ function EventRow({ event, resolvedDecision, onDecision }: {
         {!effectivePending && effectiveDecision ? (
           <span className={`decision-badge decision-${effectiveDecision}`}>{DECISION_LABEL[effectiveDecision] || effectiveDecision}</span>
         ) : null}
-        {!effectivePending && !effectiveDecision ? <span className="muted">已记录</span> : null}
+        {!effectivePending && !effectiveDecision ? <span className="muted">Recorded</span> : null}
       </div>
 
       {/* Approval actions */}
       {isInteractive && effectivePending ? (
         <div className="approval-actions">
           {isHighRisk ? (
-            <div className="high-risk-notice">风险较高，请在电脑端确认后处理</div>
+            <div className="high-risk-notice">High risk — please confirm on desktop</div>
           ) : null}
           {event.type === 'input_required' ? (
             <div className="reply-row">
@@ -143,7 +142,7 @@ function EventRow({ event, resolvedDecision, onDecision }: {
                 type="text"
                 value={replyText}
                 onChange={(e) => setReplyText(e.target.value)}
-                placeholder="输入回复内容..."
+                placeholder="Type your reply..."
               />
               <button
                 className="primary-button btn-sm"
@@ -151,7 +150,7 @@ function EventRow({ event, resolvedDecision, onDecision }: {
                 disabled={!replyText.trim() || busy !== null}
                 onClick={() => void handleDecision('reply')}
               >
-                {busy === 'reply' ? '发送中' : '回复'}
+                {busy === 'reply' ? 'Sending...' : 'Reply'}
               </button>
             </div>
           ) : null}
@@ -192,6 +191,8 @@ export function SessionDetailPage({ auth }: Props) {
   const [resolvedMap, setResolvedMap] = useState<Map<string, string>>(new Map());
   const loadingRef = useRef(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const userScrolledRef = useRef(false);
 
   const load = useCallback(async () => {
     if (!auth.token || !id || loadingRef.current) return;
@@ -202,14 +203,20 @@ export function SessionDetailPage({ auth }: Props) {
         userRequest<UserEvent[]>(`/api/v1/user/sessions/${id}/events`),
       ]);
 
-      // Stale pending detection: mark previously-pending events that are now resolved
+      // Sort by created_at ascending (oldest first, newest last)
+      nextEvents.sort((a, b) => {
+        const ta = new Date(a.created_at).getTime();
+        const tb = new Date(b.created_at).getTime();
+        return ta - tb;
+      });
+
+      // Stale pending detection
       setEvents(prev => {
         const prevPending = prev.filter(e => e.pending);
         const nextMap = new Map(nextEvents.map(e => [e.id, e]));
         for (const old of prevPending) {
           const fresh = nextMap.get(old.id);
           if (fresh && !fresh.pending && !fresh.decision) {
-            // Server resolved it but no decision recorded — mark locally
             setResolvedMap(prev => {
               if (prev.has(old.id)) return prev;
               const next = new Map(prev);
@@ -234,11 +241,18 @@ export function SessionDetailPage({ auth }: Props) {
       setSession(nextSession);
       setError(null);
     } catch (err) {
-      setError(err instanceof Error ? err.message : '会话加载失败');
+      setError(err instanceof Error ? err.message : 'Failed to load session');
     } finally {
       loadingRef.current = false;
     }
   }, [auth.token, id]);
+
+  // Auto-scroll to bottom after load (unless user scrolled up)
+  useEffect(() => {
+    if (!userScrolledRef.current && scrollRef.current) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    }
+  }, [events]);
 
   // Initial fetch
   useEffect(() => {
@@ -272,9 +286,16 @@ export function SessionDetailPage({ auth }: Props) {
     };
   }, [auth.token, id, load]);
 
+  // Track user scroll position
+  function handleScroll() {
+    const el = scrollRef.current;
+    if (!el) return;
+    const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+    userScrolledRef.current = !nearBottom;
+  }
+
   // Approval handler with optimistic UI + toast errors
   const handleDecision = useCallback(async (eventId: string, decision: string, message?: string) => {
-    // Optimistic: mark resolved locally
     setResolvedMap(prev => new Map(prev).set(eventId, decision));
 
     try {
@@ -284,14 +305,12 @@ export function SessionDetailPage({ auth }: Props) {
       });
       await load();
     } catch (err) {
-      const msg = err instanceof Error ? err.message : '审批操作失败';
-      // Toast for known errors, banner for unknown
+      const msg = err instanceof Error ? err.message : 'Approval failed';
       if (msg.includes('ALREADY_RESPONDED') || msg.includes('BRIDGE_NOT_CONNECTED') || msg.includes('RISK_TOO_HIGH')) {
-        const label = msg.includes('ALREADY_RESPONDED') ? '审批已处理'
-          : msg.includes('BRIDGE_NOT_CONNECTED') ? '桌面端未连接'
-          : '风险过高，不能批准';
+        const label = msg.includes('ALREADY_RESPONDED') ? 'Already responded'
+          : msg.includes('BRIDGE_NOT_CONNECTED') ? 'Desktop not connected'
+          : 'Risk too high to approve';
         showToast(label);
-        // Re-fetch to get authoritative state
         await load();
       } else {
         setError(msg);
@@ -299,15 +318,24 @@ export function SessionDetailPage({ auth }: Props) {
     }
   }, [load]);
 
-  // Filter to allowed event types
-  const filteredEvents = events.filter(e => ALLOWED_EVENT_TYPES.has(e.type));
+  // Filter: only allowed event types, skip agent context duplicates
+  const filteredEvents = events.filter(e => {
+    if (!ALLOWED_EVENT_TYPES.has(e.type)) return false;
+    // Skip duplicate user_prompt events that are agent context echoes
+    if (e.type === 'user_prompt') {
+      const data = (e.data ?? {}) as Record<string, unknown>;
+      // If event has an agentType field, it's an agent context echo — skip it
+      if (data.agentType || data.eventAgentType) return false;
+    }
+    return true;
+  });
 
   return (
     <main className="shell">
       <header className="page-header">
-        <button className="ghost-button" type="button" onClick={() => navigate('/')}>返回</button>
-        <h1>{session?.metadata.title || '会话详情'}</h1>
-        <button className="ghost-button" type="button" onClick={() => void load()}>刷新</button>
+        <button className="ghost-button" type="button" onClick={() => navigate('/')}>Back</button>
+        <h1>{session?.metadata.title || 'Session Detail'}</h1>
+        <button className="ghost-button" type="button" onClick={() => void load()}>Refresh</button>
       </header>
       {error ? <div className="notice error-text">{error}</div> : null}
       {session ? (
@@ -316,11 +344,10 @@ export function SessionDetailPage({ auth }: Props) {
             <DeviceBadge name={session.device_name} deviceId={session.device_id} />
             <span>{formatDate(session.last_active_at)}</span>
           </div>
-          <pre>{JSON.stringify(session.metadata, null, 2)}</pre>
         </section>
       ) : null}
-      <section className="event-list">
-        {filteredEvents.length === 0 ? <div className="notice">暂无事件记录</div> : null}
+      <section className="event-list event-list-scroll" ref={scrollRef} onScroll={handleScroll}>
+        {filteredEvents.length === 0 ? <div className="notice">No events recorded</div> : null}
         {filteredEvents.map((event) => (
           <EventRow
             key={event.id}

@@ -19,7 +19,7 @@ export function useSessions(enabled: boolean) {
     try {
       setSessions(await userRequest<UserSession[]>('/api/v1/user/sessions?history=1'));
     } catch (err) {
-      setError(err instanceof Error ? err.message : '会话加载失败');
+      setError(err instanceof Error ? err.message : 'Failed to load sessions');
     } finally {
       setLoading(false);
       inFlight.current = false;

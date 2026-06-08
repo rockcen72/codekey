@@ -8,16 +8,16 @@ interface Props {
 export function LoginPage({ auth }: Props) {
   if (auth.token) return <Navigate to="/" replace />;
 
-  const title = auth.loading ? '正在连接你的 CodeKey' : auth.error ? '连接失败' : '等待连接';
+  const title = auth.loading ? 'Connecting to CodeKey' : auth.error ? 'Connection Failed' : 'Waiting';
 
   return (
     <main className="shell centered">
       <section className="login-panel">
         <p className="eyebrow">CodeKey Telegram Gateway</p>
         <h1>{title}</h1>
-        <p className="muted">{auth.error || '请稍候，正在校验 Telegram 身份。'}</p>
+        <p className="muted">{auth.error || 'Verifying your Telegram identity...'}</p>
         <button className="primary-button" type="button" onClick={() => void auth.login()} disabled={auth.loading}>
-          {auth.loading ? '连接中' : '重新连接'}
+          {auth.loading ? 'Connecting...' : 'Retry'}
         </button>
       </section>
     </main>

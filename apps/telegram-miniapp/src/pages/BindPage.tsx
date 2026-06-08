@@ -29,7 +29,7 @@ export function BindPage({ auth }: Props) {
       });
       navigate('/', { replace: true });
     } catch (err) {
-      setError(err instanceof Error ? err.message : '绑定失败');
+      setError(err instanceof Error ? err.message : 'Binding failed');
     } finally {
       setBusy(false);
     }
@@ -38,11 +38,11 @@ export function BindPage({ auth }: Props) {
   return (
     <main className="shell">
       <header className="page-header">
-        <button className="ghost-button" type="button" onClick={() => navigate('/')}>返回</button>
-        <h1>绑定设备</h1>
+        <button className="ghost-button" type="button" onClick={() => navigate('/')}>Back</button>
+        <h1>Bind Device</h1>
       </header>
       <section className="tool-panel">
-        <label className="field-label" htmlFor="pair-code">配对码</label>
+        <label className="field-label" htmlFor="pair-code">Pairing Code</label>
         <input
           id="pair-code"
           className="code-input"
@@ -54,7 +54,7 @@ export function BindPage({ auth }: Props) {
         />
         {error ? <p className="error-text">{error}</p> : null}
         <button className="primary-button" type="button" onClick={() => void bind()} disabled={busy || code.length < 8}>
-          {busy ? '绑定中' : '确认绑定'}
+          {busy ? 'Binding...' : 'Confirm'}
         </button>
       </section>
     </main>

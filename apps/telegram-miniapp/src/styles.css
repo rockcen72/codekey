@@ -149,6 +149,16 @@ a {
   gap: 10px;
 }
 
+.event-list-scroll {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-height: 60vh;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  padding: 4px;
+}
+
 .session-card,
 .event-row {
   display: block;
@@ -278,6 +288,16 @@ a {
 
 .subscription-summary {
   margin-bottom: 16px;
+  padding: 14px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.subscription-info {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 
 .subscription-bar {
@@ -286,14 +306,85 @@ a {
   gap: 8px;
 }
 
+.expiry-text {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.usage-bar-wrapper {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.usage-bar {
+  height: 6px;
+  background: rgba(31, 37, 35, 0.08);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.usage-bar-fill {
+  height: 100%;
+  border-radius: 3px;
+  transition: width 0.3s;
+}
+
+.usage-bar-normal { background: #137333; }
+.usage-bar-approaching { background: #9a6700; }
+.usage-bar-exhausted { background: #b42318; }
+
 .usage-text {
   color: var(--muted);
   font-size: 13px;
 }
 
+.usage-text-exhausted { color: #b42318; font-weight: 700; }
+.usage-text-approaching { color: #9a6700; }
+
+.expiry-warning {
+  padding: 6px 10px;
+  background: rgba(180, 35, 24, 0.06);
+  border-radius: 6px;
+  color: #b42318;
+  font-size: 13px;
+  font-weight: 600;
+}
+
 .tier-free { background: rgba(31, 37, 35, 0.08); color: var(--muted); }
 .tier-trial { background: rgba(154, 103, 0, 0.12); color: #9a6700; }
 .tier-pro { background: rgba(0, 109, 119, 0.12); color: #00545c; }
+
+/* ── Redeem Code ─────────────────────────────────── */
+
+.redeem-section {
+  margin-top: 10px;
+}
+
+.redeem-row {
+  display: flex;
+  gap: 8px;
+}
+
+.redeem-input {
+  flex: 1;
+  min-height: 36px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 0 10px;
+  font: inherit;
+  font-size: 14px;
+  letter-spacing: 1px;
+}
+
+.redeem-msg {
+  margin: 6px 0 0;
+  font-size: 13px;
+}
+
+.success-text {
+  color: #137333;
+}
 
 /* ── Event Formatting ────────────────────────────── */
 
