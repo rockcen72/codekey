@@ -504,6 +504,19 @@ a {
   border-color: var(--accent);
 }
 
+/* ── Pending Alert ───────────────────────────────── */
+
+.pending-alert {
+  padding: 10px 14px;
+  background: rgba(154, 103, 0, 0.08);
+  border: 1px solid rgba(154, 103, 0, 0.2);
+  border-radius: 8px;
+  color: #9a6700;
+  font-size: 14px;
+  font-weight: 600;
+  text-align: center;
+}
+
 /* ── Toast ───────────────────────────────────────── */
 
 .toast {

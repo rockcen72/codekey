@@ -248,8 +248,10 @@ export function SessionDetailPage({ auth }: Props) {
   }, [auth.token, id]);
 
   // Auto-scroll to bottom after load (unless user scrolled up)
+  // Also scroll if there are new pending events
   useEffect(() => {
-    if (!userScrolledRef.current && scrollRef.current) {
+    const hasPending = events.some(e => e.pending);
+    if ((!userScrolledRef.current || hasPending) && scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
   }, [events]);
@@ -360,6 +362,9 @@ export function SessionDetailPage({ auth }: Props) {
         <button className="ghost-button" type="button" onClick={() => void load()}>Refresh</button>
       </header>
       {error ? <div className="notice error-text">{error}</div> : null}
+      {filteredEvents.some(e => e.pending) ? (
+        <div className="pending-alert">There are pending approval requests below</div>
+      ) : null}
       {session ? (
         <section className="detail-panel">
           <div className="session-meta">
