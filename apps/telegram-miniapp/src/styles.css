@@ -319,7 +319,9 @@ a {
 .event-type-error { color: #b42318; }
 .event-type-task_complete { color: #137333; }
 .event-type-user_prompt { color: var(--text); }
+.event-type-command_started { color: #9a6700; }
 
+.kind-badge,
 .risk-badge,
 .pending-badge,
 .decision-badge {
@@ -346,6 +348,68 @@ a {
 .decision-deny { background: rgba(180, 35, 24, 0.1); color: #b42318; }
 .decision-pause { background: rgba(154, 103, 0, 0.1); color: #9a6700; }
 .decision-reply { background: rgba(0, 109, 119, 0.1); color: #00545c; }
+.decision-resolved { background: rgba(31, 37, 35, 0.08); color: var(--muted); }
+
+.kind-badge-running { background: rgba(154, 103, 0, 0.12); color: #9a6700; }
+.kind-badge-done { background: rgba(19, 115, 51, 0.1); color: #137333; }
+.kind-badge-input { background: rgba(0, 109, 119, 0.1); color: #00545c; }
+
+/* ── System Event (session_idle) ─────────────────── */
+
+.event-system {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 12px;
+  color: var(--muted);
+  font-size: 13px;
+  text-align: center;
+}
+
+.event-system-text {
+  font-style: italic;
+}
+
+.event-system-time {
+  font-size: 11px;
+}
+
+/* ── High Risk Notice ────────────────────────────── */
+
+.high-risk-notice {
+  margin-bottom: 8px;
+  padding: 8px 12px;
+  background: rgba(180, 35, 24, 0.06);
+  border-radius: 6px;
+  color: #b42318;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+/* ── Toast ───────────────────────────────────────── */
+
+.toast {
+  position: fixed;
+  bottom: 80px;
+  left: 50%;
+  transform: translateX(-50%) translateY(20px);
+  padding: 10px 20px;
+  background: rgba(31, 37, 35, 0.9);
+  color: #fff;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  opacity: 0;
+  transition: opacity 0.3s, transform 0.3s;
+  z-index: 200;
+  pointer-events: none;
+}
+
+.toast-visible {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
 
 .event-summary {
   margin-top: 8px;
@@ -373,13 +437,6 @@ a {
   margin-top: 8px;
   font-size: 12px;
   color: var(--muted);
-}
-
-.event-hint {
-  margin-top: 8px;
-  font-size: 12px;
-  color: var(--muted);
-  font-style: italic;
 }
 
 /* ── Approval Actions ────────────────────────────── */
