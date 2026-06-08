@@ -1827,6 +1827,9 @@ export class ApprovalBridge {
         type: 'deactivate_session',
         payload: { claudeSessionId, reason: 'manual_detach' },
       }));
+      this.transcriptAttachedIds.delete(claudeSessionId);
+      this.stopClaudeTranscriptSync(claudeSessionId);
+      this._clearClaudeDedupKeys(claudeSessionId);
       return { ok: true };
     }
     this.stopClaudeTranscriptSync(claudeSessionId);
@@ -1842,11 +1845,13 @@ export class ApprovalBridge {
 
     const acked = await ackPromise;
 
+    this.transcriptAttachedIds.delete(claudeSessionId);
+    this._clearClaudeDedupKeys(claudeSessionId);
+
     // Fallback cleanup: if relay never acked (offline / timeout), we still
     // need to clear local mappings so the sidebar reflects detached state.
     if (!acked) {
       this.sessions.delete(claudeSessionId);
-      this.transcriptAttachedIds.delete(claudeSessionId);
       if (this.primarySessionId === serverSessionId) this.primarySessionId = null;
       for (const [wid, sid] of this.windowSessions) {
         if (sid === serverSessionId) {
@@ -1858,9 +1863,7 @@ export class ApprovalBridge {
       }
     }
 
-    // Clear dedup caches so re-attach replays all transcript entries fresh.
-    this._clearClaudeDedupKeys(claudeSessionId);
-
+    return { ok: true };
     return { ok: true };
   }
 

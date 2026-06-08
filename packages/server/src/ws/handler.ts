@@ -162,22 +162,35 @@ export function wsHandler(sql: postgres.Sql) {
           return { ok: false, code: 'SESSION_NOT_FOUND' };
         }
 
-        await sql.begin(async (tx) => {
-          await tx`
-            UPDATE events SET pending = false, decision = 'expired'
-            WHERE session_id = ${sessionId} AND pending = true
-          `;
-          const metadataPatch = reason === 'manual_detach'
-            ? { deactivatedReason: reason, hideFromMobileHistory: 'true' }
-            : reason ? { deactivatedReason: reason } : {};
-          await tx`
-            UPDATE sessions
-            SET status = 'finished',
-                finished_at = now(),
-                metadata = metadata || ${tx.json(metadataPatch)}
-            WHERE id = ${sessionId} AND status = 'active'
-          `;
-        });
+          await sql.begin(async (tx) => {
+            await tx`
+              UPDATE events SET pending = false, decision = 'expired'
+              WHERE session_id = ${sessionId} AND pending = true
+            `;
+            const metadataPatch = reason === 'manual_detach'
+              ? { deactivatedReason: reason, hideFromMobileHistory: 'true' }
+              : reason ? { deactivatedReason: reason } : {};
+            const [updated] = await tx`
+              UPDATE sessions
+              SET status = 'finished',
+                  finished_at = now(),
+                  metadata = metadata || ${tx.json(metadataPatch)}
+              WHERE id = ${sessionId} AND status = 'active'
+              RETURNING metadata->>'claudeSessionId' AS csid
+            `;
+            // When detaching manually, hide ALL rows with the same claudeSessionId
+            // across this device (duplicate rows created by re-syncs).
+            if (reason === 'manual_detach') {
+              const csid = updated?.csid as string | undefined;
+              if (csid) {
+                await tx`
+                  UPDATE sessions
+                  SET metadata = metadata || ${tx.json({ hideFromMobileHistory: 'true' })}
+                  WHERE metadata->>'claudeSessionId' = ${csid} AND device_id = ${deviceId}
+                `;
+              }
+            }
+          });
 
         // Ack to sender
         if (socket && socket.readyState === socket.OPEN) {
