@@ -24,9 +24,9 @@ const ALLOWED_EVENT_TYPES = new Set([
 const ALLOWED_DECISIONS: Record<string, string[]> = {
   low: ['approve', 'deny', 'pause', 'reply'],
   medium: ['approve', 'deny', 'pause', 'reply'],
-  high: ['approve', 'deny', 'pause', 'reply'],
-  critical: ['approve', 'deny', 'pause'],
-  unknown: ['approve', 'deny', 'pause', 'reply'],
+  high: ['deny', 'pause', 'reply'],
+  critical: ['deny', 'pause'],
+  unknown: ['deny', 'pause', 'reply'],
 };
 
 const DECISION_LABEL: Record<string, string> = {

@@ -16,7 +16,7 @@ export default function App() {
         <Route path="/login" element={<LoginPage auth={auth} />} />
         <Route path="/bind" element={<BindPage auth={auth} />} />
         <Route path="/settings" element={auth.token ? <SettingsPage auth={auth} /> : <Navigate to="/login" replace />} />
-        <Route path="/sessions/:id" element={<SessionDetailPage auth={auth} />} />
+        <Route path="/sessions/:id" element={auth.token ? <SessionDetailPage auth={auth} /> : <Navigate to="/login" replace />} />
         <Route path="/" element={auth.token ? <SessionsPage auth={auth} /> : <Navigate to="/login" replace />} />
       </Routes>
     </ThemeProvider>
