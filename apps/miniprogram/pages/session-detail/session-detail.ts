@@ -88,28 +88,36 @@ function markdownToHtml(md: string): string {
       continue;
     }
 
-    // Table
-    if (/^\|.*\|$/.test(line)) {
+    // ASCII table (CC format: +---+---+, | a | b |)
+    if (/^[\|+][-+\s|:]*[\|+]/.test(line) && line.includes('|')) {
       flushList();
+      // Skip separator rows (+---+)
+      if (/^\+/.test(line)) continue;
       const cells = line.split('|').filter(c => c.trim()).map(c => c.trim());
-      const isHeaderSep = /^[-:\s|]+$/.test(line);
-      if (out.length === 0 || !out[out.length - 1].startsWith('<table>')) {
-        out.push('<table>');
+      if (cells.length === 0) continue;
+      const isFirstRow = out.length === 0 || !out[out.length - 1].includes('flex-direction:row');
+      const bg = isFirstRow ? 'background:#f5f5f4;font-weight:700' : '';
+      out.push('<div style="display:flex;flex-direction:row;width:100%">');
+      for (const c of cells) {
+        out.push(`<div style="flex:1;min-width:0;padding:6rpx 8rpx;border:1rpx solid #d1d5db;font-size:24rpx;word-break:break-word;${bg}">${escapeHtml(c)}</div>`);
       }
-      const tag = isHeaderSep ? 'th' : 'td';
-      out.push('<tr>' + cells.map(c => `<${tag}>${escapeHtml(c)}</${tag}>`).join('') + '</tr>');
-      if (isHeaderSep) {
-        out.push('</thead><tbody>');
-      } else if (out[out.length - 2]?.includes('<thead')) {
-        // already handled
-      }
+      out.push('</div>');
       continue;
     }
 
-    // Close table if next line is not table
-    if (out.length > 0 && out[out.length - 1].startsWith('<table>') && !/^\|.*\|$/.test(raw.trim())) {
-      if (out[out.length - 1].includes('<tbody>')) out.push('</tbody>');
-      out.push('</table>');
+    // Markdown table (| col | col |)
+    if (/^\|.*\|$/.test(line)) {
+      flushList();
+      if (/^\|[\s:-]+\|$/.test(line)) continue;
+      const cells = line.split('|').filter(c => c.trim()).map(c => c.trim());
+      const isFirstRow = out.length === 0 || !out[out.length - 1].includes('flex-direction:row');
+      const bg = isFirstRow ? 'background:#f5f5f4;font-weight:700' : '';
+      out.push('<div style="display:flex;flex-direction:row;width:100%">');
+      for (const c of cells) {
+        out.push(`<div style="flex:1;min-width:0;padding:6rpx 8rpx;border:1rpx solid #d1d5db;font-size:24rpx;word-break:break-word;${bg}">${escapeHtml(c)}</div>`);
+      }
+      out.push('</div>');
+      continue;
     }
 
     // Paragraph / regular line
@@ -132,7 +140,6 @@ function markdownToHtml(md: string): string {
 
   // Close table if still open
   if (out.length > 0 && out[out.length - 1].startsWith('<table>')) {
-    if (out[out.length - 1].includes('<tbody>')) out.push('</tbody>');
     out.push('</table>');
   }
 
@@ -209,9 +216,7 @@ Page({
       code: 'background:#f1f0ec;padding:2rpx 8rpx;border-radius:4rpx;font-family:monospace;font-size:22rpx;display:inline',
       blockquote: 'border-left:4rpx solid #d1d5db;padding-left:16rpx;margin:8rpx 0;color:#6b7280;font-style:italic;display:block',
       hr: 'border:none;border-top:1rpx solid #e5e5e5;margin:16rpx 0;display:block',
-      table: 'width:100%;border-collapse:collapse;margin:8rpx 0;font-size:24rpx;display:table',
-      th: 'padding:6rpx 10rpx;border:1rpx solid #e5e5e5;font-weight:700;background:#f5f5f4;text-align:left;display:table-cell',
-      td: 'padding:6rpx 10rpx;border:1rpx solid #e5e5e5;text-align:left;display:table-cell',
+      table: 'width:100%;border-collapse:collapse;margin:8rpx 0;font-size:24rpx',
       strong: 'font-weight:800',
       em: 'font-style:italic',
     },

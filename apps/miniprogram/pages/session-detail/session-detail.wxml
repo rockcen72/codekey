@@ -69,7 +69,7 @@
               <text class="cmd-line-text mono">{{item.command}}</text>
             </view>
             <!-- Summary: HTML for task_complete (mp-html), plain for others -->
-            <mp-html wx:if="{{item.contentHtml}}" class="event-summary" content="{{item.contentHtml}}" selectable="{{true}}" tagStyle="{{mpHtmlTagStyle}}"></mp-html>
+            <mp-html wx:if="{{item.contentHtml}}" class="event-summary" content="{{item.contentHtml}}" selectable="{{true}}" tagStyle="{{mpHtmlTagStyle}}" scrollTable="{{true}}"></mp-html>
             <view wx:elif="{{item.summary && item.summary !== item.command}}" class="event-summary">{{item.summary}}</view>
             <view wx:if="{{item.requiresInput && item.inputOptions && item.inputOptions.length}}" class="input-options">
               <button

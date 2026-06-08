@@ -466,10 +466,15 @@ export function wsHandler(sql: postgres.Sql) {
           const pending = isPendingInteractiveEvent(msg.payload.eventType);
           const eventData = msg.payload.data ? { ...msg.payload.data } : {};
           if (msg.payload.clientEventId) eventData.clientEventId = msg.payload.clientEventId;
+          const _ts = msg.payload.ts;
+          const createdAt = _ts
+            ? sql.unsafe(`'${String(_ts).replace(/'/g, "''")}'::timestamptz`)
+            : sql`now()`;
           sql`
-            INSERT INTO events (session_id, type, data, risk_level, pending)
+            INSERT INTO events (session_id, type, data, risk_level, pending, created_at)
             VALUES (${sessionId}, ${msg.payload.eventType},
-                    ${sql.json(eventData)}, ${msg.payload.data?.risk ?? null}, ${pending})
+                    ${sql.json(eventData)}, ${msg.payload.data?.risk ?? null}, ${pending},
+                    ${createdAt})
             RETURNING id
           `.then(async ([event]) => {
             // Bump session activity timestamp (background, non-critical)
