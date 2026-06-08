@@ -38,9 +38,14 @@ export function discoverLocalOpenCodeSessions(limit = 50): OpenCodeSessionInfo[]
           const parsed = JSON.parse(readFileSync(filePath, 'utf-8')) as Record<string, unknown>;
           const id = typeof parsed.id === 'string' ? parsed.id : file.name.replace(/\.json$/, '');
           if (!id) continue;
-          // Skip subagent sessions (named @explore, @general, etc.)
-          const title = normalizeOpenCodeTitle(parsed.title);
-          if (title && /^@/.test(title)) continue;
+          // Skip subagent sessions: OpenCode creates internal sessions for
+          // @explore, @general, etc. They have a 'subagent' field or their
+          // title contains '@' or 'subagent' (case-insensitive).
+          if (parsed.subagent || parsed.type === 'subagent') continue;
+          const rawTitle = normalizeOpenCodeTitle(parsed.title);
+          const rawMetaTitle = normalizeOpenCodeTitle((parsed.metadata as Record<string, unknown> | undefined)?.title);
+          if ((rawTitle && /[@]|subagent/i.test(rawTitle)) ||
+              (rawMetaTitle && /[@]|subagent/i.test(rawMetaTitle))) continue;
           const time = parsed.time && typeof parsed.time === 'object'
             ? parsed.time as { created?: number; updated?: number }
             : undefined;
