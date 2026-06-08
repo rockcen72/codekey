@@ -443,6 +443,18 @@ export class OpenCodeSessionManager {
 
     const clientEventId = `oc-perm:${requestID}`;
 
+    // Resolve any existing pending approvals for this session before issuing
+    // a new one — mirrors CC's handleApproval (handler.ts:1126-1135). Without
+    // this cleanup, old pending approvals accumulate and the phone cannot
+    // approve any of them (handleApprovalForward lookup fails because
+    // permissionMap entries get overwritten or the phone sees stale events).
+    for (const [key, entry] of this.permissionMap) {
+      if (entry.serverSessionId === serverSessionId) {
+        this.bridge.resolveTrackedApproval(key);
+        this.permissionMap.delete(key);
+      }
+    }
+
     this.bridge.sendEventToRelay(serverSessionId, {
       clientEventId,
       sessionId: serverSessionId,
