@@ -289,7 +289,14 @@ export class CodexResumeManager {
     }
     if (!serverSessionId) serverSessionId = knownServerSessionId;
     if (!serverSessionId) {
-      console.error('[codex-resume] stopResume: no serverSessionId for local=%s, sending deactivate anyway is not possible', localSessionId);
+      // No serverSessionId available — session may have been cleaned from the
+      // bridge's memory but still exists in the relay DB. Send deactivate with
+      // localSessionId as fallback so the relay can resolve by metadata.
+      this.relay.sendRaw(JSON.stringify({
+        type: 'deactivate_session',
+        payload: { claudeSessionId: localSessionId, reason: 'manual_detach' },
+      }));
+      console.error('[codex-resume] stopResume: no serverSessionId for local=%s, sent deactivate by claudeSessionId', localSessionId);
       return;
     }
 
