@@ -98,8 +98,8 @@ export class OpenCodeSessionManager {
   async start(): Promise<void> {
     this.bridge.registerExternalApprovalResponder({
       agentType: 'opencode',
-      onApprovalForward: (eventId, decision, clientEventId) =>
-        this.handleApprovalForward(eventId, decision, clientEventId),
+      onApprovalForward: (eventId, decision, clientEventId, sessionId) =>
+        this.handleApprovalForward(eventId, decision, clientEventId, sessionId),
     });
 
     this.bridge.registerAgentCommandHandler({
@@ -760,9 +760,30 @@ export class OpenCodeSessionManager {
 
   // ── Approval forwarding ─────────────────────────────────
 
-  async handleApprovalForward(eventId: string, decision: string, clientEventId?: string): Promise<boolean> {
-    const entry = this.permissionMap.get(eventId)
+  async handleApprovalForward(eventId: string, decision: string, clientEventId?: string, sessionId?: string): Promise<boolean> {
+    let entry = this.permissionMap.get(eventId)
       ?? (clientEventId ? this.permissionMap.get(clientEventId) : undefined);
+
+    // Fallback: permissionMap entry was lost (SSE reconnect). Try to
+    // reconstruct it from the clientEventId format or sessionId mapping.
+    if (!entry && clientEventId && clientEventId.startsWith('oc-perm:')) {
+      const requestID = clientEventId.slice('oc-perm:'.length);
+      let serverSessionId: string | undefined;
+      // Look up serverSessionId using the approval eventId via
+      // opencodeSessionToRelayId (localSessionId → serverSessionId).
+      // sessionId from approval_forward is the DB session UUID.
+      if (sessionId) {
+        for (const [, sid] of this.opencodeSessionToRelayId) {
+          if (sid === sessionId) { serverSessionId = sid; break; }
+        }
+      }
+      if (!serverSessionId) serverSessionId = sessionId;
+      if (serverSessionId) {
+        const localSessionID = this.resolveLocalSessionId(serverSessionId) || serverSessionId;
+        entry = { requestID, serverSessionId, localSessionID };
+      }
+    }
+
     if (!entry) return false;
 
     // Re-discover the port right before each approval forward. If OpenCode

@@ -89,7 +89,7 @@ interface ApprovalText {
 /** External approval responder (OpenCode, etc.). Tried before the default approval path. */
 export interface ApprovalResponder {
   agentType: string;
-  onApprovalForward: (eventId: string, decision: string, clientEventId?: string) => Promise<boolean>;
+  onApprovalForward: (eventId: string, decision: string, clientEventId?: string, sessionId?: string) => Promise<boolean>;
 }
 
 /** External agent command handler. Routes commands by ownsSession(). */
@@ -374,14 +374,14 @@ export class ApprovalBridge {
     // Resolve pending approval from phone decision (keyed by serverEventId,
     // with clientEventId fallback for WS reconnect edge case).
     this.relay.on('approval_forward', async (payload: unknown) => {
-      const fwd = payload as { eventId: string; decision: string; clientEventId?: string | null };
+      const fwd = payload as { eventId: string; decision: string; clientEventId?: string | null; sessionId?: string };
 
       // Try external approval responders first (OpenCode, etc.).
       // Each responder is wrapped in try/catch so one agent's failure
       // doesn't break the default approval path for unrelated sessions.
       for (const responder of this._approvalResponders) {
         try {
-          const handled = await responder.onApprovalForward(fwd.eventId, fwd.decision, fwd.clientEventId ?? undefined);
+          const handled = await responder.onApprovalForward(fwd.eventId, fwd.decision, fwd.clientEventId ?? undefined, fwd.sessionId);
           if (handled) return;
         } catch (err) {
           console.error('[bridge] approval responder %s error: %s', responder.agentType, err);
