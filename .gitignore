@@ -5,6 +5,7 @@ dist/
 ~/.devtap/
 .devcontainer/
 .vscode/
+package-lock.json
 
 # Build artifacts
 *.tsbuildinfo
