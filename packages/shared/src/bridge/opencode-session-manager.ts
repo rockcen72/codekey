@@ -174,12 +174,14 @@ export class OpenCodeSessionManager {
       .filter((s) => {
         // Skip subagent sessions: OpenCode creates internal sessions for
         // @explore, @general, etc. They may have a dedicated field or the
-        // title contains '@' or 'subagent' (case-insensitive).
+        // title/name contains '@' or 'subagent' (case-insensitive).
         if (s.type === 'subagent' || (s as any).subagent) return false;
-        const title = normalizeOpenCodeTitle(s.title);
-        if (title && /[@]|subagent/i.test(title)) return false;
-        const metaTitle = normalizeOpenCodeTitle((s.metadata as Record<string, unknown> | undefined)?.title);
-        if (metaTitle && /[@]|subagent/i.test(metaTitle)) return false;
+        const candidates = [s.title, (s as any).name,
+          (s.metadata as Record<string, unknown> | undefined)?.title];
+        for (const c of candidates) {
+          const t = normalizeOpenCodeTitle(c);
+          if (t && /[@]|subagent/i.test(t)) return false;
+        }
         return true;
       })
       .sort((a, b) => (b.time?.updated ?? 0) - (a.time?.updated ?? 0))
