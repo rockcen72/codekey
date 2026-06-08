@@ -1467,7 +1467,7 @@ export class ApprovalBridge {
       // External agent command handlers (ownsSession pattern)
       for (const handler of this._agentCommandHandlers) {
         if (handler.ownsSession(payload.sessionId)) {
-          handler.handleCommand({ sessionId: payload.sessionId, data: payload.data }).catch((err) => {
+          handler.handleCommand({ sessionId: payload.sessionId, data: payload.data, claudeSessionId: payload.claudeSessionId }).catch((err) => {
             console.error('[bridge] command handler error for sessionId=%s: %s', payload.sessionId, err);
           });
           return;
