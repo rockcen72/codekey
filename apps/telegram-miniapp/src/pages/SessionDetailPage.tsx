@@ -5,6 +5,7 @@ import type { ApprovalResponseResult, UserEvent, UserSession } from '../api/type
 import type { AuthState } from '../hooks/useAuth';
 import { DeviceBadge } from '../components/DeviceBadge';
 import { formatDate } from '../utils/format';
+import { markdownToHtml } from '../utils/markdown';
 
 // ── Constants ───────────────────────────────────────
 
@@ -119,7 +120,8 @@ function EventRow({ event, resolvedDecision, onDecision }: {
         {risk ? <span className={`risk-badge risk-${risk}`}>{risk}</span> : null}
         {effectivePending ? <span className="pending-badge">Pending</span> : null}
       </div>
-      {summary ? <div className="event-summary">{summary}</div> : null}
+      {summary && event.type === 'task_complete' ? <div className="event-summary event-summary-html" dangerouslySetInnerHTML={{ __html: markdownToHtml(summary) }} /> : null}
+      {summary && event.type !== 'task_complete' ? <div className="event-summary">{summary}</div> : null}
       {command && command !== summary ? <div className="event-command"><code>{command}</code></div> : null}
       <div className="event-footer">
         <span className="event-time">{formatDate(event.created_at)}</span>

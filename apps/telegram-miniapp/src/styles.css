@@ -445,6 +445,92 @@ a {
 .kind-badge-done { background: rgba(19, 115, 51, 0.1); color: #137333; }
 .kind-badge-input { background: rgba(0, 109, 119, 0.1); color: #00545c; }
 
+/* ── HTML-rendered content (task_complete markdown) ─ */
+
+.event-summary-html h1,
+.event-summary-html h2,
+.event-summary-html h3,
+.event-summary-html h4,
+.event-summary-html h5,
+.event-summary-html h6 {
+  margin: 10px 0 4px;
+  font-weight: 800;
+  display: block;
+}
+
+.event-summary-html h1 { font-size: 18px; }
+.event-summary-html h2 { font-size: 17px; }
+.event-summary-html h3 { font-size: 16px; }
+.event-summary-html h4 { font-size: 15px; }
+
+.event-summary-html p {
+  margin: 4px 0;
+  line-height: 1.6;
+  display: block;
+}
+
+.event-summary-html ul,
+.event-summary-html ol {
+  padding-left: 24px;
+  margin: 6px 0;
+  display: block;
+}
+
+.event-summary-html li {
+  margin: 2px 0;
+  line-height: 1.6;
+  display: list-item;
+}
+
+.event-summary-html pre {
+  background: #1c1917;
+  color: #e7e5e4;
+  padding: 10px 14px;
+  border-radius: 6px;
+  font-size: 13px;
+  line-height: 1.5;
+  margin: 8px 0;
+  white-space: pre-wrap;
+  overflow-x: auto;
+  display: block;
+}
+
+.event-summary-html pre code {
+  background: none;
+  padding: 0;
+  color: inherit;
+  font-size: inherit;
+  display: inline;
+}
+
+.event-summary-html code {
+  background: rgba(31, 37, 35, 0.06);
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-family: monospace;
+  font-size: 13px;
+  display: inline;
+}
+
+.event-summary-html blockquote {
+  border-left: 3px solid #d1d5db;
+  padding-left: 12px;
+  margin: 6px 0;
+  color: #6b7280;
+  font-style: italic;
+  display: block;
+}
+
+.event-summary-html hr {
+  border: none;
+  border-top: 1px solid #e5e5e5;
+  margin: 12px 0;
+  display: block;
+}
+
+.event-summary-html strong { font-weight: 800; }
+.event-summary-html em { font-style: italic; }
+
 /* ── System Event (session_idle) ─────────────────── */
 
 .event-system {
