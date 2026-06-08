@@ -38,6 +38,9 @@ export function discoverLocalOpenCodeSessions(limit = 50): OpenCodeSessionInfo[]
           const parsed = JSON.parse(readFileSync(filePath, 'utf-8')) as Record<string, unknown>;
           const id = typeof parsed.id === 'string' ? parsed.id : file.name.replace(/\.json$/, '');
           if (!id) continue;
+          // Skip subagent sessions (named @explore, @general, etc.)
+          const title = normalizeOpenCodeTitle(parsed.title);
+          if (title && /^@/.test(title)) continue;
           const time = parsed.time && typeof parsed.time === 'object'
             ? parsed.time as { created?: number; updated?: number }
             : undefined;

@@ -109,16 +109,23 @@ function tag(text: string, cls: string): string {
 // ── Section renderers ────────────────────────────────────
 
 function renderBrandHeader(): string {
-  return `<div class="brand">
-    <div class="brand-icon">
-      <div class="brand-glow"></div>
-      <svg viewBox="0 0 24 24" fill="none">
-        <rect x="6" y="2" width="12" height="20" rx="2.5" stroke="currentColor" stroke-width="1.5" opacity=".6"/>
-        <path d="M9.5 9.5L7.5 12l2 2.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" opacity=".8"/>
-        <path d="M14.5 9.5l2 2.5-2 2.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" opacity=".8"/>
-        <path d="M17 4.5l.35 1.15L18.5 6l-1.15.35L17 7.5l-.35-1.15L15.5 6l1.15-.35z" fill="currentColor" opacity=".8"/>
-      </svg>
-    </div>
+   return `<div class="brand">
+     <div class="brand-icon">
+       <div class="brand-glow"></div>
+       <div class="ck-logo">
+         <div class="ck-phone">
+           <div class="ck-notch"></div>
+           <div class="ck-check"></div>
+         </div>
+         <div class="ck-bracket ck-bracket-l"></div>
+         <div class="ck-bracket ck-bracket-r"></div>
+         <div class="ck-signal">
+           <div class="ck-signal-arc ck-signal-arc-outer"></div>
+           <div class="ck-signal-arc ck-signal-arc-inner"></div>
+           <div class="ck-signal-dot"></div>
+         </div>
+       </div>
+     </div>
     <div class="brand-name">Code<span class="brand-em">Key</span></div>
     <div class="brand-sub">A I &nbsp;C o d i n g &nbsp;R e m o t e</div>
   </div>`;
@@ -963,12 +970,12 @@ body{
 }
 .brand-icon{
   display:inline-flex;align-items:center;justify-content:center;
-  width:36px;height:36px;margin-bottom:8px;
+  width:48px;height:48px;margin-bottom:8px;
   background:var(--vscode-sideBar-background,#181824);
   border:1px solid var(--vscode-panel-border,#1e1e2e);
-  border-radius:10px;position:relative;
+  border-radius:12px;position:relative;overflow:hidden;
 }
-.brand-icon svg{width:20px;height:20px;color:var(--vscode-textLink-foreground,#00ffe0)}
+.brand-icon svg{display:none}
 .brand-glow{
   position:absolute;inset:-2px;border-radius:12px;
   background:linear-gradient(135deg,var(--vscode-textLink-foreground,#00ffe0),var(--vscode-textLink-foreground,#7c5cfc));
@@ -988,6 +995,57 @@ body{
   font-size:10px;color:var(--vscode-descriptionForeground,#50506e);
   letter-spacing:.15em;text-transform:uppercase;
   margin-top:1px;
+}
+
+/* ── CSS-drawn CodeKey logo ──────────────────────── */
+.ck-logo{
+  position:absolute;inset:0;width:100%;height:100%;
+  background:#161412;border-radius:12px;
+}
+.ck-phone{
+  position:absolute;left:15px;top:8px;
+  width:18px;height:32px;
+  border:1.5px solid #f7f3ee;border-radius:5px;
+}
+.ck-notch{
+  position:absolute;left:6.5px;top:2.5px;
+  width:5px;height:1.2px;border-radius:1px;
+  background:#f7f3ee;
+}
+.ck-check{
+  position:absolute;left:4px;top:13px;
+  width:10px;height:6px;
+  border-left:2.2px solid #86efac;
+  border-bottom:2.2px solid #86efac;
+  border-radius:1px;
+  transform:rotate(-45deg);
+}
+.ck-bracket{
+  position:absolute;top:19px;
+  width:6.5px;height:6.5px;
+  border-color:#7dd3fc;
+  border-style:solid;
+  transform:rotate(45deg);
+}
+.ck-bracket-l{left:5.5px;border-width:0 0 2px 2px}
+.ck-bracket-r{right:5.5px;border-width:2px 2px 0 0}
+.ck-signal{
+  position:absolute;right:4px;top:3px;
+  width:13px;height:13px;
+  transform:rotate(45deg);
+}
+.ck-signal-arc{
+  position:absolute;left:50%;
+  border-top:1.8px solid #f59e0b;
+  border-radius:999px 999px 0 0;
+  transform:translateX(-50%);
+}
+.ck-signal-arc-outer{top:2px;width:10px;height:7px}
+.ck-signal-arc-inner{top:6.5px;width:6px;height:4px}
+.ck-signal-dot{
+  position:absolute;left:5px;bottom:1px;
+  width:3px;height:3px;border-radius:50%;
+  background:#f59e0b;
 }
 
 /* ═══════════════════════════════════════════════
