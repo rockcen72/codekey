@@ -61,3 +61,9 @@ export interface ClaimResult {
   deviceId: string;
   alreadyBound?: boolean;
 }
+
+export interface ApprovalResponseResult {
+  success: boolean;
+  eventId: string;
+  decision: string;
+}

@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import type postgres from 'postgres';
 import { userTokenAuth } from '../auth/user-middleware.js';
 import { clientClients, pcClients } from '../ws/connection-registry.js';
+import { validateAndApplyApproval } from '../services/approval.js';
 
 /**
  * User-scoped routes — authenticated via user_token (JWT).
@@ -153,6 +154,32 @@ export function userRoutes(sql: postgres.Sql) {
       }
 
       return { success: true, deviceId, unboundAt: binding.unbound_at };
+    });
+
+    // ── POST /api/v1/events/:id/approval-response ───────
+    // HTTP approval endpoint for Telegram Mini App (and future HTTP clients).
+    // Reuses the same validation logic as WS handleApprovalResponse.
+    fastify.post('/events/:id/approval-response', { preHandler: [userTokenAuth()] }, async (req, reply) => {
+      const userId = req.userAuth!.userId;
+      const { id: eventId } = req.params as { id: string };
+      const { decision, message } = req.body as { decision?: string; message?: string };
+
+      if (!decision || !['approve', 'deny', 'pause', 'reply'].includes(decision)) {
+        return reply.code(400).send({ error: 'invalid decision' });
+      }
+
+      const result = await validateAndApplyApproval(sql, {
+        eventId,
+        decision,
+        message,
+        userId,
+      });
+
+      if (!result.ok) {
+        return reply.code(result.status ?? 500).send({ error: result.code });
+      }
+
+      return { success: true, eventId, decision };
     });
   };
 }

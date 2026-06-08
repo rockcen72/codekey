@@ -382,6 +382,46 @@ a {
   font-style: italic;
 }
 
+/* ── Approval Actions ────────────────────────────── */
+
+.approval-actions {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+}
+
+.reply-row {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.reply-input {
+  flex: 1;
+  min-height: 36px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 0 10px;
+  font: inherit;
+  font-size: 14px;
+}
+
+.decision-buttons {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.btn-sm {
+  min-height: 34px;
+  font-size: 13px;
+}
+
+.decision-btn-approve { color: #137333; border-color: rgba(19, 115, 51, 0.3); }
+.decision-btn-deny { color: #b42318; border-color: rgba(180, 35, 24, 0.3); }
+.decision-btn-pause { color: #9a6700; border-color: rgba(154, 103, 0, 0.3); }
+.decision-btn-reply { color: #00545c; border-color: rgba(0, 109, 119, 0.3); }
+
 /* ── Device Summary ──────────────────────────────── */
 
 .device-summary {
