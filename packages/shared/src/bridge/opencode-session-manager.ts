@@ -38,14 +38,6 @@ export function discoverLocalOpenCodeSessions(limit = 50): OpenCodeSessionInfo[]
           const parsed = JSON.parse(readFileSync(filePath, 'utf-8')) as Record<string, unknown>;
           const id = typeof parsed.id === 'string' ? parsed.id : file.name.replace(/\.json$/, '');
           if (!id) continue;
-          // Skip subagent sessions: OpenCode creates internal sessions for
-          // @explore, @general, etc. They have a 'subagent' field or their
-          // title contains '@' or 'subagent' (case-insensitive).
-          if (parsed.subagent || parsed.type === 'subagent') continue;
-          const rawTitle = normalizeOpenCodeTitle(parsed.title);
-          const rawMetaTitle = normalizeOpenCodeTitle((parsed.metadata as Record<string, unknown> | undefined)?.title);
-          if ((rawTitle && /[@]|subagent/i.test(rawTitle)) ||
-              (rawMetaTitle && /[@]|subagent/i.test(rawMetaTitle))) continue;
           const time = parsed.time && typeof parsed.time === 'object'
             ? parsed.time as { created?: number; updated?: number }
             : undefined;
@@ -179,6 +171,17 @@ export class OpenCodeSessionManager {
       });
     }
     return [...byId.values()]
+      .filter((s) => {
+        // Skip subagent sessions: OpenCode creates internal sessions for
+        // @explore, @general, etc. They may have a dedicated field or the
+        // title contains '@' or 'subagent' (case-insensitive).
+        if (s.type === 'subagent' || (s as any).subagent) return false;
+        const title = normalizeOpenCodeTitle(s.title);
+        if (title && /[@]|subagent/i.test(title)) return false;
+        const metaTitle = normalizeOpenCodeTitle((s.metadata as Record<string, unknown> | undefined)?.title);
+        if (metaTitle && /[@]|subagent/i.test(metaTitle)) return false;
+        return true;
+      })
       .sort((a, b) => (b.time?.updated ?? 0) - (a.time?.updated ?? 0))
       .slice(0, limit);
   }
