@@ -189,6 +189,7 @@ async function proxyToRelay(request: Request, env: Env, relayPath: string): Prom
 function isProxyRoute(pathname: string): boolean {
   return (
     pathname.startsWith('/api/v1/user/') ||
+    pathname.startsWith('/api/v1/events/') ||
     pathname === '/api/v1/user/devices' ||
     pathname === '/api/v1/subscription' ||
     pathname === '/api/v1/devices/confirm' ||

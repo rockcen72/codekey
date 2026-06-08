@@ -24,9 +24,9 @@ const ALLOWED_EVENT_TYPES = new Set([
 const ALLOWED_DECISIONS: Record<string, string[]> = {
   low: ['approve', 'deny', 'pause', 'reply'],
   medium: ['approve', 'deny', 'pause', 'reply'],
-  high: ['deny', 'pause', 'reply'],
-  critical: ['deny', 'pause'],
-  unknown: ['deny', 'pause', 'reply'],
+  high: ['approve', 'deny', 'pause', 'reply'],
+  critical: ['approve', 'deny', 'pause'],
+  unknown: ['approve', 'deny', 'pause', 'reply'],
 };
 
 const DECISION_LABEL: Record<string, string> = {
@@ -65,8 +65,7 @@ function EventRow({ event, resolvedDecision, onDecision }: {
   const [replyText, setReplyText] = useState('');
   const [busy, setBusy] = useState<string | null>(null);
 
-  const allowed = risk ? (ALLOWED_DECISIONS[risk] ?? ['deny', 'pause']) : ['deny', 'pause'];
-  const isHighRisk = risk === 'high' || risk === 'critical';
+  const allowed = risk ? (ALLOWED_DECISIONS[risk] ?? ['deny', 'pause']) : ['approve', 'deny', 'pause', 'reply'];
 
   const effectiveDecision = resolvedDecision ?? event.decision;
   const effectivePending = event.pending && !resolvedDecision;
@@ -134,9 +133,6 @@ function EventRow({ event, resolvedDecision, onDecision }: {
       {/* Approval actions */}
       {isInteractive && effectivePending ? (
         <div className="approval-actions">
-          {isHighRisk ? (
-            <div className="high-risk-notice">High risk — please confirm on desktop</div>
-          ) : null}
           {event.type === 'input_required' ? (
             <div className="reply-row">
               <input
@@ -158,8 +154,7 @@ function EventRow({ event, resolvedDecision, onDecision }: {
           ) : null}
           <div className="decision-buttons">
             {allowed
-              .filter((d) => !(event.type === 'input_required' && d === 'reply'))
-              .filter((d) => !(isHighRisk && d === 'approve'))
+              .filter((d) => d !== 'reply')
               .map((d) => (
                 <button
                   key={d}

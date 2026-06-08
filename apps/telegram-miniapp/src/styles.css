@@ -552,18 +552,6 @@ a {
   font-size: 11px;
 }
 
-/* ── High Risk Notice ────────────────────────────── */
-
-.high-risk-notice {
-  margin-bottom: 8px;
-  padding: 8px 12px;
-  background: rgba(180, 35, 24, 0.06);
-  border-radius: 6px;
-  color: #b42318;
-  font-size: 13px;
-  font-weight: 600;
-}
-
 /* ── Prompt Bar ──────────────────────────────────── */
 
 .prompt-bar {
