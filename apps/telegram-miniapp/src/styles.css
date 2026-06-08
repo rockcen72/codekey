@@ -478,6 +478,32 @@ a {
   font-weight: 600;
 }
 
+/* ── Prompt Bar ──────────────────────────────────── */
+
+.prompt-bar {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+  padding: 12px 0;
+  border-top: 1px solid var(--line);
+}
+
+.prompt-input {
+  flex: 1;
+  min-height: 40px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 0 12px;
+  font: inherit;
+  font-size: 14px;
+  background: #fff;
+}
+
+.prompt-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
 /* ── Toast ───────────────────────────────────────── */
 
 .toast {

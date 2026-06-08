@@ -181,5 +181,43 @@ export function userRoutes(sql: postgres.Sql) {
 
       return { success: true, eventId, decision };
     });
+
+    // ── POST /api/v1/user/sessions/:id/command ─────────
+    // Send a prompt/command to the desktop agent (like WS write_stdin).
+    fastify.post('/user/sessions/:id/command', { preHandler: [userTokenAuth()] }, async (req, reply) => {
+      const userId = req.userAuth!.userId;
+      const { id: sessionId } = req.params as { id: string };
+      const { text } = req.body as { text?: string };
+
+      if (!text || !text.trim()) {
+        return reply.code(400).send({ error: 'text is required' });
+      }
+
+      // Verify session belongs to this user
+      const [session] = await sql`
+        SELECT s.id, s.device_id, s.metadata, s.status
+        FROM sessions s
+        JOIN device_bindings db ON s.device_id = db.device_id
+        WHERE s.id = ${sessionId}
+          AND db.user_id = ${userId}
+          AND db.unbound_at IS NULL
+      `;
+      if (!session) return reply.code(404).send({ error: 'session not found' });
+      if (session.status !== 'active') return reply.code(409).send({ error: 'session not active' });
+
+      const deviceId = (session as any).device_id as string;
+      const pc = pcClients.get(deviceId);
+      if (!pc || pc.socket.readyState !== pc.socket.OPEN) {
+        return reply.code(503).send({ error: 'BRIDGE_NOT_CONNECTED' });
+      }
+
+      const claudeSessionId = (session as any).metadata?.claudeSessionId ?? null;
+      pc.socket.send(JSON.stringify({
+        type: 'command',
+        payload: { sessionId, action: 'write_stdin', data: text.trim(), claudeSessionId },
+      }));
+
+      return { success: true, sessionId };
+    });
   };
 }

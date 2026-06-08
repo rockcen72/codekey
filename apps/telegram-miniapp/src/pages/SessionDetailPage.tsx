@@ -321,14 +321,36 @@ export function SessionDetailPage({ auth }: Props) {
   // Filter: only allowed event types, skip agent context duplicates
   const filteredEvents = events.filter(e => {
     if (!ALLOWED_EVENT_TYPES.has(e.type)) return false;
-    // Skip duplicate user_prompt events that are agent context echoes
     if (e.type === 'user_prompt') {
       const data = (e.data ?? {}) as Record<string, unknown>;
-      // If event has an agentType field, it's an agent context echo — skip it
       if (data.agentType || data.eventAgentType) return false;
     }
     return true;
   });
+
+  // Prompt input
+  const [promptText, setPromptText] = useState('');
+  const [promptBusy, setPromptBusy] = useState(false);
+  const isActive = session?.status === 'active';
+
+  async function sendPrompt() {
+    if (!promptText.trim() || !id) return;
+    setPromptBusy(true);
+    try {
+      await userRequest(`/api/v1/user/sessions/${id}/command`, {
+        method: 'POST',
+        body: JSON.stringify({ text: promptText.trim() }),
+      });
+      setPromptText('');
+      showToast('Sent to desktop');
+      await load();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Failed to send';
+      showToast(msg);
+    } finally {
+      setPromptBusy(false);
+    }
+  }
 
   return (
     <main className="shell">
@@ -357,6 +379,27 @@ export function SessionDetailPage({ auth }: Props) {
           />
         ))}
       </section>
+      {isActive ? (
+        <section className="prompt-bar">
+          <input
+            className="prompt-input"
+            type="text"
+            value={promptText}
+            onChange={(e) => setPromptText(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void sendPrompt(); } }}
+            placeholder="Send a command to desktop..."
+            disabled={promptBusy}
+          />
+          <button
+            className="primary-button btn-sm"
+            type="button"
+            disabled={!promptText.trim() || promptBusy}
+            onClick={() => void sendPrompt()}
+          >
+            {promptBusy ? '...' : 'Send'}
+          </button>
+        </section>
+      ) : null}
     </main>
   );
 }
