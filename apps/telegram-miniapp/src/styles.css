@@ -697,20 +697,13 @@ a {
 
 /* ── Device Summary ──────────────────────────────── */
 
-.device-summary {
-  margin-bottom: 24px;
-  padding: 16px;
-  background: var(--panel);
-  border: 1px solid var(--line);
-  border-radius: 8px;
-}
-
 .summary-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
   margin-bottom: 10px;
+  padding: 4px 0;
 }
 
 .summary-header h2 {
@@ -721,21 +714,6 @@ a {
 
 .summary-actions {
   display: flex;
-  gap: 12px;
-}
-
-.device-list {
-  display: grid;
-  gap: 8px;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.device-list li {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
   gap: 12px;
 }
 
