@@ -1,8 +1,23 @@
+import type { SubscriptionStatus } from '../api/types';
+
 interface Props {
-  tier?: string;
+  subscription: SubscriptionStatus;
 }
 
-export function SubscriptionPill({ tier }: Props) {
-  if (!tier) return null;
-  return <span className={`subscription-pill tier-${tier}`}>{tier.toUpperCase()}</span>;
+const TIER_LABEL: Record<string, string> = {
+  free: '免费版',
+  trial: '试用版',
+  pro: '专业版',
+};
+
+export function SubscriptionPill({ subscription }: Props) {
+  const { tier, usage } = subscription;
+  return (
+    <span className="subscription-bar">
+      <span className={`subscription-pill tier-${tier}`}>{TIER_LABEL[tier] || tier.toUpperCase()}</span>
+      {tier === 'free' && usage ? (
+        <span className="usage-text">本月已用 {usage.used}/{usage.limit}</span>
+      ) : null}
+    </span>
+  );
 }

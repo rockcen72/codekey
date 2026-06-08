@@ -1,9 +1,11 @@
 import { Link } from 'react-router-dom';
 import { SessionCard } from '../components/SessionCard';
 import { DeviceBadge } from '../components/DeviceBadge';
+import { SubscriptionPill } from '../components/SubscriptionPill';
 import type { AuthState } from '../hooks/useAuth';
 import { useDevices } from '../hooks/useDevices';
 import { useSessions } from '../hooks/useSessions';
+import { useSubscription } from '../hooks/useSubscription';
 import { formatDate } from '../utils/format';
 
 interface Props {
@@ -14,6 +16,7 @@ export function SessionsPage({ auth }: Props) {
   const enabled = !!auth.token && !auth.loading;
   const devices = useDevices(enabled);
   const sessions = useSessions(enabled);
+  const subscription = useSubscription(enabled);
 
   return (
     <main className="shell">
@@ -28,6 +31,12 @@ export function SessionsPage({ auth }: Props) {
       {devices.loading || sessions.loading ? <div className="notice">加载中</div> : null}
       {devices.error || sessions.error ? <div className="notice error-text">{devices.error || sessions.error}</div> : null}
 
+      {subscription.subscription ? (
+        <section className="subscription-summary">
+          <SubscriptionPill subscription={subscription.subscription} />
+        </section>
+      ) : null}
+
       {!devices.loading && devices.devices.length === 0 ? (
         <section className="empty-state">
           <h2>还没有绑定设备</h2>
@@ -39,7 +48,10 @@ export function SessionsPage({ auth }: Props) {
           <section className="device-summary">
             <div className="summary-header">
               <h2>已绑定 {devices.devices.length} 台桌面设备</h2>
-              <Link to="/bind">新增绑定</Link>
+              <span className="summary-actions">
+                <Link to="/bind">新增绑定</Link>
+                <Link to="/settings">设备管理</Link>
+              </span>
             </div>
             <ul className="device-list">
               {devices.devices.map((d) => (

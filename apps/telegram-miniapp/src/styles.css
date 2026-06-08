@@ -189,6 +189,199 @@ a {
   color: #00545c;
 }
 
+/* ── Device Management ────────────────────────────── */
+
+.device-manage-list {
+  display: grid;
+  gap: 10px;
+}
+
+.device-manage-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.device-manage-info {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.danger-button {
+  color: #b42318;
+}
+
+.danger-button:hover {
+  background: rgba(180, 35, 24, 0.08);
+}
+
+.danger-confirm {
+  background: #b42318;
+  color: #fff;
+}
+
+.danger-confirm:disabled {
+  opacity: 0.55;
+}
+
+/* ── Modal ────────────────────────────────────────── */
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.4);
+  display: grid;
+  place-items: center;
+  z-index: 100;
+  padding: 18px;
+}
+
+.modal {
+  width: min(400px, 100%);
+  padding: 24px;
+  background: var(--bg);
+  border-radius: 12px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.15);
+}
+
+.modal h2 {
+  margin: 0 0 12px;
+  font-size: 18px;
+}
+
+.modal p {
+  margin: 0 0 16px;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.modal code {
+  font-size: 13px;
+  padding: 2px 6px;
+  background: rgba(31, 37, 35, 0.06);
+  border-radius: 4px;
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+/* ── Subscription Summary ───────────────────────── */
+
+.subscription-summary {
+  margin-bottom: 16px;
+}
+
+.subscription-bar {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.usage-text {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.tier-free { background: rgba(31, 37, 35, 0.08); color: var(--muted); }
+.tier-trial { background: rgba(154, 103, 0, 0.12); color: #9a6700; }
+.tier-pro { background: rgba(0, 109, 119, 0.12); color: #00545c; }
+
+/* ── Event Formatting ────────────────────────────── */
+
+.event-pending {
+  border-color: rgba(154, 103, 0, 0.3);
+  background: rgba(154, 103, 0, 0.04);
+}
+
+.event-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.event-type {
+  font-weight: 700;
+  font-size: 13px;
+}
+
+.event-type-approval_required { color: #9a6700; }
+.event-type-input_required { color: #9a6700; }
+.event-type-error { color: #b42318; }
+.event-type-task_complete { color: #137333; }
+.event-type-user_prompt { color: var(--text); }
+
+.risk-badge,
+.pending-badge,
+.decision-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  border-radius: 999px;
+  padding: 0 8px;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.risk-low { background: rgba(19, 115, 51, 0.1); color: #137333; }
+.risk-medium { background: rgba(154, 103, 0, 0.1); color: #9a6700; }
+.risk-high { background: rgba(180, 35, 24, 0.1); color: #b42318; }
+.risk-critical { background: #b42318; color: #fff; }
+
+.pending-badge {
+  background: #fff3cd;
+  color: #7a4d00;
+}
+
+.decision-approve { background: rgba(19, 115, 51, 0.1); color: #137333; }
+.decision-deny { background: rgba(180, 35, 24, 0.1); color: #b42318; }
+.decision-pause { background: rgba(154, 103, 0, 0.1); color: #9a6700; }
+.decision-reply { background: rgba(0, 109, 119, 0.1); color: #00545c; }
+
+.event-summary {
+  margin-top: 8px;
+  font-size: 15px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.event-command {
+  margin-top: 4px;
+}
+
+.event-command code {
+  font-size: 13px;
+  padding: 2px 6px;
+  background: rgba(31, 37, 35, 0.06);
+  border-radius: 4px;
+  word-break: break-all;
+}
+
+.event-footer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.event-hint {
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--muted);
+  font-style: italic;
+}
+
 /* ── Device Summary ──────────────────────────────── */
 
 .device-summary {
@@ -211,6 +404,11 @@ a {
   margin: 0;
   font-size: 15px;
   font-weight: 800;
+}
+
+.summary-actions {
+  display: flex;
+  gap: 12px;
 }
 
 .device-list {

@@ -6,6 +6,44 @@ import type { AuthState } from '../hooks/useAuth';
 import { DeviceBadge } from '../components/DeviceBadge';
 import { formatDate } from '../utils/format';
 
+function EventRow({ event }: { event: UserEvent }) {
+  const data = (event.data ?? {}) as Record<string, unknown>;
+  const summary = (data.summary as string) || (data.command as string) || '';
+  const command = (data.command as string) || '';
+  const risk = event.risk_level || (data.risk as string) || null;
+  const isInteractive = event.type === 'approval_required' || event.type === 'input_required';
+
+  const typeLabel: Record<string, string> = {
+    approval_required: '审批请求',
+    input_required: '输入请求',
+    user_prompt: '用户指令',
+    task_complete: '任务完成',
+    session_idle: '会话空闲',
+    command_started: '命令执行',
+    error: '错误',
+  };
+
+  return (
+    <article className={`event-row${event.pending ? ' event-pending' : ''}`}>
+      <div className="event-header">
+        <span className={`event-type event-type-${event.type}`}>{typeLabel[event.type] || event.type}</span>
+        {risk ? <span className={`risk-badge risk-${risk}`}>{risk}</span> : null}
+        {event.pending ? <span className="pending-badge">待处理</span> : null}
+      </div>
+      {summary ? <div className="event-summary">{summary}</div> : null}
+      {command && command !== summary ? <div className="event-command"><code>{command}</code></div> : null}
+      <div className="event-footer">
+        <span className="event-time">{formatDate(event.created_at)}</span>
+        {!event.pending && event.decision ? (
+          <span className={`decision-badge decision-${event.decision}`}>{event.decision}</span>
+        ) : null}
+        {!event.pending && !event.decision ? <span className="muted">已记录</span> : null}
+      </div>
+      {isInteractive && event.pending ? <div className="event-hint">审批功能即将上线</div> : null}
+    </article>
+  );
+}
+
 interface Props {
   auth: AuthState;
 }
@@ -56,14 +94,9 @@ export function SessionDetailPage({ auth }: Props) {
         </section>
       ) : null}
       <section className="event-list">
+        {events.length === 0 ? <div className="notice">暂无事件记录</div> : null}
         {events.map((event) => (
-          <article className="event-row" key={event.id}>
-            <div>
-              <strong>{event.type}</strong>
-              <p>{formatDate(event.created_at)}</p>
-            </div>
-            {event.pending ? <span className="pending-count">审批功能即将上线</span> : <span>{event.decision || '已记录'}</span>}
-          </article>
+          <EventRow key={event.id} event={event} />
         ))}
       </section>
     </main>
