@@ -1819,7 +1819,16 @@ export class ApprovalBridge {
   async detachClaudeSession(claudeSessionId: string): Promise<{ ok: boolean }> {
     if (!claudeSessionId) return { ok: false };
     const serverSessionId = this.sessions.get(claudeSessionId);
-    if (!serverSessionId) return { ok: true };
+    if (!serverSessionId) {
+      // Session not in bridge map but may still be in relay DB with
+      // hideFromMobileHistory not set. Send deactivate with claudeSessionId
+      // and let the relay resolve via session metadata lookup.
+      this.relay.sendRaw(JSON.stringify({
+        type: 'deactivate_session',
+        payload: { claudeSessionId, reason: 'manual_detach' },
+      }));
+      return { ok: true };
+    }
     this.stopClaudeTranscriptSync(claudeSessionId);
 
     // Arm the waiter BEFORE sending the deactivate, so we cannot miss a

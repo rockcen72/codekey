@@ -123,17 +123,44 @@ export function wsHandler(sql: postgres.Sql) {
      *  Returns { ok: true } on success, { ok: false, code } on failure.
      *  Skips broadcasting to `socket` (sender) to avoid duplicate events. */
     async function finishSession(
-      sessionId: string,
+      sessionId: string | null,
       socket?: WebSocket,
       reason?: string,
+      claudeSessionId?: string | null,
     ): Promise<{ ok: true } | { ok: false; code: string }> {
       try {
-        const [row] = await sql`
+        const [row] = sessionId ? await sql`
           SELECT id FROM sessions
           WHERE id = ${sessionId} AND device_id = ${deviceId} AND status = 'active'
           LIMIT 1
-        `;
-        if (!row) return { ok: false, code: 'SESSION_NOT_FOUND' };
+        ` : [];
+
+        // When detaching manually, still set hideFromMobileHistory even if the
+        // session is already finished/paused — the Telegram list otherwise
+        // keeps showing stale sessions the user explicitly detached.
+        if (!row) {
+          if (reason === 'manual_detach') {
+            const where = sessionId
+              ? sql`WHERE id = ${sessionId} AND device_id = ${deviceId}`
+              : claudeSessionId
+                ? sql`WHERE metadata->>'claudeSessionId' = ${claudeSessionId} AND device_id = ${deviceId}`
+                : null;
+            if (where) {
+              await sql`
+                UPDATE sessions
+                SET metadata = metadata || ${sql.json({ hideFromMobileHistory: 'true' })}
+                ${where}
+              `;
+              // Session was hidden; return ok even if not active (the hide
+              // flag is the caller's goal for manual_detach).
+              if (socket && socket.readyState === socket.OPEN) {
+                socket.send(JSON.stringify({ type: 'session_deactivated', payload: { sessionId } }));
+              }
+              return { ok: true };
+            }
+          }
+          return { ok: false, code: 'SESSION_NOT_FOUND' };
+        }
 
         await sql.begin(async (tx) => {
           await tx`
@@ -612,12 +639,8 @@ export function wsHandler(sql: postgres.Sql) {
 
       if (msg.type === 'deactivate_session') {
         const sessionId = msg.payload?.sessionId ?? null;
-        if (!sessionId) {
-          socket.send(JSON.stringify({ type: 'error', code: 'INVALID_PAYLOAD' }));
-          return;
-        }
-
-        finishSession(sessionId, socket, msg.payload?.reason).then((result) => {
+        const claudeSessionId = msg.payload?.claudeSessionId ?? null;
+        finishSession(sessionId, socket, msg.payload?.reason, claudeSessionId).then((result) => {
           if (result.ok) {
             const pc = pcClients.get(deviceId!);
             if (pc && pc.sessionId === sessionId) {
