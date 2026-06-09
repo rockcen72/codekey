@@ -20,20 +20,49 @@ export function telegramRoutes(sql: postgres.Sql) {
         return reply.code(401).send({ error: 'unauthorized' });
       }
 
+      // Step 1: find pending events for Telegram users
+      const candidates = await sql`
+        SELECT e.id
+        FROM events e
+        JOIN sessions s ON e.session_id = s.id
+        JOIN device_bindings db ON s.device_id = db.device_id AND db.unbound_at IS NULL
+        JOIN auth_identities ai ON ai.user_id = db.user_id AND ai.provider = 'telegram'
+        WHERE e.pending = true
+          AND (e.type = 'approval_required' OR e.type = 'input_required')
+          AND (e.data->>'telegramNotified' IS NULL OR e.data->>'telegramNotified' <> 'true')
+        LIMIT 20
+      `;
+      if (!candidates.length) return [];
+
+      // Step 2: mark them as notified and return
+      const ids = candidates.map((r: any) => r.id);
       const events = await sql`
         UPDATE events e
         SET data = data || ${sql.json({ telegramNotified: 'true' })}
-        FROM sessions s, device_bindings db, auth_identities ai
-        WHERE e.session_id = s.id
-          AND s.device_id = db.device_id AND db.unbound_at IS NULL
-          AND ai.user_id = db.user_id AND ai.provider = 'telegram'
-          AND e.pending = true
-          AND (e.type = 'approval_required' OR e.type = 'input_required')
-          AND (e.data->>'telegramNotified' IS NULL OR e.data->>'telegramNotified' <> 'true')
+        WHERE e.id = ANY(${ids}::uuid[])
         RETURNING e.id, e.session_id, e.type, e.data->>'summary' as summary,
-                  e.risk_level, ai.openid as telegram_id
-        LIMIT 20
+                  e.risk_level
       `;
+
+      // Step 3: attach telegram_id to each event
+      const sessionIds = [...new Set(events.map((r: any) => r.session_id))];
+      const teleRows = sessionIds.length ? await sql`
+        SELECT DISTINCT ON (s.id) s.id as session_id, ai.openid as telegram_id
+        FROM sessions s
+        JOIN device_bindings db ON s.device_id = db.device_id AND db.unbound_at IS NULL
+        JOIN auth_identities ai ON ai.user_id = db.user_id AND ai.provider = 'telegram'
+        WHERE s.id = ANY(${sessionIds}::uuid[])
+      ` : [];
+      const teleMap = new Map(teleRows.map((r: any) => [r.session_id, r.telegram_id]));
+
+      return events.map((row: any) => ({
+        eventId: row.id,
+        sessionId: row.session_id,
+        type: row.type,
+        summary: row.summary || '',
+        risk: row.risk_level || '',
+        telegramId: teleMap.get(row.session_id) as string || '',
+      }));
 
       return events.map((row: any) => ({
         eventId: row.id,
