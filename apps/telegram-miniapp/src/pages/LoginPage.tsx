@@ -7,7 +7,9 @@ interface Props {
 
 export function LoginPage({ auth }: Props) {
   const [params] = useSearchParams();
-  const redirectTo = params.get('redirect') || '/';
+  const rawRedirect = params.get('redirect') || '/';
+  // Only allow site-internal redirects (starts with /)
+  const redirectTo = rawRedirect.startsWith('/') ? rawRedirect : '/';
 
   if (auth.token) return <Navigate to={redirectTo} replace />;
 

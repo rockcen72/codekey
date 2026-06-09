@@ -38,6 +38,7 @@ async function sendTelegramNotification(
     body: JSON.stringify({
       telegramId: binding.openid as string,
       sessionId: event.sessionId,
+      eventId: event.eventId,
       summary: event.summary,
       risk: event.risk,
     }),

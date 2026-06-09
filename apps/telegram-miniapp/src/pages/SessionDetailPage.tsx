@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { userRequest } from '../api/client';
 import type { ApprovalResponseResult, UserEvent, UserSession } from '../api/types';
 import type { AuthState } from '../hooks/useAuth';
@@ -572,6 +572,8 @@ export function SessionDetailPage({ auth }: Props) {
   const isActive = session?.status === 'active';
   const title = session?.metadata.title || agentLabel(session?.agent_type) || 'AI Agent';
   const detailAgentClass = agentColorClass(session?.agent_type || session?.metadata.runtime);
+  const [searchParams] = useSearchParams();
+  const targetEventId = searchParams.get('eventId');
 
   useEffect(() => {
     const hasPending = messages.some((message) => message.pending);
@@ -579,6 +581,19 @@ export function SessionDetailPage({ auth }: Props) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
   }, [messages]);
+
+  // Scroll to target event from deep link
+  useEffect(() => {
+    if (!targetEventId || !scrollRef.current || !messages.length) return;
+    const idx = messages.findIndex((m) => m.eventId === targetEventId);
+    if (idx === -1) return;
+    const el = scrollRef.current.children[idx] as HTMLElement | undefined;
+    if (el) {
+      el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      el.style.outline = '2px solid var(--accent)';
+      setTimeout(() => { el.style.outline = ''; }, 3000);
+    }
+  }, [targetEventId, messages]);
 
   useEffect(() => {
     void load();

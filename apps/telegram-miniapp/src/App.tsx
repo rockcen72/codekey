@@ -11,13 +11,19 @@ function DeepLinkRedirect() {
   const auth = useAuth();
   const [params] = useSearchParams();
   const sessionId = params.get('sessionId');
+  const eventId = params.get('eventId');
 
   if (auth.loading) return null;
   if (!auth.token) {
-    const target = sessionId ? `/?sessionId=${sessionId}` : '/';
+    const target = sessionId
+      ? `/?sessionId=${sessionId}${eventId ? `&eventId=${eventId}` : ''}`
+      : '/';
     return <Navigate to={`/login?redirect=${encodeURIComponent(target)}`} replace />;
   }
-  if (sessionId) return <Navigate to={`/sessions/${sessionId}`} replace />;
+  if (sessionId) {
+    const path = `/sessions/${sessionId}${eventId ? `?eventId=${eventId}` : ''}`;
+    return <Navigate to={path} replace />;
+  }
   return <SessionsPage auth={auth} />;
 }
 
