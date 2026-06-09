@@ -588,16 +588,18 @@ export function wsHandler(sql: postgres.Sql) {
             // events as pending (see isPendingInteractiveEvent above).
             // trial / paid users are unlimited (the service short-circuits
             // on tier). The event is still written to `events` above for
-            // audit, but when over the cap we skip the event_push and
-            // tell the mini program why.
-            if (mpList && isPendingInteractiveEvent(msg.payload.eventType)) {
+            // audit, but when over the cap we skip both WS push and
+            // Telegram notification.
+            let quotaBlocked = false;
+            if (isPendingInteractiveEvent(msg.payload.eventType)) {
               const outcome = await applyApprovalQuota(
                 sql,
                 deviceId!,
                 msg.payload.clientEventId ?? null,
               );
               if (outcome.kind === 'over_limit') {
-                for (const mp of mpList) {
+                quotaBlocked = true;
+                for (const mp of (mpList || [])) {
                   if (mp.socket.readyState === mp.socket.OPEN) {
                     mp.socket.send(JSON.stringify({
                       type: 'quota_exceeded',
@@ -605,8 +607,6 @@ export function wsHandler(sql: postgres.Sql) {
                         sessionId,
                         eventId: event.id,
                         clientEventId: msg.payload.clientEventId ?? null,
-                        // TODO(multi-product): plumb the real product through
-                        // once we add a second one (see services/subscription).
                         product: 'codekey',
                         used: outcome.used,
                         limit: outcome.limit,
@@ -615,41 +615,37 @@ export function wsHandler(sql: postgres.Sql) {
                     }));
                   }
                 }
-                // The event is recorded in the DB; the phone sees a quota
-                // toast instead of an approval request. The PC keeps
-                // waiting on its bridge-side pending list (PENDING TTL
-                // eventually expires the row server-side).
-                return;
               }
-              // unlimited / allowed / fail_open → fall through to event_push.
             }
 
-            if (mpList) {
-              for (const mp of mpList) {
-                if (mp.socket.readyState === mp.socket.OPEN) {
-                  mp.socket.send(JSON.stringify({
-                    type: 'event_push',
-                    payload: {
-                      sessionId,
-                      eventId: event.id,
-                      eventType: msg.payload.eventType,
-                      summary: msg.payload.data.summary ?? msg.payload.data.command ?? '',
-                      summaryShort: msg.payload.data.summaryShort ?? msg.payload.data.summary ?? '',
-                      risk: msg.payload.data.risk,
-                    },
-                  }));
+            if (!quotaBlocked) {
+              if (mpList) {
+                for (const mp of mpList) {
+                  if (mp.socket.readyState === mp.socket.OPEN) {
+                    mp.socket.send(JSON.stringify({
+                      type: 'event_push',
+                      payload: {
+                        sessionId,
+                        eventId: event.id,
+                        eventType: msg.payload.eventType,
+                        summary: msg.payload.data.summary ?? msg.payload.data.command ?? '',
+                        summaryShort: msg.payload.data.summaryShort ?? msg.payload.data.summary ?? '',
+                        risk: msg.payload.data.risk,
+                      },
+                    }));
+                  }
                 }
               }
-            }
 
-            // Telegram Bot notification for pending interactive events
-            if (isPendingInteractiveEvent(msg.payload.eventType)) {
-              sendTelegramNotification(sql, deviceId!, {
-                sessionId,
-                eventId: event.id,
-                summary: msg.payload.data.summary ?? msg.payload.data.command ?? '',
-                risk: msg.payload.data.risk,
-              }).catch((err) => console.error('telegram notify error:', err));
+              // Telegram Bot notification for pending interactive events
+              if (isPendingInteractiveEvent(msg.payload.eventType)) {
+                sendTelegramNotification(sql, deviceId!, {
+                  sessionId,
+                  eventId: event.id,
+                  summary: msg.payload.data.summary ?? msg.payload.data.command ?? '',
+                  risk: msg.payload.data.risk,
+                }).catch((err) => console.error('telegram notify error:', err));
+              }
             }
 
             // task_complete is recorded as an event but does NOT close the session.

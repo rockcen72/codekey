@@ -1,4 +1,4 @@
-import { Navigate } from 'react-router-dom';
+import { Navigate, useSearchParams } from 'react-router-dom';
 import type { AuthState } from '../hooks/useAuth';
 
 interface Props {
@@ -6,7 +6,10 @@ interface Props {
 }
 
 export function LoginPage({ auth }: Props) {
-  if (auth.token) return <Navigate to="/" replace />;
+  const [params] = useSearchParams();
+  const redirectTo = params.get('redirect') || '/';
+
+  if (auth.token) return <Navigate to={redirectTo} replace />;
 
   const missingTelegramInitData = auth.error?.includes('Telegram initData not detected');
   const title = auth.loading

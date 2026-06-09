@@ -138,9 +138,16 @@ async function handleBotSetup(request: Request, env: Env): Promise<Response> {
 // Called by relay when a new pending approval event arrives.
 // Sends a Telegram Bot message with a deep-link button.
 async function handleNotifyApproval(request: Request, env: Env): Promise<Response> {
+  // Verify shared secret
+  const headerSecret = request.headers.get('x-codekey-telegram-secret');
+  if (!headerSecret || headerSecret !== env.TELEGRAM_LOGIN_SECRET) {
+    return json({ error: 'unauthorized' }, request, env, 401);
+  }
+
   const body = (await request.json().catch(() => null)) as {
     telegramId?: number | string;
     sessionId?: string;
+    eventId?: string;
     summary?: string;
     risk?: string;
   } | null;
@@ -153,6 +160,7 @@ async function handleNotifyApproval(request: Request, env: Env): Promise<Respons
   const riskLabel = body.risk ? ` [${body.risk}]` : '';
   const miniappUrl = `https://${new URL(request.url).host}`;
   const text = `🔔 Approval Request${riskLabel}\n\n${summary}`;
+  const deepLink = `${miniappUrl}/?sessionId=${body.sessionId}${body.eventId ? `&eventId=${body.eventId}` : ''}`;
 
   const apiBase = `https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}`;
   const resp = await fetch(`${apiBase}/sendMessage`, {
@@ -161,10 +169,9 @@ async function handleNotifyApproval(request: Request, env: Env): Promise<Respons
     body: JSON.stringify({
       chat_id: chatId,
       text,
-      parse_mode: 'HTML',
       reply_markup: {
         inline_keyboard: [[
-          { text: 'View', web_app: { url: `${miniappUrl}/?sessionId=${body.sessionId}` } },
+          { text: 'View', web_app: { url: deepLink } },
         ]],
       },
     }),

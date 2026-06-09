@@ -12,7 +12,11 @@ function DeepLinkRedirect() {
   const [params] = useSearchParams();
   const sessionId = params.get('sessionId');
 
-  if (!auth.token) return <Navigate to="/login" replace />;
+  if (auth.loading) return null;
+  if (!auth.token) {
+    const target = sessionId ? `/?sessionId=${sessionId}` : '/';
+    return <Navigate to={`/login?redirect=${encodeURIComponent(target)}`} replace />;
+  }
   if (sessionId) return <Navigate to={`/sessions/${sessionId}`} replace />;
   return <SessionsPage auth={auth} />;
 }
