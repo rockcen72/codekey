@@ -16,9 +16,8 @@ async function sendTelegramNotification(
   deviceId: string,
   event: { sessionId: string; eventId: string; summary?: string; risk?: string },
 ): Promise<void> {
-  const workerUrl = process.env.TELEGRAM_WORKER_URL;
-  const secret = process.env.TELEGRAM_LOGIN_SECRET;
-  if (!workerUrl || !secret) return;
+  const botToken = process.env.TELEGRAM_BOT_TOKEN;
+  if (!botToken) return;
 
   const [binding] = await sql`
     SELECT db.user_id, ai.openid
@@ -29,18 +28,23 @@ async function sendTelegramNotification(
   `;
   if (!binding) return;
 
-  const resp = await fetch(`${workerUrl}/notify/approval`, {
+  const chatId = (binding.openid as string);
+  const summary = event.summary?.slice(0, 200) || 'Approval request';
+  const riskLabel = event.risk ? ` [${event.risk}]` : '';
+  const publicBaseUrl = process.env.PUBLIC_BASE_URL || '';
+  const text = `🔔 Approval Request${riskLabel}\n\n${summary}`;
+
+  const resp = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
     method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      'x-codekey-telegram-secret': secret,
-    },
+    headers: { 'content-type': 'application/json' },
     body: JSON.stringify({
-      telegramId: binding.openid as string,
-      sessionId: event.sessionId,
-      eventId: event.eventId,
-      summary: event.summary,
-      risk: event.risk,
+      chat_id: chatId,
+      text,
+      reply_markup: {
+        inline_keyboard: [[
+          { text: 'View', web_app: { url: `${publicBaseUrl}/?sessionId=${event.sessionId}&eventId=${event.eventId}` } },
+        ]],
+      },
     }),
     signal: AbortSignal.timeout(10_000),
   });
