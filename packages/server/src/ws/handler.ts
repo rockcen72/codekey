@@ -9,6 +9,45 @@ import {
 import { applyApprovalQuota } from '../services/quota.js';
 import { validateAndApplyApproval } from '../services/approval.js';
 
+/** Send a push notification to the device's bound Telegram user (if any).
+ *  Non-blocking — failures are logged but never propagated. */
+async function sendTelegramNotification(
+  sql: postgres.Sql,
+  deviceId: string,
+  event: { sessionId: string; eventId: string; summary?: string; risk?: string },
+): Promise<void> {
+  const workerUrl = process.env.TELEGRAM_WORKER_URL;
+  const secret = process.env.TELEGRAM_LOGIN_SECRET;
+  if (!workerUrl || !secret) return;
+
+  const [binding] = await sql`
+    SELECT db.user_id, ai.openid
+    FROM device_bindings db
+    JOIN auth_identities ai ON ai.user_id = db.user_id AND ai.provider = 'telegram'
+    WHERE db.device_id = ${deviceId} AND db.unbound_at IS NULL
+    LIMIT 1
+  `;
+  if (!binding) return;
+
+  const resp = await fetch(`${workerUrl}/notify/approval`, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      'x-codekey-telegram-secret': secret,
+    },
+    body: JSON.stringify({
+      telegramId: binding.openid as string,
+      sessionId: event.sessionId,
+      summary: event.summary,
+      risk: event.risk,
+    }),
+    signal: AbortSignal.timeout(10_000),
+  });
+  if (!resp.ok) {
+    console.error('telegram notify failed:', resp.status, await resp.text().catch(() => ''));
+  }
+}
+
 /** Grace period timers: device socket close → delay session cleanup by 30s.
  *  If the device reconnects within that window, the timer is cancelled. */
 const disconnectTimers = new Map<string, NodeJS.Timeout>();
@@ -601,6 +640,16 @@ export function wsHandler(sql: postgres.Sql) {
                   }));
                 }
               }
+            }
+
+            // Telegram Bot notification for pending interactive events
+            if (isPendingInteractiveEvent(msg.payload.eventType)) {
+              sendTelegramNotification(sql, deviceId!, {
+                sessionId,
+                eventId: event.id,
+                summary: msg.payload.data.summary ?? msg.payload.data.command ?? '',
+                risk: msg.payload.data.risk,
+              }).catch((err) => console.error('telegram notify error:', err));
             }
 
             // task_complete is recorded as an event but does NOT close the session.

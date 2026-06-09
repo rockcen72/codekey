@@ -37,6 +37,9 @@ export default {
       if (url.pathname === '/admin/setup-bot' && request.method === 'POST') {
         return await handleBotSetup(request, env);
       }
+      if (url.pathname === '/notify/approval' && request.method === 'POST') {
+        return await handleNotifyApproval(request, env);
+      }
       if (isProxyRoute(url.pathname)) {
         return await proxyToRelay(request, env, normalizeRelayPath(url.pathname));
       }
@@ -129,6 +132,50 @@ async function handleBotSetup(request: Request, env: Env): Promise<Response> {
   results.botInfo = await botInfo.json();
 
   return json({ ok: true, miniappUrl, results }, request, env);
+}
+
+// ── POST /notify/approval ─────────────────────────────────
+// Called by relay when a new pending approval event arrives.
+// Sends a Telegram Bot message with a deep-link button.
+async function handleNotifyApproval(request: Request, env: Env): Promise<Response> {
+  const body = (await request.json().catch(() => null)) as {
+    telegramId?: number | string;
+    sessionId?: string;
+    summary?: string;
+    risk?: string;
+  } | null;
+  if (!body?.telegramId || !body?.sessionId) {
+    return json({ error: 'telegramId and sessionId required' }, request, env, 400);
+  }
+
+  const chatId = String(body.telegramId);
+  const summary = body.summary?.slice(0, 200) || 'Approval request';
+  const riskLabel = body.risk ? ` [${body.risk}]` : '';
+  const miniappUrl = `https://${new URL(request.url).host}`;
+  const text = `🔔 Approval Request${riskLabel}\n\n${summary}`;
+
+  const apiBase = `https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}`;
+  const resp = await fetch(`${apiBase}/sendMessage`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      chat_id: chatId,
+      text,
+      parse_mode: 'HTML',
+      reply_markup: {
+        inline_keyboard: [[
+          { text: 'View', web_app: { url: `${miniappUrl}/?sessionId=${body.sessionId}` } },
+        ]],
+      },
+    }),
+    signal: AbortSignal.timeout(10_000),
+  });
+
+  const result = await resp.json() as Record<string, unknown>;
+  if (!result.ok) {
+    return json({ error: 'telegram api error', details: result }, request, env, 500);
+  }
+  return json({ ok: true }, request, env);
 }
 
 async function verifyInitData(initData: string, botToken: string): Promise<{ user: TelegramUser; authDate: number }> {
