@@ -77,6 +77,8 @@ export class OpenCodeSessionManager {
   private deliveredMessageParts: Set<string> = new Set();
   /** Track recently sent phone commands to avoid echoing them back. */
   private recentPhoneTexts = new Map<string, { text: string; expiresAt: number }>();
+  /** OpenCode subagent sessions (title starts with @) — skip relay registration. */
+  private _subagentSessions = new Set<string>();
 
   private _abortController: AbortController | null = null;
   private _stopped = false;
@@ -451,6 +453,8 @@ export class OpenCodeSessionManager {
     const metadata = (props.metadata as Record<string, unknown>) ?? {};
 
     if (!requestID || !sessionID || !permissionType) return;
+    // Skip subagent sessions — their permissions belong to the parent session.
+    if (this._subagentSessions.has(sessionID)) return;
 
     const serverSessionId = await this.ensureRelaySession(sessionID);
 
@@ -527,10 +531,18 @@ export class OpenCodeSessionManager {
     const sessionID = info.id as string;
     if (!sessionID) return;
 
+    // Detect subagent sessions on create so they are skipped everywhere.
+    if (type === 'session.created' || type === 'session.updated') {
+      const title = extractOpenCodeSessionTitle(info);
+      if (title && /^@/.test(title)) {
+        this._subagentSessions.add(sessionID);
+      }
+    }
+
     if (type === 'session.updated') {
       const serverSessionId = this.opencodeSessionToRelayId.get(sessionID);
       const title = extractOpenCodeSessionTitle(info);
-      if (serverSessionId && title) {
+      if (serverSessionId && title && !this._subagentSessions.has(sessionID)) {
         this.bridge.relay.sendRaw(JSON.stringify({
           type: 'update_session_label',
           payload: { sessionId: serverSessionId, label: title },
@@ -542,6 +554,7 @@ export class OpenCodeSessionManager {
         this.opencodeSessions.delete(serverSessionId);
         this.opencodeSessionToRelayId.delete(sessionID);
       }
+      this._subagentSessions.delete(sessionID);
     }
   }
 
@@ -685,7 +698,7 @@ export class OpenCodeSessionManager {
       || tryFormatInputRequiredEvent(props, 'opencode');
 
     if (!serverSessionId) {
-      if (inputCard) {
+      if (inputCard && !this._subagentSessions.has(sessionID)) {
         // Auto-register for approval events only — matches CC pattern
         console.error('[opencode] onMessagePartUpdated: auto-registering session %s for input_required', sessionID);
         this.ensureRelaySession(sessionID).then((sid) => {
