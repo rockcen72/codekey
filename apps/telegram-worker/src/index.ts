@@ -6,6 +6,7 @@ interface Env {
   TELEGRAM_BOT_TOKEN: string;
   TELEGRAM_LOGIN_SECRET: string;
   RELAY_BACKEND_URL: string;
+  TELEGRAM_MINIAPP_URL?: string;
   BOT_SETUP_KEY?: string;
   ASSETS: AssetBinding;
 }
@@ -47,51 +48,59 @@ export default {
     }
   },
 
-  // Cron trigger: polls relay for pending Telegram notifications every 30s.
-  async scheduled(_event: ScheduledEvent, env: Env, _ctx: ExecutionContext): Promise<void> {
-    console.log('telegram-notify: cron triggered');
-    const secret = env.TELEGRAM_LOGIN_SECRET;
-    const relayUrl = env.RELAY_BACKEND_URL;
-    if (!secret || !relayUrl) return;
+  // Cron trigger: polls relay every 15s within the 1-min window.
+  async scheduled(_event: ScheduledEvent, env: Env, ctx: ExecutionContext): Promise<void> {
+    const poll = async () => {
+      const secret = env.TELEGRAM_LOGIN_SECRET;
+      const relayUrl = env.RELAY_BACKEND_URL;
+      if (!secret || !relayUrl) return;
 
-    const resp = await fetch(`${relayUrl}/api/v1/telegram/pending-events`, {
-      headers: { 'x-codekey-telegram-secret': secret },
-      signal: AbortSignal.timeout(15_000),
-    });
-    if (!resp.ok) {
-      console.error('telegram-notify: fetch failed', resp.status);
-      return;
-    }
-    const events = await resp.json() as Array<{
-      eventId: string; sessionId: string; summary: string; risk: string; telegramId: string;
-    }>;
-    if (!events.length) return;
-    console.log('telegram-notify: sending', events.length, 'notifications');
+      const resp = await fetch(`${relayUrl}/api/v1/telegram/pending-events`, {
+        headers: { 'x-codekey-telegram-secret': secret },
+        signal: AbortSignal.timeout(15_000),
+      });
+      if (!resp.ok) {
+        console.error('telegram-notify: fetch failed', resp.status);
+        return;
+      }
+      const events = await resp.json() as Array<{
+        eventId: string; sessionId: string; summary: string; risk: string; telegramId: string;
+      }>;
+      if (!events.length) return;
 
     const apiBase = `https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}`;
-    const miniappUrl = `https://${new URL(relayUrl).host}`;
+    const miniappUrl = env.TELEGRAM_MINIAPP_URL || `https://${new URL(relayUrl).host}`;
 
-    for (const ev of events) {
-      const text = `🔔 Approval Request${ev.risk ? ` [${ev.risk}]` : ''}\n\n${(ev.summary || '').slice(0, 200)}`;
-      const result = await fetch(`${apiBase}/sendMessage`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          chat_id: ev.telegramId,
-          text,
-          reply_markup: {
-            inline_keyboard: [[
-              { text: 'View', web_app: { url: `${miniappUrl}/?sessionId=${ev.sessionId}&eventId=${ev.eventId}` } },
-            ]],
-          },
-        }),
-        signal: AbortSignal.timeout(10_000),
-      });
-      if (!result.ok) {
-        const body = await result.text().catch(() => '');
-        console.error('telegram-notify: send failed for', ev.eventId, result.status, body);
+      for (const ev of events) {
+        const text = `🔔 Approval Request${ev.risk ? ` [${ev.risk}]` : ''}\n\n${(ev.summary || '').slice(0, 200)}`;
+        const result = await fetch(`${apiBase}/sendMessage`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            chat_id: ev.telegramId,
+            text,
+            reply_markup: {
+              inline_keyboard: [[
+                { text: 'View', web_app: { url: `${miniappUrl}/?sessionId=${ev.sessionId}&eventId=${ev.eventId}` } },
+              ]],
+            },
+          }),
+          signal: AbortSignal.timeout(10_000),
+        });
+        if (!result.ok) {
+          const body = await result.text().catch(() => '');
+          console.error('telegram-notify: send failed for', ev.eventId, result.status, body);
+        }
       }
-    }
+    };
+
+    // Run 4 rounds (1 per 15s) within the 1-min cron window.
+    ctx.waitUntil((async () => {
+      for (let i = 0; i < 4; i++) {
+        await poll();
+        if (i < 3) await new Promise(r => setTimeout(r, 15_000));
+      }
+    })());
   },
 };
 
