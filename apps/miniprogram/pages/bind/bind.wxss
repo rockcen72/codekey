@@ -1,6 +1,5 @@
 .container { display: flex; flex-direction: column; align-items: center; padding: 200rpx 40rpx 0; }
-.loading-icon { width: 80rpx; height: 80rpx; border: 6rpx solid var(--ck-primary); border-top-color: transparent; border-radius: 50%; animation: spin 1s linear infinite; margin-bottom: 32rpx; }
-@keyframes spin { to { transform: rotate(360deg); } }
+.loading-icon { width: 40rpx; height: 40rpx; border: 6rpx solid var(--ck-primary); border-top-color: transparent; border-radius: 50%; margin-bottom: 32rpx; }
 .success-icon { width: 120rpx; height: 120rpx; line-height: 120rpx; text-align: center; background: var(--ck-success); color: #fff; border-radius: 50%; font-size: 32rpx; font-weight: 700; margin-bottom: 32rpx; }
 .fail-icon { width: 120rpx; height: 120rpx; line-height: 120rpx; text-align: center; background: var(--ck-danger); color: #fff; border-radius: 50%; font-size: 32rpx; font-weight: 700; margin-bottom: 32rpx; }
 .status-text { font-size: 36rpx; font-weight: 600; margin-bottom: 16rpx; }
