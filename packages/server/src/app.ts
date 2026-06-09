@@ -7,6 +7,7 @@ import { sessionRoutes } from './routes/sessions.js';
 import { auditRoutes } from './routes/audit.js';
 import { authRoutes } from './routes/auth.js';
 import { userRoutes } from './routes/user-routes.js';
+import { telegramRoutes } from './routes/telegram-routes.js';
 import { subscriptionRoutes } from './routes/subscription.js';
 import { wsHandler } from './ws/handler.js';
 import { initDb } from './db/init.js';
@@ -92,6 +93,7 @@ export async function buildApp(databaseUrl: string) {
   await app.register(authRoutes(sql), { prefix: '/api/v1' });
   await app.register(subscriptionRoutes(sql), { prefix: '/api/v1' });
   await app.register(userRoutes(sql), { prefix: '/api/v1' });
+  await app.register(telegramRoutes(sql), { prefix: '/api/v1' });
 
   // Dev-only seed routes. See config/dev-seed.ts for the 4-condition guard.
   // import() is async so the throw inside the module becomes a rejected

@@ -10,47 +10,16 @@ import { applyApprovalQuota } from '../services/quota.js';
 import { validateAndApplyApproval } from '../services/approval.js';
 
 /** Send a push notification to the device's bound Telegram user (if any).
- *  Non-blocking — failures are logged but never propagated. */
+ *  The relay cannot reliably reach api.telegram.org from Tencent Cloud.
+ *  Notifications are sent by the Cloudflare Worker which polls
+ *  GET /api/v1/telegram/pending-events. This function is left as a stub
+ *  for future direct-path improvements. */
 async function sendTelegramNotification(
-  sql: postgres.Sql,
-  deviceId: string,
-  event: { sessionId: string; eventId: string; summary?: string; risk?: string },
+  _sql: postgres.Sql,
+  _deviceId: string,
+  _event: { sessionId: string; eventId: string; summary?: string; risk?: string },
 ): Promise<void> {
-  const botToken = process.env.TELEGRAM_BOT_TOKEN;
-  if (!botToken) return;
-
-  const [binding] = await sql`
-    SELECT db.user_id, ai.openid
-    FROM device_bindings db
-    JOIN auth_identities ai ON ai.user_id = db.user_id AND ai.provider = 'telegram'
-    WHERE db.device_id = ${deviceId} AND db.unbound_at IS NULL
-    LIMIT 1
-  `;
-  if (!binding) return;
-
-  const chatId = (binding.openid as string);
-  const summary = event.summary?.slice(0, 200) || 'Approval request';
-  const riskLabel = event.risk ? ` [${event.risk}]` : '';
-  const publicBaseUrl = process.env.PUBLIC_BASE_URL || '';
-  const text = `🔔 Approval Request${riskLabel}\n\n${summary}`;
-
-  const resp = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({
-      chat_id: chatId,
-      text,
-      reply_markup: {
-        inline_keyboard: [[
-          { text: 'View', web_app: { url: `${publicBaseUrl}/?sessionId=${event.sessionId}&eventId=${event.eventId}` } },
-        ]],
-      },
-    }),
-    signal: AbortSignal.timeout(10_000),
-  });
-  if (!resp.ok) {
-    console.error('telegram notify failed:', resp.status, await resp.text().catch(() => ''));
-  }
+  // Notifications are handled by the Worker cron trigger.
 }
 
 /** Grace period timers: device socket close → delay session cleanup by 30s.

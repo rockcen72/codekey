@@ -37,9 +37,6 @@ export default {
       if (url.pathname === '/admin/setup-bot' && request.method === 'POST') {
         return await handleBotSetup(request, env);
       }
-      if (url.pathname === '/notify/approval' && request.method === 'POST') {
-        return await handleNotifyApproval(request, env);
-      }
       if (isProxyRoute(url.pathname)) {
         return await proxyToRelay(request, env, normalizeRelayPath(url.pathname));
       }
@@ -47,6 +44,53 @@ export default {
     } catch (err) {
       const message = err instanceof Error ? err.message : 'internal error';
       return json({ error: message }, request, env, 500);
+    }
+  },
+
+  // Cron trigger: polls relay for pending Telegram notifications every 30s.
+  async scheduled(_event: ScheduledEvent, env: Env, _ctx: ExecutionContext): Promise<void> {
+    console.log('telegram-notify: cron triggered');
+    const secret = env.TELEGRAM_LOGIN_SECRET;
+    const relayUrl = env.RELAY_BACKEND_URL;
+    if (!secret || !relayUrl) return;
+
+    const resp = await fetch(`${relayUrl}/api/v1/telegram/pending-events`, {
+      headers: { 'x-codekey-telegram-secret': secret },
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (!resp.ok) {
+      console.error('telegram-notify: fetch failed', resp.status);
+      return;
+    }
+    const events = await resp.json() as Array<{
+      eventId: string; sessionId: string; summary: string; risk: string; telegramId: string;
+    }>;
+    if (!events.length) return;
+    console.log('telegram-notify: sending', events.length, 'notifications');
+
+    const apiBase = `https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}`;
+    const miniappUrl = `https://${new URL(relayUrl).host}`;
+
+    for (const ev of events) {
+      const text = `🔔 Approval Request${ev.risk ? ` [${ev.risk}]` : ''}\n\n${(ev.summary || '').slice(0, 200)}`;
+      const result = await fetch(`${apiBase}/sendMessage`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          chat_id: ev.telegramId,
+          text,
+          reply_markup: {
+            inline_keyboard: [[
+              { text: 'View', web_app: { url: `${miniappUrl}/?sessionId=${ev.sessionId}&eventId=${ev.eventId}` } },
+            ]],
+          },
+        }),
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (!result.ok) {
+        const body = await result.text().catch(() => '');
+        console.error('telegram-notify: send failed for', ev.eventId, result.status, body);
+      }
     }
   },
 };
@@ -132,57 +176,6 @@ async function handleBotSetup(request: Request, env: Env): Promise<Response> {
   results.botInfo = await botInfo.json();
 
   return json({ ok: true, miniappUrl, results }, request, env);
-}
-
-// ── POST /notify/approval ─────────────────────────────────
-// Called by relay when a new pending approval event arrives.
-// Sends a Telegram Bot message with a deep-link button.
-async function handleNotifyApproval(request: Request, env: Env): Promise<Response> {
-  // Verify shared secret
-  const headerSecret = request.headers.get('x-codekey-telegram-secret');
-  if (!headerSecret || headerSecret !== env.TELEGRAM_LOGIN_SECRET) {
-    return json({ error: 'unauthorized' }, request, env, 401);
-  }
-
-  const body = (await request.json().catch(() => null)) as {
-    telegramId?: number | string;
-    sessionId?: string;
-    eventId?: string;
-    summary?: string;
-    risk?: string;
-  } | null;
-  if (!body?.telegramId || !body?.sessionId) {
-    return json({ error: 'telegramId and sessionId required' }, request, env, 400);
-  }
-
-  const chatId = String(body.telegramId);
-  const summary = body.summary?.slice(0, 200) || 'Approval request';
-  const riskLabel = body.risk ? ` [${body.risk}]` : '';
-  const miniappUrl = `https://${new URL(request.url).host}`;
-  const text = `🔔 Approval Request${riskLabel}\n\n${summary}`;
-  const deepLink = `${miniappUrl}/?sessionId=${body.sessionId}${body.eventId ? `&eventId=${body.eventId}` : ''}`;
-
-  const apiBase = `https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}`;
-  const resp = await fetch(`${apiBase}/sendMessage`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({
-      chat_id: chatId,
-      text,
-      reply_markup: {
-        inline_keyboard: [[
-          { text: 'View', web_app: { url: deepLink } },
-        ]],
-      },
-    }),
-    signal: AbortSignal.timeout(10_000),
-  });
-
-  const result = await resp.json() as Record<string, unknown>;
-  if (!result.ok) {
-    return json({ error: 'telegram api error', details: result }, request, env, 500);
-  }
-  return json({ ok: true }, request, env);
 }
 
 async function verifyInitData(initData: string, botToken: string): Promise<{ user: TelegramUser; authDate: number }> {
