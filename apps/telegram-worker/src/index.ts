@@ -117,7 +117,9 @@ async function handleBotSetup(request: Request, env: Env): Promise<Response> {
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({
       description:
-        '用手机远程审批 Claude Code 请求。通过配对码绑定你的 VS Code 设备后，可直接在 Telegram 内查看会话并批准或拒绝 AI 编码助手提交的操作申请。',
+        'Remotely approve Claude Code, Codex, and OpenCode requests from your phone. '
+        + 'Pair your VS Code device via a pairing code, then review sessions, approve or '
+        + 'deny AI coding assistant requests, and send commands — all from Telegram.',
     }),
   });
   results.botDescription = await desc.json();
