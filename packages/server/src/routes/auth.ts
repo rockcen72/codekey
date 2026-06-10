@@ -5,6 +5,8 @@ import { userTokenAuth } from '../auth/user-middleware.js';
 import { signUserJwt } from '../auth/jwt.js';
 import { rateLimit } from '../middleware/rate-limit.js';
 import { MVP_PRODUCT, invalidateEntitlement } from '../services/subscription/index.js';
+import { replaceActiveDeviceBinding, DeviceBoundToOtherUser } from '../db/device-binding.js';
+import { clientClients, pcClients } from '../ws/connection-registry.js';
 
 /**
  * Auth routes — Phase 1 of the subscription system.
@@ -89,6 +91,37 @@ async function exchangeWxCode(code: string, appid: string, secret: string): Prom
   const resp = await fetch(url, { signal: AbortSignal.timeout(5_000) });
   if (!resp.ok) return { errcode: -1, errmsg: `http ${resp.status}` };
   return (await resp.json()) as WxCode2SessionResp;
+}
+
+/** 事务外发送 WS 通知给被替换的旧设备。 */
+function notifyDeviceReplaced(oldDeviceId: string): void {
+  // 小程序 WS
+  const oldMpList = clientClients.get(oldDeviceId);
+  if (oldMpList) {
+    for (const mp of oldMpList) {
+      if (mp.socket.readyState === mp.socket.OPEN) {
+        try {
+          mp.socket.send(JSON.stringify({
+            type: 'auth_failed',
+            payload: { code: 'DEVICE_REPLACED' },
+          }));
+        } catch {}
+        try { mp.socket.close(4001, 'device replaced'); } catch {}
+      }
+    }
+    clientClients.delete(oldDeviceId);
+  }
+
+  // PC bridge
+  const oldPc = pcClients.get(oldDeviceId);
+  if (oldPc && oldPc.socket.readyState === oldPc.socket.OPEN) {
+    try {
+      oldPc.socket.send(JSON.stringify({
+        type: 'auth_failed',
+        code: 'DEVICE_REPLACED',
+      }));
+    } catch {}
+  }
 }
 
 export function authRoutes(sql: postgres.Sql) {
@@ -178,16 +211,9 @@ export function authRoutes(sql: postgres.Sql) {
     });
 
     // ── POST /api/v1/auth/claim-device ──────────────────────
-    // Binds a single device (the one whose clientToken the caller
-    // proves possession of) to the user identified by user_token.
-    //
-    // Atomic via INSERT ... ON CONFLICT DO NOTHING + RETURNING, so
-    // two concurrent claims of the same device both serialise on
-    // the device_id PK and exactly one INSERTs. The loser falls
-    // through to the post-check below, which distinguishes:
-    //   - same user   → 200 (idempotent retry, no error)
-    //   - other user  → 403 (so the mini program can prompt unbind)
-    //   - no row      → 500 (should be impossible after the conflict)
+    // Single-device mode: binds a device to the user, atomically
+    // replacing any previous active binding. Uses a single transaction
+    // to ensure the replace + bind + trial insert are ACID.
     fastify.post('/auth/claim-device', { preHandler: [userTokenAuth()] }, async (req, reply) => {
       const { clientToken } = (req.body ?? {}) as { clientToken?: string };
       if (!clientToken) return reply.code(400).send({ error: 'clientToken required' });
@@ -205,72 +231,60 @@ export function authRoutes(sql: postgres.Sql) {
       const deviceId = tok.device_id;
       const userId = req.userAuth!.userId;
 
-      const inserted = await sql<{ device_id: string }[]>`
-        INSERT INTO device_bindings (device_id, user_id)
-        VALUES (${deviceId}, ${userId})
-        ON CONFLICT (device_id) DO NOTHING
-        RETURNING device_id
-      `;
-      const isFirstBind = !!inserted[0];
+      let replaced: string[] = [];
+      try {
+        const result = await sql.begin(async (tx) => {
+          // 1. 原子替换旧设备绑定
+          const bindingResult = await replaceActiveDeviceBinding(tx, userId, deviceId);
+          replaced = bindingResult.replaced;
 
-      // Conflict: device already has a binding. Read the current
-      // owner and unbound_at to decide the response.
-      const [owner] = isFirstBind ? [] : await sql<{ user_id: number; unbound_at: string | null }[]>`
-        SELECT user_id, unbound_at FROM device_bindings WHERE device_id = ${deviceId}
-      `;
-      if (!isFirstBind && !owner) {
-        // Vanishing race: ON CONFLICT fired but the row is gone.
-        // Treat as 500 — the next call will succeed.
-        return reply.code(500).send({ error: 'binding_state_inconsistent' });
+          // 2. INSERT 新设备绑定（或 upsert 现有行确保 active）
+          //    用 RETURNING 验证 user_id 归属，防并发竞争导致"假成功"
+          const [bound] = await tx<{ user_id: number }[]>`
+            INSERT INTO device_bindings (device_id, user_id)
+            VALUES (${deviceId}, ${userId})
+            ON CONFLICT (device_id) DO UPDATE SET
+              unbound_at = NULL,
+              bound_at = now()
+            RETURNING user_id
+          `;
+          // 并发下另一个事务先提交了不同用户的 binding，DO UPDATE 不覆盖
+          // user_id，此处捕获归属不匹配
+          if (Number(bound.user_id) !== userId) {
+            throw new DeviceBoundToOtherUser();
+          }
+
+          // 3. trial_claims（ON CONFLICT DO NOTHING 保证幂等）
+          const trialInserted = await tx<{ user_id: number }[]>`
+            INSERT INTO trial_claims (user_id, product)
+            VALUES (${userId}, ${MVP_PRODUCT})
+            ON CONFLICT (user_id, product) DO NOTHING
+            RETURNING user_id
+          `;
+
+          return { trialInserted: trialInserted.length > 0 };
+        });
+
+        // 事务已 COMMIT — 此时才发送 WS 通知
+        for (const oldId of replaced) {
+          notifyDeviceReplaced(oldId);
+        }
+
+        if (result.trialInserted) {
+          invalidateEntitlement(userId, MVP_PRODUCT);
+        }
+
+        return {
+          success: true,
+          deviceId,
+          ...(replaced.length > 0 ? { replaced: true } : {}),
+        };
+      } catch (err) {
+        if (err instanceof DeviceBoundToOtherUser) {
+          return reply.code(403).send({ error: err.message });
+        }
+        throw err;
       }
-      // owner.user_id is BIGSERIAL → postgres.js returns it as a string
-      // (to preserve precision for >2^53). The middleware decodes the
-      // JWT's sub claim with Number(), so userId is a JS number. Compare
-      // both as numbers.
-      if (!isFirstBind && Number(owner!.user_id) !== userId) {
-        return reply.code(403).send({ error: 'device bound to another user' });
-      }
-
-      // Same-user re-pair after unbind: clear unbound_at so the
-      // device reappears in all "WHERE unbound_at IS NULL" queries.
-      // Guarded with unbound_at IS NOT NULL so a concurrent unbind
-      // (which sets unbound_at = now()) is not silently overwritten.
-      if (!isFirstBind && owner!.unbound_at) {
-        await sql`
-          UPDATE device_bindings
-          SET unbound_at = NULL, bound_at = now()
-          WHERE device_id = ${deviceId}
-            AND user_id = ${userId}
-            AND unbound_at IS NOT NULL
-        `;
-      }
-
-      // Success path (first bind OR same-user re-claim): auto-claim
-      // a 14-day trial for this (user, product) pair. The ON CONFLICT
-      // makes this a no-op on subsequent claims — the trial window
-      // is set at first bind and never extended. (To extend, the
-      // user redeems a code via /api/v1/redeem.)
-      const trialInserted = await sql<{ user_id: number }[]>`
-        INSERT INTO trial_claims (user_id, product)
-        VALUES (${userId}, ${MVP_PRODUCT})
-        ON CONFLICT (user_id, product) DO NOTHING
-        RETURNING user_id
-      `;
-
-      // Invalidate the entitlement cache whenever a new trial row
-      // is actually written. Without this, a user who calls
-      // /subscription BEFORE claim-device would see tier='free'
-      // for up to 30s after the trial is granted, and the mini
-      // program would not show the "Pro 试用中" card. (Review #7/#10.)
-      if (trialInserted[0]) {
-        invalidateEntitlement(userId, MVP_PRODUCT);
-      }
-
-      return {
-        success: true,
-        deviceId,
-        ...(isFirstBind ? {} : { alreadyBound: true }),
-      };
     });
   };
 }

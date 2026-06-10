@@ -171,6 +171,8 @@ export type WsMessage =
   | { type: 'mp_online' }
   | { type: 'mp_offline' }
   | { type: 'error'; payload: { code: string } }
+  // Server → client auth failure (device replaced / unbound)
+  | { type: 'auth_failed'; code?: string; payload?: { code?: string } }
   // Raw-only client-originated messages (sent via sendRaw, not typed serialization):
   | { type: 'attach_session'; payload: { sessionId: string; claudeSessionId: string; metadata?: SessionMetadataPayload } }
   | { type: 'detach_session'; payload: { sessionId: string } }

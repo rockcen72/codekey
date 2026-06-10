@@ -136,6 +136,10 @@ export class RelayClient extends EventEmitter {
         if (msg.type === 'session_deactivated') {
           this.emit('session_deactivated', msg.payload);
         }
+        if (msg.type === 'auth_failed') {
+          this.emit('auth_failed', msg.payload || { code: msg.code || 'unknown' });
+          return;
+        }
         if (msg.type === 'attached_sessions') {
           this.emit('attached_sessions', msg.payload);
         }

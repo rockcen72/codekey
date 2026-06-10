@@ -7,6 +7,8 @@ type EventHandler = (payload?: any) => void;
 // on every initWs() via the let-binding below — see QUOTA_TOAST_SUPPRESS_MS.
 let lastQuotaToastAt = 0;
 const QUOTA_TOAST_SUPPRESS_MS = 5_000;
+// Guard against auth_failed firing twice (once from onMessage, once from onClose with code 4001)
+let _deviceReplaced = false;
 
 App({
   globalData: {
@@ -35,6 +37,7 @@ App({
   // ── WS lifecycle ──
 
   initWs() {
+    _deviceReplaced = false;
     const token = getClientToken();
     const deviceId = getDeviceId();
     if (!token || !deviceId) return;
@@ -56,7 +59,24 @@ App({
       this.globalData.wsConnected = false;
       this._emit('ws_disconnected');
     });
-    ws.on('auth_failed', () => {
+    ws.on('auth_failed', (payload?: { code?: string }) => {
+      const code = payload?.code || 'DEVICE_UNBOUND';
+      if (code === 'DEVICE_REPLACED') {
+        if (_deviceReplaced) return;
+        _deviceReplaced = true;
+        wx.showModal({
+          title: '设备已替换',
+          content: '你的账号已绑定新的主机，当前设备已自动解绑。请重新配对。',
+          showCancel: false,
+          success: () => {
+            clearAuth();
+            this.globalData.ws = null;
+            this.globalData.wsConnected = false;
+            wx.redirectTo({ url: '/pages/login/login' });
+          },
+        });
+        return;
+      }
       clearAuth();
       this.globalData.ws = null;
       this.globalData.wsConnected = false;

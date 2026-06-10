@@ -1,4 +1,5 @@
 import { RelayClient, ApprovalBridge, startBridgeServer, CodexResumeManager, OpenCodeSessionManager, whichBinary, discoverOpenCodePort } from '@codekey/shared/bridge';
+import { clearCredentials } from './auth/credentials.js';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -52,6 +53,17 @@ async function main(): Promise<void> {
   const bridge = new ApprovalBridge(relay);
 
   bridge.listenRelayCommands();
+
+  // 监听 auth_failed：设备被替换或解绑时清理本地凭据并退出
+  relay.on('auth_failed', (payload: { code?: string }) => {
+    const code = payload?.code || 'unknown';
+    console.error('[bridge-entry] received auth_failed: %s', code);
+    process.stderr.write(`AUTH_FAILED=${code}\n`);
+    clearCredentials();
+    relay.close();
+    close();
+    process.exit(0);
+  });
 
   // ── Codex Resume Manager ──────────────────────────────────
   const resumedServerSessionIds = new Set<string>();

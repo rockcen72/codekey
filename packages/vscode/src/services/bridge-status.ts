@@ -4,7 +4,7 @@ import * as os from 'node:os';
 import { spawn, execSync, type ChildProcess } from 'node:child_process';
 import * as vscode from 'vscode';
 import { resolveCodexBinaryForVSCode } from './codex-binary-resolver.js';
-import { loadCredentials } from '../auth/credentials.js';
+import { loadCredentials, clearCredentials } from '../auth/credentials.js';
 import { getHookPath } from '../hook/installer.js';
 import { log, debug } from '../log.js';
 import { listPidsByPort, killPid } from '@codekey/shared/bridge';
@@ -194,6 +194,26 @@ export class BridgeStatusService {
       if (portMatch) {
         this._port = Number(portMatch[1]);
         log(`[CodeKey] bridge port: ${this._port}`);
+        return;
+      }
+      // 检测 AUTH_FAILED 标记
+      const authFailedMatch = text.match(/AUTH_FAILED=(.+)/);
+      if (authFailedMatch) {
+        const code = authFailedMatch[1];
+        log(`[CodeKey] bridge auth_failed: ${code}`);
+        clearCredentials();
+        this._update({ bridge: 'stopped' });
+        this._stopHealthCheck();
+        if (code === 'DEVICE_REPLACED') {
+          vscode.window.showWarningMessage(
+            'CodeKey: 此设备已被新设备替换，请重新配对。',
+          );
+        } else {
+          vscode.window.showInformationMessage(
+            `CodeKey: 设备已解绑 (${code})。`,
+          );
+        }
+        return;
       }
       debug(`[CodeKey] bridge: ${text}`);
     });

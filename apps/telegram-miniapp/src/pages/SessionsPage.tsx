@@ -18,7 +18,6 @@ interface Props {
 export function SessionsPage({ auth }: Props) {
   const [activeTab, setActiveTab] = useState('all');
   const [unbindTarget, setUnbindTarget] = useState<UserDevice | null>(null);
-  const [unbindAllOpen, setUnbindAllOpen] = useState(false);
   const [unbindBusy, setUnbindBusy] = useState(false);
   const [unbindError, setUnbindError] = useState<string | null>(null);
   const enabled = !!auth.token && !auth.loading;
@@ -45,27 +44,6 @@ export function SessionsPage({ auth }: Props) {
       await Promise.all([devices.refresh(), sessions.refresh()]);
     } catch (err) {
       setUnbindError(err instanceof Error ? err.message : 'Unbind failed');
-    } finally {
-      setUnbindBusy(false);
-    }
-  }
-
-  async function confirmUnbindAll() {
-    const targets = devices.devices;
-    if (targets.length === 0) return;
-    setUnbindBusy(true);
-    setUnbindError(null);
-    try {
-      const results = await Promise.allSettled(
-        targets.map((device) => userRequest(`/api/v1/user/devices/${device.id}`, { method: 'DELETE' })),
-      );
-      const failed = results.filter((result) => result.status === 'rejected');
-      await Promise.all([devices.refresh(), sessions.refresh()]);
-      if (failed.length > 0) {
-        setUnbindError(`${failed.length} device(s) failed to unbind, please refresh and retry`);
-        return;
-      }
-      setUnbindAllOpen(false);
     } finally {
       setUnbindBusy(false);
     }
@@ -121,11 +99,10 @@ export function SessionsPage({ auth }: Props) {
               type="button"
               onClick={() => {
                 setUnbindError(null);
-                if (devices.devices.length === 1) setUnbindTarget(devices.devices[0]);
-                else setUnbindAllOpen(true);
+                setUnbindTarget(devices.devices[0]);
               }}
             >
-              {devices.devices.length === 1 ? 'Unbind device' : 'Unbind all'}
+              Unbind device
             </button>
           ) : null}
           <button
@@ -189,26 +166,6 @@ export function SessionsPage({ auth }: Props) {
               </button>
               <button className="primary-button danger-confirm" type="button" onClick={() => void confirmUnbind()} disabled={unbindBusy}>
                 {unbindBusy ? 'Unbinding...' : 'Unbind'}
-              </button>
-            </div>
-          </div>
-        </div>
-      ) : null}
-
-      {unbindAllOpen ? (
-        <div className="modal-backdrop" onClick={() => setUnbindAllOpen(false)}>
-          <div className="modal" onClick={(e) => e.stopPropagation()}>
-            <h2>Unbind all devices</h2>
-            <p>
-              <strong>{devices.devices.length}</strong> device(s) are connected to this Telegram account. After unbinding, History will show no devices. Re-pair by generating a new code in the desktop extension.
-            </p>
-            {unbindError ? <p className="error-text">{unbindError}</p> : null}
-            <div className="modal-actions">
-              <button className="ghost-button" type="button" onClick={() => setUnbindAllOpen(false)} disabled={unbindBusy}>
-                Cancel
-              </button>
-              <button className="primary-button danger-confirm" type="button" onClick={() => void confirmUnbindAll()} disabled={unbindBusy}>
-                {unbindBusy ? 'Unbinding...' : 'Unbind all'}
               </button>
             </div>
           </div>

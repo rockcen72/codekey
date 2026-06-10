@@ -168,6 +168,37 @@ export async function initDb(url: string) {
     CREATE INDEX IF NOT EXISTS idx_device_bindings_user_id ON device_bindings(user_id) WHERE unbound_at IS NULL
   `;
 
+  // Single-device mode: ensure each user has at most one active binding.
+  // Cleans up legacy multi-device data first, then creates an index to
+  // enforce the constraint at the DB level (FOR UPDATE in transactions
+  // provides the runtime guard; this index catches any bypass).
+  // Also revokes device_tokens for excessed devices so old tokens cannot
+  // be used after migration.
+  await sql`
+    WITH excess_devices AS (
+      SELECT device_id FROM device_bindings
+      WHERE unbound_at IS NULL
+        AND device_id NOT IN (
+          SELECT DISTINCT ON (user_id) device_id
+          FROM device_bindings
+          WHERE unbound_at IS NULL
+          ORDER BY user_id, bound_at DESC
+        )
+    ),
+    unbound AS (
+      UPDATE device_bindings SET unbound_at = now()
+      WHERE device_id IN (SELECT device_id FROM excess_devices)
+      RETURNING device_id
+    )
+    UPDATE device_tokens SET revoked = true
+    WHERE device_id IN (SELECT device_id FROM unbound)
+  `;
+  await sql`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_device_bindings_active_user
+    ON device_bindings (user_id)
+    WHERE unbound_at IS NULL
+  `;
+
   // ── Subscription system (Phase 2: redeem codes + trial) ────
 
   // redeem_codes: pre-generated, one-shot redemption codes. Only
