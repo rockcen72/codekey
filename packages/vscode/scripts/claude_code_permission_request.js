@@ -2,11 +2,35 @@
 // CodeKey PermissionRequest hook for Claude Code
 // Forwards Bash tool permission requests to the CodeKey bridge for phone approval.
 const BRIDGE_URL = 'http://127.0.0.1:3001';
+const HEALTH_TIMEOUT_MS = 1_500;
 const TIMEOUT_MS = 120_000;
 const DIAG_LOG = require('path').join(require('os').homedir(), '.claude', 'codekey-permission-diagnostic.log');
 const fs = require('fs');
 function diag(msg) {
   try { fs.appendFileSync(DIAG_LOG, new Date().toISOString() + ' ' + msg + '\n'); } catch {}
+}
+
+async function bridgeReady() {
+  const ctrl = new AbortController();
+  const timer = setTimeout(function () { ctrl.abort(); }, HEALTH_TIMEOUT_MS);
+  try {
+    const res = await fetch(BRIDGE_URL + '/v1/health', { signal: ctrl.signal });
+    if (!res.ok) {
+      diag('health check non-OK: ' + res.status);
+      return false;
+    }
+    const health = await res.json();
+    if (health.relay !== 'connected') {
+      diag('health check bypass: relay=' + (health.relay || '(missing)'));
+      return false;
+    }
+    return true;
+  } catch (err) {
+    diag('health check failed: ' + (err.message || err));
+    return false;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 diag('hook started, BRIDGE_URL=' + BRIDGE_URL + ' args=' + process.argv.join(' '));
@@ -40,6 +64,11 @@ process.stdin.on('end', async () => {
     const codekeyWindowId = process.env.CODEKEY_WINDOW_ID || '';
     diag('codekeyWindowId=' + codekeyWindowId + ' CODEKEY_WINDOW_ID=' + (process.env.CODEKEY_WINDOW_ID || '(unset)'));
 
+    if (!(await bridgeReady())) {
+      diag('bridge not ready, bypassing CodeKey');
+      process.exit(0);
+    }
+
     const ctrl = new AbortController();
     const timer = setTimeout(function () { diag('TIMEOUT reached ' + TIMEOUT_MS + 'ms'); ctrl.abort(); }, TIMEOUT_MS);
     const body = JSON.stringify({ claudeSessionId: sid, codekeyWindowId: codekeyWindowId, source: 'permission_request', debugEnvWindowId: process.env.CODEKEY_WINDOW_ID || '(unset)', rawEvent: event });
@@ -60,6 +89,10 @@ process.stdin.on('end', async () => {
     diag('bridge response: status=' + res.status + ' ' + res.statusText);
     if (!res.ok) { diag('bridge returned non-OK, exiting 0'); process.exit(0); }
     var result = await res.json();
+    if (result && result.bypass) {
+      diag('bridge requested bypass: ' + (result.reason || ''));
+      process.exit(0);
+    }
     diag('bridge result: approved=' + result.approved);
     if (result.approved) {
       console.log(JSON.stringify({

@@ -29,21 +29,23 @@ function respond(decision) {
   }) + '\n');
 }
 
+function bypass(reason) {
+  log(`BYPASS ${reason}`);
+  process.exit(0);
+}
+
 // Read stdin (Codex hook event JSON)
 let input = '';
 try {
   input = fs.readFileSync(0, 'utf8').trim();
 } catch (e) {
   log(`STDIN_READ_ERROR: ${e.message}`);
-  respond({ behavior: 'deny', message: `Hook stdin error: ${e.message}` });
-  process.exit(0);
+  bypass('stdin_error');
 }
 
 if (!input) {
   // Codex sometimes sends no input on first invocation (hooks probe)
-  log('NO_INPUT — returning deny');
-  respond({ behavior: 'deny', message: 'No input received' });
-  process.exit(0);
+  bypass('no_input');
 }
 
 let event;
@@ -51,8 +53,7 @@ try {
   event = JSON.parse(input);
 } catch (err) {
   log(`PARSE_ERROR: ${err.message}`);
-  respond({ behavior: 'deny', message: `Hook parse error: ${err.message}` });
-  process.exit(0);
+  bypass('parse_error');
 }
 
 log(`EVENT ${event.hook_event_name} tool=${event.tool_name || ''} session=${event.session_id || ''}`);
@@ -96,8 +97,7 @@ const hookReq = http.request(`${bridgeUrl}/v1/codex-hooks/permission-request`, {
   res.on('end', () => {
     if (res.statusCode < 200 || res.statusCode >= 300) {
       log(`BRIDGE_HTTP_ERROR status=${res.statusCode} body=${data.slice(0, 500)}`);
-      respond({ behavior: 'deny', message: `CodeKey bridge returned HTTP ${res.statusCode}` });
-      return;
+      bypass(`bridge_http_${res.statusCode}`);
     }
     try {
       const result = JSON.parse(data);
@@ -110,21 +110,20 @@ const hookReq = http.request(`${bridgeUrl}/v1/codex-hooks/permission-request`, {
       respond({ behavior: dec.behavior || 'deny', message: dec.message });
     } catch (err) {
       log(`BRIDGE_RESPONSE_PARSE_ERROR: ${err.message} raw=${data.slice(0, 200)}`);
-      respond({ behavior: 'deny', message: 'Bridge response parse error' });
+      bypass('bridge_response_parse_error');
     }
   });
 });
 
 hookReq.on('error', (err) => {
   log(`BRIDGE_ERROR: ${err.message}`);
-  // Bridge unreachable — fail closed (deny)
-  respond({ behavior: 'deny', message: 'CodeKey bridge not reachable' });
+  bypass('bridge_not_reachable');
 });
 
 hookReq.on('timeout', () => {
   hookReq.destroy();
   log(`BRIDGE_TIMEOUT`);
-  respond({ behavior: 'deny', message: 'Bridge request timed out' });
+  bypass('bridge_timeout');
 });
 
 hookReq.write(body);

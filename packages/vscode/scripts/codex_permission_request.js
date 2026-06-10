@@ -2,11 +2,35 @@
 // CodeKey PermissionRequest hook for Codex
 // Forwards permission requests to the CodeKey bridge for phone approval.
 const BRIDGE_URL = process.env.CODEKEY_BRIDGE_URL || 'http://127.0.0.1:3001';
+const HEALTH_TIMEOUT_MS = 1_500;
 const TIMEOUT_MS = 300_000;
 const DIAG_LOG = require('path').join(require('os').homedir(), '.codex', 'codekey-hook.log');
 const fs = require('fs');
 function diag(msg) {
   try { fs.appendFileSync(DIAG_LOG, new Date().toISOString() + ' ' + msg + '\n'); } catch {}
+}
+
+async function bridgeReady() {
+  const ctrl = new AbortController();
+  const timer = setTimeout(function () { ctrl.abort(); }, HEALTH_TIMEOUT_MS);
+  try {
+    const res = await fetch(BRIDGE_URL + '/v1/health', { signal: ctrl.signal });
+    if (!res.ok) {
+      diag('health check non-OK: ' + res.status);
+      return false;
+    }
+    const health = await res.json();
+    if (health.relay !== 'connected') {
+      diag('health check bypass: relay=' + (health.relay || '(missing)'));
+      return false;
+    }
+    return true;
+  } catch (err) {
+    diag('health check failed: ' + (err.message || err));
+    return false;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 diag('hook started, BRIDGE_URL=' + BRIDGE_URL + ' args=' + process.argv.join(' '));
@@ -22,6 +46,11 @@ process.stdin.on('end', async () => {
 
     if (!input.trim() || !event || event.hook_event_name !== 'PermissionRequest') {
       diag('skip: unexpected event type or empty input');
+      process.exit(0);
+    }
+
+    if (!(await bridgeReady())) {
+      diag('bridge not ready, bypassing CodeKey');
       process.exit(0);
     }
 
