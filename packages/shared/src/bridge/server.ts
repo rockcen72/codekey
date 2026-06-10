@@ -29,6 +29,10 @@ interface CodexHookResponse {
   };
 }
 
+function relayIsConnected(relay: unknown): boolean {
+  return (relay as { status?: string })?.status === 'connected';
+}
+
 const DEFAULT_MAX_BODY_BYTES = 1_048_576; // 1 MB
 
 /**
@@ -460,6 +464,12 @@ function handleRequest(req: IncomingMessage, res: ServerResponse, bridge: Approv
         const toolName = input.tool_name || 'unknown';
         const toolInput = input.tool_input || {};
         const cmd = toolInput.command || toolInput.description || JSON.stringify(toolInput);
+
+        if (!relayIsConnected(bridge.relay)) {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: true, bypass: true, reason: 'relay_not_connected' }));
+          return;
+        }
 
         // Step 1: Resolve Codex local session id → relay serverSessionId.
         // If VS Code has a CodexResumeManager and this session is not resumed,

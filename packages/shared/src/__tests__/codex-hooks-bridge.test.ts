@@ -10,6 +10,7 @@ import { startBridgeServer } from '../bridge/server.js';
  */
 class FakeHookRelay extends EventEmitter {
   sent: string[] = [];
+  status = 'connected';
 
   sendRaw(value: string): void {
     this.sent.push(value);
@@ -489,10 +490,36 @@ describe('CodexHooksBridge', () => {
       }
     });
 
+    it('bypasses CodeKey when relay is disconnected', async () => {
+      const { relay, bridge } = createHookBridge();
+      relay.status = 'disconnected';
+      const { close, port } = await startBridgeServer(bridge, 0);
+      try {
+        const resp = await fetch(`http://127.0.0.1:${port}/v1/codex-hooks/permission-request`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            session_id: 'offline-session',
+            tool_name: 'Bash',
+            tool_input: { command: 'echo local-default-ui' },
+          }),
+        });
+        const data = await resp.json() as Record<string, unknown>;
+
+        expect(resp.status).toBe(200);
+        expect(data.bypass).toBe(true);
+        expect(data.reason).toBe('relay_not_connected');
+        expect(relay.sent).toEqual([]);
+      } finally {
+        await close();
+      }
+    });
+
     it('registration timeout → deny (env CODEX_HOOK_REG_TIMEOUT_MS)', async () => {
       // Use a relay that does NOT auto-respond to register_session
       const silentRelay = new EventEmitter() as any;
       silentRelay.sendRaw = vi.fn();
+      silentRelay.status = 'connected';
       const bridge = new ApprovalBridge(silentRelay);
       const { close, port } = await startBridgeServer(bridge, 0);
       try {

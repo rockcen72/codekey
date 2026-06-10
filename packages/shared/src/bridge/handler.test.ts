@@ -43,6 +43,7 @@ function createCodexSessionFixture(sessionId: string): string {
 class FakeRelay extends EventEmitter {
   sent: string[] = [];
   attachedSessions: { id: string; claudeSessionId: string | null }[] = [];
+  status = 'connected';
 
   sendRaw(value: string): void {
     this.sent.push(value);
@@ -331,6 +332,29 @@ describe('ApprovalBridge canonical sessions', () => {
       .map(m => JSON.parse(m))
       .filter((m: any) => m.type === 'event' && m.payload.eventType === 'approval_required');
     expect(eventMessages).toHaveLength(0);
+  });
+
+  it('bypasses handleApproval when relay is disconnected', async () => {
+    const relay = new FakeRelay();
+    relay.status = 'disconnected';
+    const bridge = new ApprovalBridge(relay as any);
+
+    const result = await bridge.handleApproval({
+      claudeSessionId: 'claude-a',
+      codekeyWindowId: 'window-1',
+      source: 'permission_request',
+      rawEvent: {
+        tool_name: 'Bash',
+        tool_input: { command: 'npm test' },
+      },
+    });
+
+    expect(result).toEqual({
+      approved: false,
+      bypass: true,
+      reason: 'relay_not_connected',
+    });
+    expect(relay.sent).toEqual([]);
   });
 
   it('uses a label-synced window as fallback for approvals without hook window id', async () => {

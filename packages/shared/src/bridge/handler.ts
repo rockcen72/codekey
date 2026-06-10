@@ -80,6 +80,12 @@ interface ApprovalHookBody {
   rawEvent?: Record<string, unknown>;
 }
 
+interface ApprovalResult {
+  approved: boolean;
+  bypass?: boolean;
+  reason?: string;
+}
+
 interface ApprovalText {
   toolName: string;
   command: string;
@@ -880,7 +886,7 @@ export class ApprovalBridge {
   }
 
   /** Forward a PermissionRequest hook event to relay. */
-  async handleApproval(body: unknown): Promise<{ approved: boolean }> {
+  async handleApproval(body: unknown): Promise<ApprovalResult> {
     const payload = body as ApprovalHookBody;
     let claudeSessionId = payload.claudeSessionId ?? '';
 
@@ -920,6 +926,11 @@ export class ApprovalBridge {
       console.error('[bridge] auto-rejecting replay approval (session=%s tool=%s)',
         claudeSessionId, payload.rawEvent?.tool_name || 'unknown');
       return { approved: false };
+    }
+
+    if (this.relay.status !== 'connected') {
+      console.error('[bridge] bypassing approval because relay is not connected (session=%s)', claudeSessionId);
+      return { approved: false, bypass: true, reason: 'relay_not_connected' };
     }
 
     const explicitWindowId = payload.codekeyWindowId || '';
