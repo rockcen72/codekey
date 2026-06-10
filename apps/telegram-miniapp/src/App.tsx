@@ -1,6 +1,8 @@
-import { Navigate, Route, Routes, useSearchParams } from 'react-router-dom';
+import { useEffect, useRef } from 'react';
+import { Navigate, Route, Routes, useNavigate, useSearchParams } from 'react-router-dom';
 import { ThemeProvider } from './components/ThemeProvider';
 import { useAuth } from './hooks/useAuth';
+import { WsClient } from './services/ws-client';
 import { BindPage } from './pages/BindPage';
 import { LoginPage } from './pages/LoginPage';
 import { SessionDetailPage } from './pages/SessionDetailPage';
@@ -47,6 +49,30 @@ function DeepLinkRedirect({ auth }: { auth: ReturnType<typeof useAuth> }) {
 
 export default function App() {
   const auth = useAuth();
+  const navigate = useNavigate();
+  const wsRef = useRef<WsClient | null>(null);
+
+  const relayUrl = import.meta.env.VITE_RELAY_URL || '';
+
+  useEffect(() => {
+    if (!auth.token || !auth.deviceId || !auth.clientToken || !relayUrl) {
+      wsRef.current?.disconnect();
+      wsRef.current = null;
+      return;
+    }
+
+    const ws = new WsClient(relayUrl, auth.deviceId, auth.clientToken);
+    ws.on('auth_failed', () => {
+      auth.clearBinding();
+      navigate('/bind', { replace: true });
+    });
+    ws.connect();
+    wsRef.current = ws;
+
+    return () => {
+      ws.disconnect();
+    };
+  }, [auth.token, auth.deviceId, auth.clientToken, auth.clearBinding, navigate, relayUrl]);
 
   return (
     <ThemeProvider>

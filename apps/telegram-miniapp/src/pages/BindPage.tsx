@@ -3,6 +3,7 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import { publicRequest, userRequest } from '../api/client';
 import type { AuthState } from '../hooks/useAuth';
 import type { ClaimResult, ConfirmResult } from '../api/types';
+import { setDeviceCredentials } from '../auth/device-storage';
 
 interface Props {
   auth: AuthState;
@@ -33,6 +34,8 @@ export function BindPage({ auth }: Props) {
         method: 'POST',
         body: JSON.stringify({ clientToken: confirm.clientToken }),
       });
+      setDeviceCredentials(confirm.deviceId, confirm.clientToken);
+      auth.refreshBinding();
       navigate('/', { replace: true });
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Binding failed');
