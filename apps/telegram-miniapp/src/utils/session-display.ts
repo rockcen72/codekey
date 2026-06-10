@@ -38,9 +38,9 @@ export function sessionShortId(session: UserSession): string {
 }
 
 export function statusLabel(status: UserSession['status']): string {
-  if (status === 'active') return '活跃';
-  if (status === 'paused') return '暂停';
-  return '已结束';
+  if (status === 'active') return 'Active';
+  if (status === 'paused') return 'Paused';
+  return 'Ended';
 }
 
 export function collectAgentTabs(sessions: UserSession[]): { key: string; label: string }[] {

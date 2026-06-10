@@ -3,6 +3,8 @@ import { Link } from 'react-router-dom';
 import { SessionCard } from '../components/SessionCard';
 import { SubscriptionPill } from '../components/SubscriptionPill';
 import { RedeemCode } from '../components/RedeemCode';
+import { userRequest } from '../api/client';
+import type { UserDevice } from '../api/types';
 import type { AuthState } from '../hooks/useAuth';
 import { useDevices } from '../hooks/useDevices';
 import { useSessions } from '../hooks/useSessions';
@@ -15,6 +17,10 @@ interface Props {
 
 export function SessionsPage({ auth }: Props) {
   const [activeTab, setActiveTab] = useState('all');
+  const [unbindTarget, setUnbindTarget] = useState<UserDevice | null>(null);
+  const [unbindAllOpen, setUnbindAllOpen] = useState(false);
+  const [unbindBusy, setUnbindBusy] = useState(false);
+  const [unbindError, setUnbindError] = useState<string | null>(null);
   const enabled = !!auth.token && !auth.loading;
   const devices = useDevices(enabled);
   const sessions = useSessions(enabled);
@@ -29,20 +35,56 @@ export function SessionsPage({ auth }: Props) {
   const activeTotal = sessions.sessions.filter((session) => session.status === 'active').length;
   const serviceOnline = enabled && !devices.error && !sessions.error;
 
+  async function confirmUnbind() {
+    if (!unbindTarget) return;
+    setUnbindBusy(true);
+    setUnbindError(null);
+    try {
+      await userRequest(`/api/v1/user/devices/${unbindTarget.id}`, { method: 'DELETE' });
+      setUnbindTarget(null);
+      await Promise.all([devices.refresh(), sessions.refresh()]);
+    } catch (err) {
+      setUnbindError(err instanceof Error ? err.message : 'Unbind failed');
+    } finally {
+      setUnbindBusy(false);
+    }
+  }
+
+  async function confirmUnbindAll() {
+    const targets = devices.devices;
+    if (targets.length === 0) return;
+    setUnbindBusy(true);
+    setUnbindError(null);
+    try {
+      const results = await Promise.allSettled(
+        targets.map((device) => userRequest(`/api/v1/user/devices/${device.id}`, { method: 'DELETE' })),
+      );
+      const failed = results.filter((result) => result.status === 'rejected');
+      await Promise.all([devices.refresh(), sessions.refresh()]);
+      if (failed.length > 0) {
+        setUnbindError(`${failed.length} device(s) failed to unbind, please refresh and retry`);
+        return;
+      }
+      setUnbindAllOpen(false);
+    } finally {
+      setUnbindBusy(false);
+    }
+  }
+
   return (
     <main className="shell">
       <header className="sessions-topbar">
         <div className="topbar-left">
           <h1 className="brand">History</h1>
-          <p className="brand-sub">CodeKey AI 远程控制</p>
+          <p className="brand-sub">CodeKey AI Remote</p>
         </div>
         <div className="top-actions">
           {subscription.subscription ? <SubscriptionPill subscription={subscription.subscription} /> : null}
           <div className={`conn-pill ${serviceOnline ? 'online' : 'offline'}`}>
             <span className="conn-dot" />
-            <span>{serviceOnline ? '已同步' : '离线'}</span>
+            <span>{serviceOnline ? 'Online' : 'Offline'}</span>
           </div>
-          <Link className="icon-btn-wrap" to="/settings" aria-label="设备管理">⚙</Link>
+          <Link className="icon-btn-wrap" to="/settings" aria-label="Device settings">⚙</Link>
         </div>
       </header>
 
@@ -50,7 +92,7 @@ export function SessionsPage({ auth }: Props) {
         <div className="metrics-row">
           <span className="metric-chip">
             <span className="metric-dot active" />
-            <span>{activeTotal} 活跃</span>
+            <span>{activeTotal} active</span>
           </span>
         </div>
       ) : null}
@@ -71,11 +113,35 @@ export function SessionsPage({ auth }: Props) {
       </div>
 
       <div className="sessions-actions-row">
-        <span>{devices.devices.length} 台已绑定设备</span>
-        <button className="ghost-link" type="button" onClick={() => void sessions.refresh()}>刷新</button>
+        <span>{devices.devices.length} device(s) connected</span>
+        <div className="history-actions">
+          {devices.devices.length > 0 ? (
+            <button
+              className="ghost-link danger-button"
+              type="button"
+              onClick={() => {
+                setUnbindError(null);
+                if (devices.devices.length === 1) setUnbindTarget(devices.devices[0]);
+                else setUnbindAllOpen(true);
+              }}
+            >
+              {devices.devices.length === 1 ? 'Unbind device' : 'Unbind all'}
+            </button>
+          ) : null}
+          <button
+            className="ghost-link"
+            type="button"
+            onClick={() => {
+              void devices.refresh();
+              void sessions.refresh();
+            }}
+          >
+            Refresh
+          </button>
+        </div>
       </div>
 
-      {devices.error || sessions.error ? <div className="notice error-text">{devices.error || sessions.error}</div> : null}
+      {devices.error || sessions.error || unbindError ? <div className="notice error-text">{devices.error || sessions.error || unbindError}</div> : null}
 
       {subscription.subscription ? (
         <section className="subscription-summary compact-redeem">
@@ -83,11 +149,11 @@ export function SessionsPage({ auth }: Props) {
         </section>
       ) : null}
 
-      {!devices.loading && devices.devices.length === 0 ? (
+      {devices.devices.length === 0 ? (
         <section className="empty-state">
-          <h2>暂无绑定设备</h2>
-          <p>在桌面端生成配对码后，在这里完成绑定。</p>
-          <Link className="primary-button link-button" to="/bind">绑定设备</Link>
+          <h2>No devices connected</h2>
+          <p>Generate a pairing code in the desktop extension to connect.</p>
+          <Link className="primary-button link-button" to="/bind">Connect device</Link>
         </section>
       ) : (
         <>
@@ -97,13 +163,57 @@ export function SessionsPage({ auth }: Props) {
             ) : (
               <div className="empty">
                 <span className="empty-icon">◌</span>
-                <h2 className="empty-title">暂无对话记录</h2>
-                <p className="empty-text">在桌面端启动 AI 代理后，关联的会话将出现在这里。</p>
+                <h2 className="empty-title">No conversations yet</h2>
+                <p className="empty-text">Sessions will appear here once you start an AI agent on your desktop.</p>
               </div>
             )}
           </section>
         </>
       )}
+
+      {unbindTarget ? (
+        <div className="modal-backdrop" onClick={() => setUnbindTarget(null)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <h2>Unbind device</h2>
+            <p>
+              This device's History will no longer appear here. Re-pair by generating a new code in the desktop extension.
+              <br />
+              Device: <strong>{unbindTarget.device_name || 'Unnamed Device'}</strong>
+              <br />
+              ID: <code>{unbindTarget.id.slice(-6)}</code>
+            </p>
+            {unbindError ? <p className="error-text">{unbindError}</p> : null}
+            <div className="modal-actions">
+              <button className="ghost-button" type="button" onClick={() => setUnbindTarget(null)} disabled={unbindBusy}>
+                Cancel
+              </button>
+              <button className="primary-button danger-confirm" type="button" onClick={() => void confirmUnbind()} disabled={unbindBusy}>
+                {unbindBusy ? 'Unbinding...' : 'Unbind'}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {unbindAllOpen ? (
+        <div className="modal-backdrop" onClick={() => setUnbindAllOpen(false)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <h2>Unbind all devices</h2>
+            <p>
+              <strong>{devices.devices.length}</strong> device(s) are connected to this Telegram account. After unbinding, History will show no devices. Re-pair by generating a new code in the desktop extension.
+            </p>
+            {unbindError ? <p className="error-text">{unbindError}</p> : null}
+            <div className="modal-actions">
+              <button className="ghost-button" type="button" onClick={() => setUnbindAllOpen(false)} disabled={unbindBusy}>
+                Cancel
+              </button>
+              <button className="primary-button danger-confirm" type="button" onClick={() => void confirmUnbindAll()} disabled={unbindBusy}>
+                {unbindBusy ? 'Unbinding...' : 'Unbind all'}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </main>
   );
 }

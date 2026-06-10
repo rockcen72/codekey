@@ -6,7 +6,7 @@ interface Props {
 
 const TIER_LABEL: Record<string, string> = {
   free: 'Free',
-  trial: '试用',
+  trial: 'Trial',
   pro: 'Pro',
 };
 
@@ -28,10 +28,10 @@ export function SubscriptionPill({ subscription }: Props) {
   const isExpiringSoon = tier !== 'free' && days !== null && days >= 0 && days <= 3;
   const label = tier === 'free' && usage
     ? quotaState === 'exhausted'
-      ? 'Free · 已用完'
+      ? 'Free · Used up'
       : `Free · ${usage.used}/${usage.limit}`
     : tier === 'trial' && days !== null && days >= 0
-      ? `试用 · ${days}天`
+      ? `Trial · ${days}d`
       : TIER_LABEL[tier] || tier.toUpperCase();
   const className = isExpiringSoon ? 'sub-pill-expiring' : `sub-pill-${quotaState === 'hidden' ? `tier-${tier}` : quotaState}`;
 

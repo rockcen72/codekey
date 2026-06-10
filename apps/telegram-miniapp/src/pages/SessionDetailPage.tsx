@@ -27,27 +27,27 @@ const ALLOWED_DECISIONS: Record<string, string[]> = {
 };
 
 const DECISION_LABEL: Record<string, string> = {
-  approve: '已批准',
-  deny: '已拒绝',
-  pause: '已暂缓',
-  reply: '已回复',
-  resolved: '已处理',
+  approve: 'Approved',
+  deny: 'Denied',
+  pause: 'Paused',
+  reply: 'Replied',
+  resolved: 'Resolved',
 };
 
 const RISK_LABEL: Record<string, string> = {
-  low: '低风险',
-  medium: '中风险',
-  high: '高风险',
-  critical: '严重风险',
-  unknown: '未知风险',
+  low: 'Low Risk',
+  medium: 'Medium Risk',
+  high: 'High Risk',
+  critical: 'Critical Risk',
+  unknown: 'Unknown Risk',
 };
 
 const EVENT_LABEL: Record<string, string> = {
-  approval_required: '审批请求',
-  input_required: '选择请求',
-  task_complete: '任务完成',
+  approval_required: 'Approval',
+  input_required: 'Input Required',
+  task_complete: 'Task Complete',
   command_started: 'Command',
-  error: '错误',
+  error: 'Error',
 };
 
 interface InputOption {
@@ -101,7 +101,7 @@ function showToast(msg: string) {
 
 function formatTime(value?: string | null): string {
   if (!value) return '';
-  return new Intl.DateTimeFormat('zh-CN', {
+  return new Intl.DateTimeFormat('en-US', {
     hour: '2-digit',
     minute: '2-digit',
   }).format(new Date(value));
@@ -189,7 +189,7 @@ function buildChatMessages(events: UserEvent[], session: UserSession | null, res
         eventId: event.id,
         type: isAgentContext ? 'agent' : 'user',
         eventType: event.type,
-        senderName: isAgentContext ? agentChatName(eventAgentType) : '你',
+        senderName: isAgentContext ? agentChatName(eventAgentType) : 'You',
         content: prompt,
         command: '',
         typeLabel: '',
@@ -222,7 +222,7 @@ function buildChatMessages(events: UserEvent[], session: UserSession | null, res
       type: 'agent',
       eventType: event.type,
       senderName: agentChatName(eventAgentType),
-      content: event.type === 'command_started' ? '已发送到桌面端，正在交给 Agent 处理...' : summary,
+      content: event.type === 'command_started' ? 'Sent to desktop, processing by Agent...' : summary,
       contentHtml: event.type === 'task_complete' && summary ? markdownToHtml(summary) : undefined,
       command,
       typeLabel: EVENT_LABEL[event.type] || event.type,
@@ -248,7 +248,7 @@ function buildChatMessages(events: UserEvent[], session: UserSession | null, res
         eventId: event.id,
         type: 'user',
         eventType: 'decision',
-        senderName: '你',
+        senderName: 'You',
         content: decisionLabel(effectiveDecision),
         command: '',
         typeLabel: '',
@@ -354,7 +354,7 @@ function MessageRow({ message, resolvedDecision, onDecision }: MessageRowProps) 
               {message.pending ? (
                 <span className="pending-pulse">
                   <span className="pulse-dot" />
-                  等待处理
+                  Pending
                 </span>
               ) : effectiveDecision ? (
                 <span className={`decision-tag ${effectiveDecision}`}>{decisionLabel(effectiveDecision)}</span>
@@ -372,7 +372,7 @@ function MessageRow({ message, resolvedDecision, onDecision }: MessageRowProps) 
                     type="text"
                     value={replyText}
                     onChange={(event) => setReplyText(event.target.value)}
-                    placeholder={message.eventType === 'input_required' ? '输入选择或说明...' : '回复 Agent...'}
+                    placeholder={message.eventType === 'input_required' ? 'Type option or instruction...' : 'Reply to Agent...'}
                     disabled={busy !== null}
                   />
                   <button
@@ -381,7 +381,7 @@ function MessageRow({ message, resolvedDecision, onDecision }: MessageRowProps) 
                     disabled={!replyText.trim() || busy !== null}
                     onClick={() => void handleDecision('reply', replyText.trim())}
                   >
-                    {busy === 'reply' ? '...' : '发送'}
+                    {busy === 'reply' ? '...' : 'Send'}
                   </button>
                 </div>
               ) : null}
@@ -428,7 +428,7 @@ function ApprovalDock({ message, onDecision }: DockProps) {
         <button className="dock-bar" type="button" onClick={() => setExpanded((value) => !value)}>
           <span className="dock-bar-left">
             <span className="dock-pulse" />
-            <span className="dock-kicker">{message.eventType === 'input_required' ? '需要选择' : '等待审批'}</span>
+            <span className="dock-kicker">{message.eventType === 'input_required' ? 'Selection needed' : 'Awaiting approval'}</span>
             <span className="dock-title">{message.content || message.command || message.typeLabel}</span>
           </span>
           <span className="dock-bar-right">
@@ -466,7 +466,7 @@ function ApprovalDock({ message, onDecision }: DockProps) {
                   className="dock-reply-input"
                   value={replyText}
                   onChange={(event) => setReplyText(event.target.value)}
-                  placeholder={message.eventType === 'input_required' ? '输入选择或说明...' : '回复 Agent...'}
+                  placeholder={message.eventType === 'input_required' ? 'Type option or instruction...' : 'Reply to Agent...'}
                   disabled={busy !== null}
                 />
                 <button
@@ -475,7 +475,7 @@ function ApprovalDock({ message, onDecision }: DockProps) {
                   disabled={!replyText.trim() || busy !== null}
                   onClick={() => void send('reply', replyText.trim())}
                 >
-                  发送
+                  Send
                 </button>
               </div>
             ) : null}
@@ -556,7 +556,7 @@ export function SessionDetailPage({ auth }: Props) {
       setSession(nextSession);
       setError(null);
     } catch (err) {
-      setError(err instanceof Error ? err.message : '加载会话失败');
+      setError(err instanceof Error ? err.message : 'Failed to load session');
     } finally {
       loadingRef.current = false;
     }
@@ -645,11 +645,11 @@ export function SessionDetailPage({ auth }: Props) {
       });
       await load();
     } catch (err) {
-      const msg = err instanceof Error ? err.message : '操作失败';
+      const msg = err instanceof Error ? err.message : 'Operation failed';
       if (msg.includes('ALREADY_RESPONDED') || msg.includes('BRIDGE_NOT_CONNECTED') || msg.includes('RISK_TOO_HIGH')) {
-        const label = msg.includes('ALREADY_RESPONDED') ? '审批已处理'
-          : msg.includes('BRIDGE_NOT_CONNECTED') ? '桌面端未连接'
-          : '风险过高，不能批准';
+        const label = msg.includes('ALREADY_RESPONDED') ? 'Already responded'
+          : msg.includes('BRIDGE_NOT_CONNECTED') ? 'Desktop not connected'
+          : 'Risk too high to approve';
         showToast(label);
         await load();
       } else {
@@ -667,10 +667,10 @@ export function SessionDetailPage({ auth }: Props) {
         body: JSON.stringify({ text: promptText.trim() }),
       });
       setPromptText('');
-      showToast('已发送到桌面端');
+      showToast('Sent to desktop');
       await load();
     } catch (err) {
-      const msg = err instanceof Error ? err.message : '发送失败';
+      const msg = err instanceof Error ? err.message : 'Send failed';
       showToast(msg);
     } finally {
       setPromptBusy(false);
@@ -680,14 +680,14 @@ export function SessionDetailPage({ auth }: Props) {
   return (
     <main className={`detail-shell agent-${detailAgentClass}`}>
       <header className="detail-topbar">
-        <button className="back-btn" type="button" onClick={() => navigate('/')} aria-label="返回">
+        <button className="back-btn" type="button" onClick={() => navigate('/')} aria-label="Back">
           ‹
         </button>
         <div className="title-wrap">
           <h1 className="detail-title">{title}</h1>
           <span className="detail-subtitle">{session?.metadata.cwd || session?.metadata.runtime || session?.agent_type || ''}</span>
         </div>
-        <button className="ws-indicator online" type="button" onClick={() => void load()} aria-label="刷新">
+        <button className="ws-indicator online" type="button" onClick={() => void load()} aria-label="Refresh">
           <span className="ws-dot" />
         </button>
       </header>
@@ -698,8 +698,8 @@ export function SessionDetailPage({ auth }: Props) {
         {messages.length === 0 ? (
           <div className="empty">
             <span className="empty-icon">◌</span>
-            <h2 className="empty-title">暂无消息</h2>
-            <p className="empty-text">当 Agent 请求审批、完成任务或等待指令时，会显示在这里。</p>
+            <h2 className="empty-title">No messages yet</h2>
+            <p className="empty-text">Messages will appear here when the Agent requests approval, completes tasks, or waits for instructions.</p>
           </div>
         ) : null}
         {messages.map((message) => (
@@ -729,7 +729,7 @@ export function SessionDetailPage({ auth }: Props) {
                     void sendPrompt();
                   }
                 }}
-                placeholder="给 Agent 发送指令..."
+                placeholder="Send command to Agent..."
                 disabled={promptBusy}
               />
             </div>
@@ -738,7 +738,7 @@ export function SessionDetailPage({ auth }: Props) {
               type="button"
               disabled={!promptText.trim() || promptBusy}
               onClick={() => void sendPrompt()}
-              aria-label="发送"
+              aria-label="Send"
             >
               ↑
             </button>

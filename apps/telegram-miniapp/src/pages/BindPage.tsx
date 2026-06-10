@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useState, useEffect } from 'react';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { publicRequest, userRequest } from '../api/client';
 import type { AuthState } from '../hooks/useAuth';
 import type { ClaimResult, ConfirmResult } from '../api/types';
@@ -9,12 +9,18 @@ interface Props {
 }
 
 export function BindPage({ auth }: Props) {
-  const [code, setCode] = useState('');
+  const navigate = useNavigate();
+  const location = useLocation();
+
+  // Read code from URL ?code= (passed by DeepLinkRedirect from start_param)
+  const urlParams = new URLSearchParams(location.search);
+  const urlCode = urlParams.get('code') || '';
+
+  const [code, setCode] = useState(urlCode);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const navigate = useNavigate();
 
-  async function bind() {
+  async function bindWithCode(code: string) {
     if (!auth.token || code.length < 8) return;
     setBusy(true);
     setError(null);
@@ -35,6 +41,15 @@ export function BindPage({ auth }: Props) {
     }
   }
 
+  // Auto-submit when URL has code and auth is ready
+  useEffect(() => {
+    if (!auth.token) return;
+    if (code && code.length >= 8) {
+      const timer = setTimeout(() => { void bindWithCode(code); }, 600);
+      return () => clearTimeout(timer);
+    }
+  }, [auth.token]);
+
   return (
     <main className="shell">
       <header className="page-header">
@@ -53,7 +68,7 @@ export function BindPage({ auth }: Props) {
           placeholder="ABCDEFGH"
         />
         {error ? <p className="error-text">{error}</p> : null}
-        <button className="primary-button" type="button" onClick={() => void bind()} disabled={busy || code.length < 8}>
+        <button className="primary-button" type="button" onClick={() => void bindWithCode(code)} disabled={busy || code.length < 8}>
           {busy ? 'Binding...' : 'Confirm'}
         </button>
       </section>
