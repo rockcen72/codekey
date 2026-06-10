@@ -95,11 +95,15 @@ export function activate(context: vscode.ExtensionContext) {
   // Bridge + hook + label sync (session created on Attach, not auto)
   ensureCcSessionSync(context);
 
-  // Auto-install Codex hooks (if Codex extension/detected and hooks not yet installed)
-  if (isCodexExtensionActive() && !isCodexHookInstalled()) {
+  // Auto-install/refresh Codex hooks only after pairing. These hooks are global
+  // to Codex, so an unpaired CodeKey install must not affect normal Codex usage.
+  if (creds?.deviceToken && isCodexExtensionActive()) {
     const scriptsDir = vscode.Uri.joinPath(context.extensionUri, 'scripts').fsPath;
     installCodexHook(scriptsDir);
-    log('Codex hooks auto-installed');
+    log('Codex hooks auto-installed/refreshed');
+  } else if (!creds?.deviceToken && isCodexHookInstalled()) {
+    uninstallCodexHook();
+    log('Codex hooks removed because CodeKey is not paired');
   }
 
   // OpenCode telemetry plugin is installed via explicit command (CodeKey: Enable OpenCode Integration)

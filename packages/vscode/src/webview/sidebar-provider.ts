@@ -96,6 +96,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
   private _bridgeDisposable?: vscode.Disposable;
   private _hadCcRunning = false;
   private _pairingState: PairingState | undefined = undefined;
+  private _selectedPairingPlatform: 'wechat' | 'feishu' | 'telegram' = 'telegram';
   private _firstPush = true;
   private _bridgeApprovals: BridgePendingApproval[] = [];
   private _bridgeSupportsPendingApprovals = false;
@@ -937,7 +938,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       deviceId: creds?.deviceId,
       deviceSecret: creds?.deviceSecret,
       feishuAppId: vscode.workspace.getConfiguration('codekey').get<string>('feishuAppId', ''),
-      pairingPlatform: creds?.platform,
+      pairingPlatform: this._pairingState?.platform || creds?.platform || this._selectedPairingPlatform,
       pairing: this._pairingState,
       subscription,
     };
@@ -1198,10 +1199,20 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         this._handlePairingGenerate();
         break;
       case 'switchPlatform':
+        this._selectedPairingPlatform = msg.platform === 'wechat' ? 'wechat'
+          : msg.platform === 'feishu' ? 'feishu'
+          : 'telegram';
         if (this._pairingState) {
-          this._pairingState.platform = msg.platform === 'feishu' ? 'feishu' : 'wechat';
+          this._pairingState.platform = this._selectedPairingPlatform;
+          this._pairingState.method = this._selectedPairingPlatform === 'telegram' ? 'qr' : 'code';
         }
         this._pushState();
+        break;
+      case 'platformPair':
+        this._selectedPairingPlatform = msg.platform === 'wechat' ? 'wechat'
+          : msg.platform === 'feishu' ? 'feishu'
+          : 'telegram';
+        this._handlePairingGenerate();
         break;
       case 'pairedDevice':
         this._handlePairingComplete(msg.token, msg.deviceId);
@@ -1215,19 +1226,40 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
   private async _handleUnpair(): Promise<void> {
     this._closePairingSocket();
     const creds = loadCredentials();
+    let localOnly = false;
     if (creds?.deviceToken) {
       try {
-        await secureFetch(`${creds.relayUrl}/api/v1/devices/${creds.deviceId}`, {
+        const res = await secureFetch(`${creds.relayUrl}/api/v1/devices/${creds.deviceId}`, {
           method: 'DELETE',
           headers: { 'Authorization': `Bearer ${creds.deviceToken}` },
           signal: AbortSignal.timeout(5000),
         });
-      } catch {}
+        if (!res.ok) {
+          let message = res.statusText || `HTTP ${res.status}`;
+          try {
+            const body = await res.json() as { error?: string };
+            message = body.error || message;
+          } catch {
+            // Keep the HTTP status message when the response body is not JSON.
+          }
+          throw new Error(message);
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : 'server request failed';
+        const choice = await vscode.window.showWarningMessage(
+          `CodeKey could not unpair this device on the server: ${msg}. Telegram may still show it as bound.`,
+          'Retry Later',
+          'Reset Local Only',
+        );
+        if (choice !== 'Reset Local Only') return;
+        localOnly = true;
+      }
     }
     clearCredentials();
     this._pairingState = undefined;
+    this._selectedPairingPlatform = 'telegram';
     this._pushState();
-    vscode.window.showInformationMessage('Device unpaired');
+    vscode.window.showInformationMessage(localOnly ? 'Local CodeKey credentials reset' : 'Device unpaired');
   }
 
   private async _handlePairingGenerate(): Promise<void> {
@@ -1247,7 +1279,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         signal: AbortSignal.timeout(10000),
       });
       if (!resp.ok) {
-        this._pairingState = { code: '', method: 'code', platform: this._pairingState?.platform || 'wechat', status: 'error', statusText: 'Pairing failed', expiresAt: 0 };
+        this._pairingState = { code: '', method: (this._pairingState?.platform || this._selectedPairingPlatform) === 'telegram' ? 'qr' : 'code', platform: this._pairingState?.platform || this._selectedPairingPlatform, status: 'error', statusText: 'Pairing failed', expiresAt: 0 };
         this._pushState();
         return;
       }
@@ -1258,8 +1290,8 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       this._openPairingSocket(result.deviceId, deviceSecret, relayUrl);
       this._pairingState = {
         code: String(result.code),
-        method: 'code',
-        platform: this._pairingState?.platform || 'wechat',
+        method: (this._pairingState?.platform || this._selectedPairingPlatform) === 'telegram' ? 'qr' : 'code',
+        platform: this._pairingState?.platform || this._selectedPairingPlatform,
         status: 'waiting',
         statusText: 'Waiting for scan...',
         expiresAt: Date.now() + (result.expiresIn ?? 300) * 1000,
@@ -1269,7 +1301,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     } catch (err) {
       const msg = (err as Error).message;
       log(`pairing generate failed: ${msg}`);
-      this._pairingState = { code: '', method: 'code', platform: this._pairingState?.platform || 'wechat', status: 'error', statusText: `Connection failed: ${msg}`, expiresAt: 0 };
+      this._pairingState = { code: '', method: (this._pairingState?.platform || this._selectedPairingPlatform) === 'telegram' ? 'qr' : 'code', platform: this._pairingState?.platform || this._selectedPairingPlatform, status: 'error', statusText: `Connection failed: ${msg}`, expiresAt: 0 };
       this._pushState();
       vscode.window.showErrorMessage(`CodeKey: pairing failed — ${msg}`);
     }
@@ -1300,8 +1332,8 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       this._closePairingSocket();
       this._pairingState = {
         code: this._pairingState?.code || '',
-        method: 'code',
-        platform: this._pairingState?.platform || 'wechat',
+        method: (this._pairingState?.platform || this._selectedPairingPlatform) === 'telegram' ? 'qr' : 'code',
+        platform: this._pairingState?.platform || this._selectedPairingPlatform,
         status: 'error',
         statusText: 'Pairing timed out',
         expiresAt: 0,
@@ -1321,8 +1353,8 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         if (msg.type === 'pairing_ready') {
           this._pairingState = {
             code: this._pairingState?.code || '',
-            method: 'code',
-            platform: this._pairingState?.platform || 'wechat',
+            method: (this._pairingState?.platform || this._selectedPairingPlatform) === 'telegram' ? 'qr' : 'code',
+            platform: this._pairingState?.platform || this._selectedPairingPlatform,
             status: 'waiting',
             statusText: 'Code accepted. Waiting for confirmation...',
             expiresAt: this._pairingState?.expiresAt || Date.now() + 5 * 60 * 1000,
@@ -1357,8 +1389,8 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       log('Pairing completed without device token');
       this._pairingState = {
         code: this._pairingState?.code || '',
-        method: 'code',
-        platform: this._pairingState?.platform || 'wechat',
+        method: (this._pairingState?.platform || this._selectedPairingPlatform) === 'telegram' ? 'qr' : 'code',
+        platform: this._pairingState?.platform || this._selectedPairingPlatform,
         status: 'error',
         statusText: 'Pairing failed: missing device token',
         expiresAt: 0,
@@ -1372,7 +1404,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       if (deviceId) creds.deviceId = deviceId;
       creds.deviceToken = token;
       const platform = this._pairingState?.platform;
-      if (platform === 'feishu' || platform === 'wechat') creds.platform = platform;
+      if (platform === 'feishu' || platform === 'wechat' || platform === 'telegram') creds.platform = platform;
       const { saveCredentials } = await import('../auth/credentials.js');
       saveCredentials(creds);
       BridgeStatusService.getInstance().restart();
@@ -1380,10 +1412,12 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     }
     this._pairingState = {
       code: this._pairingState?.code || '',
-      method: 'code',
-      platform: this._pairingState?.platform || 'wechat',
+      method: (this._pairingState?.platform || this._selectedPairingPlatform) === 'telegram' ? 'qr' : 'code',
+      platform: this._pairingState?.platform || this._selectedPairingPlatform,
       status: 'paired',
-      statusText: this._pairingState?.platform === 'feishu' ? 'Connected via Feishu' : 'Connected via WeChat',
+      statusText: this._pairingState?.platform === 'wechat' ? 'Connected via WeChat'
+        : this._pairingState?.platform === 'feishu' ? 'Connected via Feishu'
+        : 'Connected via Telegram',
       expiresAt: 0,
     };
     this._pushState();

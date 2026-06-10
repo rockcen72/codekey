@@ -9,7 +9,7 @@ export interface Credentials {
   deviceSecret: string;
   deviceToken?: string;
   relayUrl: string;
-  platform?: 'wechat' | 'feishu';
+  platform?: 'wechat' | 'feishu' | 'telegram';
 }
 
 function credentialsPath(): string {

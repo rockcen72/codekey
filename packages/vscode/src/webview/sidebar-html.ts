@@ -17,7 +17,7 @@ export interface PendingApprovalItem {
 export interface PairingState {
   code: string;
   method: 'code' | 'qr';
-  platform: 'wechat' | 'feishu';
+  platform: 'wechat' | 'feishu' | 'telegram';
   status: 'idle' | 'waiting' | 'paired' | 'error';
   statusText: string;
   expiresAt: number;
@@ -172,12 +172,11 @@ export function renderAgentsContent(state: SidebarState): string {
     const isActive = a.runtimeStatus === 'active';
     const activeColor = AGENT_DOT_CLASS[a.id] || 'green';
     const dotClass = isActive ? `${activeColor} pulse` : 'gray';
-    const integOk = a.integrationStatus === 'enabled';
-    let modeHtml = '';
-    if (a.canInstall) {
-      modeHtml = `<a class="agent-install" data-action="install-opencode">${i18n(state.lang, 'Install', '安装')}</a>`;
-    } else if (!integOk) {
-      modeHtml = a.id === 'codex' ? `<a class="agent-install" data-action="toggle-codex-hook">${i18n(state.lang, 'Install Hook', '安装钩子')}</a>` : i18n(state.lang, 'Not connected', '未连接');
+    // Determine display: "已连接" if the tool itself is installed/available in VS Code,
+    // regardless of hook/plugin integration status
+    let modeHtml: string;
+    if (a.runtimeStatus === 'unavailable') {
+      modeHtml = i18n(state.lang, 'Not installed', '未安装');
     } else {
       modeHtml = i18n(state.lang, 'Connected', '已连接');
     }
@@ -429,20 +428,20 @@ export function renderPairingContent(state: SidebarState): string {
   const p = state.pairing;
   const isWaiting = p?.status === 'waiting';
   const hasLocalCreds = !!state.deviceId && !!state.deviceSecret;
-  // If a pairing flow is actively waiting (code just generated, scan pending),
-  // show the pairing code regardless of stored credentials.
   const isPaired = (state.deviceStatus === 'paired' || hasLocalCreds) && !isWaiting;
-  const method = p?.method || 'code';
   const codeDigits = p?.code || '--------';
   const codeExpires = p?.expiresAt || 0;
-  const platform = p?.platform || state.pairingPlatform || 'wechat';
-  const isFeishu = platform === 'feishu';
+  const platform = p?.platform || state.pairingPlatform || 'telegram';
   const feishuAppId = state.feishuAppId || '';
   const hasFeishu = !!feishuAppId;
   const hasPartialCreds = !!(state.deviceId || state.deviceSecret);
   const wechatName = i18n(state.lang, 'WeChat', '微信');
   const feishuName = i18n(state.lang, 'Feishu', '飞书');
-  const platName = isFeishu ? feishuName : wechatName;
+  const telegramName = i18n(state.lang, 'Telegram', 'Telegram');
+  const platName = platform === 'wechat' ? wechatName
+    : platform === 'feishu' ? feishuName
+    : telegramName;
+  const hasCode = !!p?.code;
 
   // When paired, collapse to a compact connected card (no code/QR clutter)
   if (isPaired) {
@@ -460,68 +459,80 @@ export function renderPairingContent(state: SidebarState): string {
     </div>`;
   }
 
-  // Generate both QR SVGs so JS can switch client-side without round-trip
-  const wechatQrSvg = p?.code ? generateQrSvg(p.code, 160) : '';
+  // Generate QR SVGs
+  const qrSize = 200;
+  const wechatQrSvg = p?.code ? generateQrSvg(p.code, qrSize) : '';
   const feishuQrSvg = p?.code && feishuAppId
-    ? generateQrSvg(`feishu://app/${feishuAppId}/pages/login/login?code=${p.code}&platform=feishu`, 160)
+    ? generateQrSvg(`feishu://app/${feishuAppId}/pages/login/login?code=${p.code}&platform=feishu`, qrSize)
     : '';
-  const hasQr = !!(wechatQrSvg || feishuQrSvg);
+  const tgDeepLink = p?.code
+    ? `https://t.me/CodekeyAiBot?startapp=${p.code}`
+    : '';
+  const tgQrSvg = tgDeepLink ? generateQrSvg(tgDeepLink, qrSize) : '';
 
-  const feishuToggleHtml = hasFeishu ? `<div class="platform-toggle">
-    <div class="plat-opt${platform === 'wechat' ? i18n(state.lang, " active", " 活跃") : ''}" data-platform="wechat">
-      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 22H5a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v16a2 2 0 0 1-2 2h-4m-4 0v-4m0 4h4m0-4H9m0 0v-6a4 4 0 0 1 6-3.3"/></svg>
+  // Platform toggle — all neutral, no default selection
+  const platToggleHtml = `<div class="platform-toggle">
+    <div class="plat-opt" data-platform="telegram">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M11.944 0A12 12 0 0 0 0 12a12 12 0 0 0 12 12 12 12 0 0 0 12-12A12 12 0 0 0 12 0a12 12 0 0 0-.056 0zm4.962 7.224c.1-.002.321.023.465.14a.506.506 0 0 1 .171.325c.016.127-.007.352-.032.483L15.29 14.49c-.049.21-.181.404-.34.52-.19.14-.433.205-.693.152-.025-.005-.052-.01-.076-.016l-2.012-.613-1.09 1.273c-.12.142-.282.219-.458.216a.526.526 0 0 1-.046-.002l.414-2.235s3.745-3.39 3.907-3.557c.018-.018.044-.054-.012-.063-.055-.01-.125.022-.125.022l-5.03 3.243-1.82-.606c-.38-.12-.4-.386-.083-.586l7.203-4.26c.168-.1.37-.14.566-.142z"/></svg>
+      Telegram
+    </div>
+    <div class="plat-opt" data-platform="wechat">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M8.691 2.188C3.891 2.188 0 5.476 0 9.53c0 2.212 1.17 4.203 3.002 5.55a.59.59 0 0 1 .213.665l-.39 1.48c-.019.07-.048.141-.048.213 0 .163.13.295.29.295a.326.326 0 0 0 .167-.054l1.903-1.114a.864.864 0 0 1 .717-.098 10.16 10.16 0 0 0 2.837.403c.276 0 .543-.027.811-.05-.857-2.578.157-4.972 1.932-6.446 1.703-1.415 3.882-1.98 5.853-1.838-.576-3.583-4.196-6.348-8.596-6.348zM17.18 9.418c-2.256 0-4.288.842-5.73 2.22-1.393 1.33-2.114 3.117-1.963 4.977.157 1.941 1.497 3.605 3.51 4.582.84.408 1.805.65 2.876.65.44 0 .87-.04 1.286-.118l1.448.847a.26.26 0 0 0 .127.04.224.224 0 0 0 .221-.224c0-.054-.022-.11-.037-.163l-.297-1.124a.448.448 0 0 1 .162-.506C20.125 19.155 21 17.58 21 15.78c0-3.36-3.053-6.362-3.82-6.362zm-5.222 3.137a.733.733 0 1 1 0 1.466.733.733 0 0 1 0-1.466zm3.676 0a.733.733 0 1 1 0 1.466.733.733 0 0 1 0-1.466z"/></svg>
       WeChat
     </div>
-    <div class="plat-opt${platform === 'feishu' ? i18n(state.lang, " active", " 活跃") : ''}" data-platform="feishu">
-      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
-      Feishu
+    <div class="plat-opt${!hasFeishu ? ' disabled' : ''}" data-platform="feishu">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M4.5 2A2.5 2.5 0 0 0 2 4.5v15A2.5 2.5 0 0 0 4.5 22h15a2.5 2.5 0 0 0 2.5-2.5v-15A2.5 2.5 0 0 0 19.5 2h-15zM8 7a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2h-2V9h-4v2H8V7zm-1 5h10v2h-4v2h-2v-2H7v-2z"/></svg>
+      Feishu${!hasFeishu ? '<span class="plat-badge">Coming Soon</span>' : ''}
     </div>
-  </div>` : '';
+  </div>`;
 
-  return `<div class="pairing-methods">
-    ${feishuToggleHtml}
-    <div class="method-option ${method === 'code' ? 'active' : ''}" data-method="code">
-      <div class="method-header" data-toggle="code">
-        <div class="method-radio"></div>
-        <div>
-          <div class="method-label">${i18n(state.lang, 'Code Pairing', '配对码')}</div>
-          <div class="method-hint">${i18n(state.lang, 'Enter this pairing code in the mini program', '在移动端小程序中输入此配对码')}</div>
-        </div>
-      </div>
-      <div class="method-body" style="${method === 'code' ? 'max-height:300px;padding:0 10px 12px' : ''}">
-        <div class="code-display-wrap">
-          <div class="code-digits" id="codeDigits" data-expires="${codeExpires}">${h(codeDigits)}</div>
-          <div class="code-timer" id="codeTimer">${i18n(state.lang, 'Code expires in ', '配对码')}<span id="countdown">5:00</span>${i18n(state.lang, '', '后过期')}</div>
-          <div class="code-actions">
-            <button class="btn btn-sm btn-ghost" data-action="regeneratePairingCode">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
-              ${i18n(state.lang, 'Regenerate', '重新生成')}
-            </button>
-            ${hasPartialCreds ? `<button class="btn btn-sm btn-ghost" data-action="unpairDevice">${i18n(state.lang, 'Reset', '重置')}</button>` : ''}
-          </div>
-        </div>
-      </div>
-    </div>
-    <div class="method-option ${method === 'qr' ? 'active' : ''}" data-method="qr">
-      <div class="method-header" data-toggle="qr">
-        <div class="method-radio"></div>
-        <div>
-          <div class="method-label">${i18n(state.lang, 'QR Code', '二维码')}</div>
-          <div class="method-hint">${i18n(state.lang, 'Scan to pair in mini program', '在小程序内扫码配对')}</div>
-        </div>
-      </div>
-      <div class="method-body" style="${method === 'qr' ? 'max-height:300px;padding:0 10px 12px' : ''}">
-        <div style="text-align:center">
-          <div id="qrVisual">
-            ${!hasQr
-              ? `<div style="width:160px;height:160px;display:inline-flex;align-items:center;justify-content:center;color:#50506e;font-size:12px">${i18n(state.lang, 'Generate a code first', '请先生成配对码')}</div>`
-              : `<div id="qrWechat" style="display:${isFeishu ? 'none' : 'inline-block'}">${wechatQrSvg}</div>`
-                + (feishuQrSvg ? `<div id="qrFeishu" style="display:${isFeishu ? 'inline-block' : 'none'}">${feishuQrSvg}</div>` : '')
-            }
-          </div>
-        </div>
-      </div>
-    </div>
+  // Combined view: code digits + QR side by side (or stacked)
+  const codeHtml = `<div class="code-display-wrap">
+    <div class="code-digits" id="codeDigits" data-expires="${codeExpires}">${h(codeDigits)}</div>
+    <div class="code-timer" id="codeTimer">${i18n(state.lang, 'Code expires in ', '配对码')}<span id="countdown">5:00</span>${i18n(state.lang, '', '后过期')}</div>
+  </div>`;
+
+  const qrHtml = `<div id="qrVisual" class="qr-visual-wrap">
+    ${!hasCode
+      ? `<div style="width:${qrSize}px;height:${qrSize}px;display:inline-flex;align-items:center;justify-content:center;color:#50506e;font-size:12px">${i18n(state.lang, 'Generate a code first', '请先生成配对码')}</div>`
+      : `<div id="qrTelegram" style="display:${platform === 'telegram' ? 'inline-block' : 'none'}">${tgQrSvg}</div>`
+        + `<div id="qrWechat" style="display:${platform === 'wechat' ? 'inline-block' : 'none'}">${wechatQrSvg}</div>`
+        + (feishuQrSvg ? `<div id="qrFeishu" style="display:${platform === 'feishu' ? 'inline-block' : 'none'}">${feishuQrSvg}</div>` : '')
+    }
+  </div>`;
+
+  const actionHtml = `<div class="code-actions">
+    <button class="btn btn-sm btn-ghost" data-action="regeneratePairingCode">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+      ${i18n(state.lang, 'Regenerate', '重新生成')}
+    </button>
+    ${hasPartialCreds ? `<button class="btn btn-sm btn-ghost" data-action="unpairDevice">${i18n(state.lang, 'Reset', '重置')}</button>` : ''}
+  </div>`;
+
+  const tgGuide = platform === 'telegram' && hasCode
+    ? `<div class="tg-guide">
+      <div class="guide-step">1. Scan QR with phone camera or open Telegram</div>
+      <div class="guide-step">2. Mini App opens → code auto-filled</div>
+      <div class="guide-step">3. Tap <strong>Confirm</strong> to pair</div>
+    </div>` : '';
+  const wechatGuide = platform === 'wechat' && hasCode
+    ? `<div class="tg-guide">
+      <div class="guide-step">1. Open WeChat on your phone</div>
+      <div class="guide-step">2. Search for <strong>CodeKey</strong> mini program</div>
+      <div class="guide-step">3. Tap <strong>Scan QR</strong> on the home page to pair</div>
+    </div>` : '';
+  const guideHtml = tgGuide || wechatGuide;
+
+  // Hide actions/guide when no code generated yet — platforms auto-generate on click
+  return `<div class="pairing-content">
+    ${platToggleHtml}
+    ${hasCode ? `<div class="pairing-code-area">
+      ${codeHtml}
+      <div class="pairing-divider"><span>${i18n(state.lang, 'or scan QR', '或扫码')}</span></div>
+      ${qrHtml}
+      ${guideHtml}
+      ${actionHtml}
+    </div>` : `<div class="pairing-placeholder">${i18n(state.lang, 'Select a platform above to pair', '选择一个平台开始配对')}</div>`}
   </div>`;
 }
 
@@ -649,7 +660,7 @@ ${renderSubscribe(state)}
       // Update content sections (skip if unchanged)
       swap('deviceContent', d.deviceHtml);
       swap('pairingContent', d.pairingHtml);
-      applySavedPlatform();
+      applySavedPlatform(false);
       swap('agentsContent', d.agentsHtml);
       swap('approvalsContent', d.approvalsHtml);
       replaceById('subscriptionFooter', d.subscriptionHtml);
@@ -717,17 +728,8 @@ ${renderSubscribe(state)}
     }
   });
 
-  // Pairing method toggle (local UI only)
+  // Pairing method toggle removed — code and QR shown together
   document.addEventListener('click', function(e) {
-    var toggle = e.target.closest('.method-header');
-    if (toggle) {
-      var opt = toggle.closest('.method-option');
-      if (!opt) return;
-      document.querySelectorAll('.method-option').forEach(function(o) { o.classList.remove('active'); });
-      opt.classList.add('active');
-      try { sessionStorage.setItem('pairingMethod', opt.dataset.method); } catch(e) {}
-      return;
-    }
     // Agent tab filter (Local Sessions card)
     var tab = e.target.closest('.agent-tab');
     if (tab) {
@@ -738,19 +740,21 @@ ${renderSubscribe(state)}
       applyAgentFilter();
       return;
     }
-    // Platform toggle (WeChat / Feishu)
+    // Platform toggle — click to switch, auto-generate if no code yet
     var plat = e.target.closest('.plat-opt');
     if (plat) {
+      if (plat.classList.contains('disabled')) return;
       var platform = plat.dataset.platform;
       document.querySelectorAll('.plat-opt').forEach(function(p) { p.classList.toggle('active', p.dataset.platform === platform); });
-      var isFeishu = platform === 'feishu';
-      var qrW = document.getElementById('qrWechat');
-      var qrF = document.getElementById('qrFeishu');
-      if (qrW) qrW.style.display = isFeishu ? 'none' : 'block';
-      if (qrF) qrF.style.display = isFeishu ? 'block' : 'none';
-      var name = isFeishu ? 'Feishu' : 'WeChat';
-      document.querySelectorAll('.plat-label').forEach(function(el) { el.textContent = name; });
+      ['Telegram', 'Wechat', 'Feishu'].forEach(function(p) {
+        var el = document.getElementById('qr' + p);
+        if (el) el.style.display = p.toLowerCase() === platform ? 'inline-block' : 'none';
+      });
       try { sessionStorage.setItem('pairingPlatform', platform); } catch(e) {}
+      // Auto-generate pairing code on first platform click (no code yet)
+      var codeDigits = document.getElementById('codeDigits');
+      var needsCode = !codeDigits || codeDigits.textContent === '--------';
+      api.postMessage({ action: needsCode ? 'platformPair' : 'switchPlatform', platform: platform });
       return;
     }
   });
@@ -818,20 +822,25 @@ ${renderSubscribe(state)}
   }
 
   // Apply saved platform preference on the current DOM
-  function applySavedPlatform() {
+  function applySavedPlatform(syncToProvider) {
     var saved;
     try { saved = sessionStorage.getItem('pairingPlatform'); } catch(e) {}
-    var platform = saved || 'wechat';
+    if (!saved) return; // no saved preference, keep all neutral
+    // If the saved platform is disabled (Feishu pending approval), fall back to telegram
+    var platform = saved;
+    var platEl = document.querySelector('.plat-opt[data-platform="' + platform + '"]');
+    if (platEl && platEl.classList.contains('disabled')) platform = 'telegram';
     var toggles = document.querySelectorAll('.plat-opt');
-    if (toggles.length === 0) return; // no platform toggle (feishuAppId not configured)
-    var isFeishu = platform === 'feishu';
+    if (toggles.length === 0) return;
     toggles.forEach(function(t) { t.classList.toggle('active', t.dataset.platform === platform); });
-    var qrW = document.getElementById('qrWechat');
-    var qrF = document.getElementById('qrFeishu');
-    if (qrW) qrW.style.display = isFeishu ? 'none' : 'block';
-    if (qrF) qrF.style.display = isFeishu ? 'block' : 'none';
-    var name = isFeishu ? 'Feishu' : 'WeChat';
-    document.querySelectorAll('.plat-label').forEach(function(el) { el.textContent = name; });
+    ['Telegram', 'Wechat', 'Feishu'].forEach(function(p) {
+      var el = document.getElementById('qr' + p);
+      if (el) el.style.display = p.toLowerCase() === platform ? 'inline-block' : 'none';
+    });
+    // Only sync to provider on user click, not on passive state restoration
+    if (syncToProvider) {
+      api.postMessage({ action: 'switchPlatform', platform: platform });
+    }
   }
 
   // Restore agent filter on load + after each re-render
@@ -848,19 +857,8 @@ ${renderSubscribe(state)}
   } catch(e) {}
 
   // Restore saved pairing method
-  try {
-    var saved = sessionStorage.getItem('pairingMethod');
-    if (saved) {
-      var savedOpt = document.querySelector('.method-option[data-method="' + saved + '"]');
-      if (savedOpt) {
-        document.querySelectorAll('.method-option').forEach(function(o) { o.classList.remove('active'); });
-        savedOpt.classList.add('active');
-      }
-    }
-  } catch(e) {}
-
   // Restore saved platform preference
-  applySavedPlatform();
+  applySavedPlatform(false);
 
   // Countdown timer (local, based on data-expires timestamp)
   var countdownTimer = setInterval(function() {
@@ -931,6 +929,11 @@ ${renderSubscribe(state)}
         sessionId: target.dataset.sessionId,
       });
       return;
+    }
+
+    // Unpair: clear sessionStorage before notifying provider
+    if (action === 'unpairDevice') {
+      try { sessionStorage.removeItem('pairingPlatform'); } catch(e) {}
     }
 
     api.postMessage({ action: action });
@@ -1316,50 +1319,11 @@ body{
 }
 .pairing-methods{display:flex;flex-direction:column;gap:8px}
 .platform-toggle{display:flex;gap:4px;padding:0 2px 2px}
-.plat-opt{
-  display:inline-flex;align-items:center;gap:4px;
-  padding:4px 10px;border-radius:6px;font-size:10px;font-weight:500;
-  background:var(--vscode-sideBar-background,#0f0f18);
-  border:1px solid var(--vscode-panel-border,#1e1e2e);
-  color:var(--vscode-descriptionForeground,#50506e);
-  cursor:pointer;transition:all .2s;user-select:none;
-}
-.plat-opt svg{width:10px;height:10px;opacity:.6}
-.plat-opt:hover{color:var(--vscode-editor-foreground);border-color:var(--vscode-descriptionForeground,#50506e)}
-.plat-opt.active{
-  background:rgba(0,255,224,.08);color:var(--vscode-textLink-foreground,#00ffe0);
-  border-color:rgba(0,255,224,.2);
-}
-.plat-opt.active svg{opacity:1}
-.plat-label{font-weight:600}
-.method-option{
-  background:var(--vscode-sideBar-background,#0f0f18);
-  border:1px solid var(--vscode-panel-border,#1e1e2e);
-  border-radius:8px;overflow:hidden;
-  transition:border-color .2s;
-}
-.method-option.active{border-color:rgba(0,255,224,.2)}
-.method-header{
-  display:flex;align-items:center;gap:8px;padding:8px 10px;
-  cursor:pointer;user-select:none;
-}
-.method-radio{
-  width:14px;height:14px;border-radius:50%;
-  border:2px solid var(--vscode-descriptionForeground,#50506e);
-  display:flex;align-items:center;justify-content:center;
-  flex-shrink:0;transition:all .2s;
-}
-.method-option.active .method-radio{
-  border-color:var(--vscode-textLink-foreground,#00ffe0);
-}
-.method-option.active .method-radio::after{
-  content:'';width:7px;height:7px;border-radius:50%;
-  background:var(--vscode-textLink-foreground,#00ffe0);
-}
-.method-label{font-size:12px;font-weight:500;color:var(--vscode-editor-foreground);flex:1}
-.method-hint{font-size:10px;color:var(--vscode-descriptionForeground,#50506e)}
-.method-body{max-height:0;overflow:hidden;padding:0 10px;transition:max-height .3s ease,padding .3s ease}
-.method-option.active .method-body{max-height:300px;padding:0 10px 12px}
+.pairing-content{display:flex;flex-direction:column;gap:0}
+.pairing-placeholder{text-align:center;padding:16px 0;font-size:11px;color:var(--vscode-descriptionForeground,#50506e)}
+.pairing-code-area{text-align:center}
+.pairing-divider{display:flex;align-items:center;gap:8px;margin:10px 0 8px;font-size:10px;color:var(--vscode-descriptionForeground,#50506e)}
+.pairing-divider::before,.pairing-divider::after{content:'';flex:1;height:1px;background:var(--vscode-panel-border,#1e1e2e)}
 .code-display-wrap{text-align:center;padding:8px 0 4px}
 .code-digits{
   font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;font-weight:700;
@@ -1379,10 +1343,7 @@ body{
 .pairing-status.success{color:#2ecc71}
 .pairing-status.error{color:#f74d4d}
 .pairing-status.waiting{color:var(--vscode-textLink-foreground,#8888a8)}
-.qr-layout{display:flex;gap:12px;align-items:flex-start;margin-top:2px}
-.qr-visual{flex-shrink:0;background:var(--vscode-sideBar-background,#07070c);border-radius:6px;border:1px solid var(--vscode-panel-border,#1e1e2e);padding:6px}
-.qr-visual svg{width:90px;height:90px;display:block}
-.qr-side{flex:1;display:flex;flex-direction:column;gap:6px}
+.qr-visual-wrap{display:inline-block;background:var(--vscode-sideBar-background,#07070c);border-radius:6px;border:1px solid var(--vscode-panel-border,#1e1e2e);padding:4px}
 .qr-side .hint{font-size:10px;color:var(--vscode-descriptionForeground,#50506e);line-height:1.4}
 .qr-side .hint strong{color:var(--vscode-editor-foreground)}
 .qr-bottom{display:flex;align-items:center}
@@ -1400,6 +1361,17 @@ body{
 .paired-text{flex:1;min-width:0}
 .paired-title{font-size:12px;font-weight:500;color:var(--vscode-editor-foreground)}
 .paired-sub{font-size:10px;color:var(--vscode-descriptionForeground,#50506e);margin-top:1px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+/* platform toggle — three icons */
+.platform-toggle{display:flex;gap:4px;margin-bottom:8px}
+.plat-opt{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;padding:8px 4px;border-radius:6px;border:1px solid var(--vscode-panel-border,#1e1e2e);cursor:pointer;font-size:9px;font-weight:500;color:var(--vscode-descriptionForeground,#50506e);transition:all .2s;user-select:none}
+.plat-opt:hover{border-color:var(--vscode-descriptionForeground,#50506e);color:var(--vscode-editor-foreground)}
+.plat-opt.active{border-color:var(--vscode-textLink-foreground,#00ffe0);color:var(--vscode-textLink-foreground,#00ffe0);background:rgba(0,255,224,.06)}
+.plat-opt.disabled{opacity:.4;pointer-events:none}
+.plat-opt svg{width:14px;height:14px}
+.plat-badge{font-size:7px;padding:1px 4px;border-radius:99px;background:rgba(255,255,255,.06);color:var(--vscode-descriptionForeground,#50506e);white-space:nowrap}
+.tg-guide{margin-top:8px;text-align:left;font-size:10px;color:var(--vscode-descriptionForeground,#50506e);line-height:1.6}
+.guide-step strong{color:var(--vscode-editor-foreground)}
 
 /* ═══════════════════════════════════════════════
    AGENT TABS
