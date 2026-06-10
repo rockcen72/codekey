@@ -1033,7 +1033,9 @@ export function wsHandler(sql: postgres.Sql) {
         }
         clientClients.get(deviceId)!.add(client);
         const bridge = pcClients.get(deviceId);
-        const platform = clientLabel.includes('feishu') ? 'feishu' : 'wechat';
+        const platform = clientLabel.includes('feishu') ? 'feishu'
+          : clientLabel.includes('telegram') ? 'telegram'
+            : 'wechat';
         if (bridge && bridge.socket.readyState === bridge.socket.OPEN) {
           bridge.socket.send(JSON.stringify({ type: 'mp_online', platform }));
         }
