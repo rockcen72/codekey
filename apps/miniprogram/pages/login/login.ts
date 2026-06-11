@@ -3,6 +3,7 @@ import { ensureUserToken } from '../../services/auth';
 
 Page({
   data: {
+    loading: true,
     canScan: true,
     showManualInput: false,
     manualCode: '',
@@ -17,9 +18,9 @@ Page({
     // the user is on the login page. claim-device will fail with
     // NO_CLIENT_TOKEN (no pairing yet) and is retried after /devices/confirm.
     ensureUserToken().catch((err) => {
-      // Non-fatal: the user might not have granted any permissions yet,
-      // or the network might be down. We still let them scan a code.
       console.warn('[login] ensureUserToken failed:', err);
+    }).finally(() => {
+      this.setData({ loading: false });
     });
   },
 

@@ -33,6 +33,29 @@ async function bridgeReady() {
   }
 }
 
+async function isSessionAttached(sessionId) {
+  if (!sessionId) return false;
+  const ctrl = new AbortController();
+  const timer = setTimeout(function () { ctrl.abort(); }, HEALTH_TIMEOUT_MS);
+  try {
+    const res = await fetch(BRIDGE_URL + '/v1/attached-sessions', { signal: ctrl.signal });
+    if (!res.ok) {
+      diag('attached-sessions non-OK: ' + res.status);
+      return false;
+    }
+    const body = await res.json();
+    const attached = Array.isArray(body && body.attached) ? body.attached : [];
+    const ok = attached.includes(sessionId);
+    diag('attached-sessions check: sid=' + sessionId + ' attached=' + ok + ' total=' + attached.length);
+    return ok;
+  } catch (err) {
+    diag('attached-sessions check failed: ' + (err.message || err));
+    return false;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 diag('hook started, BRIDGE_URL=' + BRIDGE_URL + ' args=' + process.argv.join(' '));
 let input = '';
 process.stdin.setEncoding('utf-8');
@@ -66,6 +89,11 @@ process.stdin.on('end', async () => {
 
     if (!(await bridgeReady())) {
       diag('bridge not ready, bypassing CodeKey');
+      process.exit(0);
+    }
+
+    if (!(await isSessionAttached(sid))) {
+      diag('session not attached, bypassing CodeKey approval');
       process.exit(0);
     }
 

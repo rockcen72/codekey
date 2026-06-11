@@ -180,11 +180,37 @@
   text-align: center;
 }
 .hint {
-  padding: 24rpx;
+  padding: 32rpx 28rpx;
   background: var(--ck-bg);
   border-radius: var(--ck-radius-md);
+  line-height: 1.6;
 }
 .hint text {
-  font-size: 24rpx;
+  font-size: 26rpx;
   color: var(--ck-subtle);
+}
+.loading-overlay {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100vh;
+  background: var(--ck-bg, #0f0f18);
+}
+.loading-spinner {
+  width: 48rpx;
+  height: 48rpx;
+  border: 4rpx solid var(--ck-border, #333);
+  border-top-color: var(--ck-primary, #5c9cf5);
+  border-radius: 50%;
+  animation: spin 0.6s linear infinite;
+}
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+.loading-text {
+  margin-top: 24rpx;
+  font-size: 26rpx;
+  color: var(--ck-subtle, #888);
 }

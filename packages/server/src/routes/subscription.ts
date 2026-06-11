@@ -150,6 +150,61 @@ export function subscriptionRoutes(sql: postgres.Sql) {
 				};
 			},
 		);
+
+		// ── POST /api/v1/device-redeem ──────────────────────────
+		// Same as /redeem but authenticated via device token
+		// (for VS Code sidebar). Looks up the bound user from device_bindings.
+		fastify.post(
+			"/device-redeem",
+			{
+				preHandler: [
+					deviceTokenAuth(sql),
+					rateLimit({ windowMs: 60_000, max: 10, keyPrefix: "device-redeem" }),
+				],
+			},
+			async (req, reply) => {
+				const { deviceId } = (req as unknown as { deviceAuth: DeviceAuth }).deviceAuth;
+				const { code, product } = (req.body ?? {}) as {
+					code?: string;
+					product?: string;
+				};
+				if (!code || typeof code !== "string") {
+					return reply.code(400).send({ error: "code required" });
+				}
+				const [binding] = await sql`
+					SELECT user_id FROM device_bindings WHERE device_id = ${deviceId} AND unbound_at IS NULL LIMIT 1
+				`;
+				if (!binding) {
+					return reply.code(400).send({ error: "device not bound" });
+				}
+				const prod = product ?? MVP_PRODUCT;
+				const result = await redeemCode(
+					sql,
+					binding.user_id,
+					prod,
+					code.trim().toUpperCase(),
+				);
+				if (!result.ok) {
+					const status =
+						result.error === "invalid_format"
+							? 400
+							: result.error === "not_found"
+								? 404
+								: result.error === "product_mismatch"
+									? 400
+									: 409;
+					return reply.code(status).send({ error: result.error });
+				}
+				return {
+					success: true,
+					product: result.product,
+					plan: result.plan,
+					durationDays: result.durationDays,
+					beforeExpiresAt: result.beforeExpiresAt,
+					afterExpiresAt: result.afterExpiresAt,
+				};
+			},
+		);
 	};
 }
 

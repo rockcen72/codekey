@@ -399,6 +399,17 @@ export class ApprovalBridge {
       if (!entry && fwd.clientEventId && fwd.clientEventId !== fwd.eventId) {
         entry = this.pendingByServerEventId.get(fwd.clientEventId);
       }
+      if (!entry && fwd.sessionId) {
+        const matches = new Set<PendingApproval>();
+        for (const candidate of this.pendingByServerEventId.values()) {
+          if (candidate.serverSessionId !== fwd.sessionId) continue;
+          if (candidate.serverEventId && candidate.serverEventId !== fwd.eventId) continue;
+          matches.add(candidate);
+        }
+        if (matches.size === 1) {
+          entry = Array.from(matches)[0];
+        }
+      }
       if (entry) {
         clearTimeout(entry.timer);
         this.resolveEventOnRelay(fwd.eventId);

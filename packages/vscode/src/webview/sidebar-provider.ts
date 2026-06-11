@@ -73,7 +73,7 @@ function openCodeSessionTitle(session: any): string {
   return 'OpenCode session';
 }
 
-function codexSessionTitle(session: any, remote?: SessionResponse): string {
+function codexSessionTitle(session: any, remote?: { title?: string; metadata?: Record<string, unknown> }): string {
   const localTitle = normalizeCodexSessionTitle(session?.title);
   if (localTitle) return localTitle;
 
@@ -127,6 +127,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
    *  fall back to a 30s retry interval instead of 1s polling. */
   private _approvalPoll404Count = 0;
   private _approvalPollRetryTimer?: ReturnType<typeof setTimeout>;
+  private _lastSubscription?: SubscriptionResponse;
 
   /** Window during which a recent user-driven detach/attach overrides
    *  the lagging `remote` list. Long enough to absorb the WS round-trip
@@ -501,6 +502,33 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     });
   }
 
+  private _pushUnpairedDeviceState(): void {
+    if (!this._view) return;
+    const state: SidebarState = {
+      lang: vscode.env.language,
+      deviceStatus: 'unpaired',
+      phoneName: '',
+      bridge: this._bridgeService.state,
+      agents: [],
+      pendingApprovals: [],
+      sessions: [],
+      events: {},
+      claudeSessions: [],
+      pairingPlatform: this._selectedPairingPlatform,
+    };
+    this._view.webview.postMessage({
+      type: 'stateUpdate',
+      deviceHtml: renderDeviceContent(state),
+      pairingHtml: renderPairingContent(state),
+      deviceStatus: 'unpaired',
+      paired: false,
+      relayUrl: '',
+      deviceId: '',
+      deviceSecret: '',
+      pairingStatus: 'idle',
+    });
+  }
+
   private _bridgeFetch(url: string, init: RequestInit = {}): Promise<Response> {
     return fetch(url, {
       ...init,
@@ -540,7 +568,8 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
           events[s.id] = await api.getSessionEvents(s.id).catch(() => []);
         }));
         deviceStatus = 'paired';
-        subscription = await api.getDeviceSubscription().catch(() => undefined);
+        subscription = await api.getDeviceSubscription().catch(() => this._lastSubscription);
+        if (subscription) this._lastSubscription = subscription;
       } catch (err) {
         // Device status is purely credential-based; relay reachability is
         // communicated via the green dot in renderDeviceContent.
@@ -959,9 +988,9 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       paired: deviceStatus === 'paired',
       agentCount: state.agents.filter(a => a.runtimeStatus === 'active').length,
       approvalCount: state.pendingApprovals.length,
-      relayUrl: state.relayUrl,
-      deviceId: state.deviceId,
-      deviceSecret: state.deviceSecret,
+      relayUrl: state.relayUrl ?? '',
+      deviceId: state.deviceId ?? '',
+      deviceSecret: state.deviceSecret ?? '',
       pairingStatus: state.pairing?.status || 'idle',
     });
   }
@@ -1217,6 +1246,9 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       case 'pairedDevice':
         this._handlePairingComplete(msg.token, msg.deviceId);
         break;
+      case 'redeemCode':
+        this._handleRedeemCode(msg.code);
+        break;
       case 'unpairDevice':
         this._handleUnpair();
         break;
@@ -1246,20 +1278,49 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         }
       } catch (err) {
         const msg = err instanceof Error ? err.message : 'server request failed';
-        const choice = await vscode.window.showWarningMessage(
-          `CodeKey could not unpair this device on the server: ${msg}. Telegram may still show it as bound.`,
-          'Retry Later',
-          'Reset Local Only',
-        );
-        if (choice !== 'Reset Local Only') return;
+        // Token already revoked or device already deleted — or server returned
+        // an error (Electron raw TLS parsing may misrepresent HTTP status codes).
+        // Server-side state is already clean in all these cases: proceed with
+        // local cleanup without blocking the user.
         localOnly = true;
       }
     }
     clearCredentials();
     this._pairingState = undefined;
     this._selectedPairingPlatform = 'telegram';
-    this._pushState();
-    vscode.window.showInformationMessage(localOnly ? 'Local CodeKey credentials reset' : 'Device unpaired');
+    this._pushUnpairedDeviceState();
+    void this._pushState();
+    vscode.window.showInformationMessage('Device unpaired');
+  }
+
+  private async _handleRedeemCode(code: string): Promise<void> {
+    const creds = loadCredentials();
+    if (!creds) {
+      this._postRedeemResult(false, 'Not paired');
+      return;
+    }
+    try {
+      const res = await secureFetch(`${creds.relayUrl}/api/v1/device-redeem`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${creds.deviceToken}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code: code.trim().toUpperCase() }),
+        signal: AbortSignal.timeout(10000),
+      });
+      const body = await res.json() as { error?: string; success?: boolean; afterExpiresAt?: string };
+      if (res.ok && body.success) {
+        this._postRedeemResult(true, body.afterExpiresAt || '');
+        this._pushState();
+      } else {
+        this._postRedeemResult(false, body.error || `HTTP ${res.status}`);
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Request failed';
+      this._postRedeemResult(false, msg);
+    }
+  }
+
+  private _postRedeemResult(ok: boolean, detail: string): void {
+    this._view?.webview.postMessage({ type: 'redeemResult', ok, error: detail });
   }
 
   private async _handlePairingGenerate(): Promise<void> {

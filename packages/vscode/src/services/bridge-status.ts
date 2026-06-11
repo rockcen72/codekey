@@ -45,6 +45,7 @@ export class BridgeStatusService {
   private _windowRegistered = false;
   private _healthInFlight = false;
   private _healthFailures = 0;
+  private _adoptedSource: string | null = null;
 
   static getInstance(): BridgeStatusService {
     if (!BridgeStatusService._instance) {
@@ -123,6 +124,7 @@ export class BridgeStatusService {
           } else {
             // Compatible bridge — adopt it
             log(`[CodeKey] adopted existing bridge (source=${source})`);
+            this._adoptedSource = source;
             this._startHealthCheck();
             return;
           }
@@ -144,6 +146,7 @@ export class BridgeStatusService {
 
   private _spawnBundled(): void {
     this._healthFailures = 0;
+    this._adoptedSource = null;
     const bridgeEntry = path.join(BridgeStatusService._extensionPath, 'dist', 'bridge-entry.cjs');
     if (!fs.existsSync(bridgeEntry)) {
       log(`[CodeKey] bridge-entry.js not found at ${bridgeEntry}`);
@@ -360,6 +363,12 @@ export class BridgeStatusService {
       this._healthFailures++;
       if (Date.now() - this._startedAt > GRACE_MS && this._state.bridge !== 'stopped') {
         this._update({ bridge: this._process ? 'error' : 'stopped' });
+      }
+      if (!this._process && this._adoptedSource === 'vscode-bundled' && this._healthFailures >= 3) {
+        log('[CodeKey] adopted bundled bridge disappeared after reload, spawning a fresh bundled bridge');
+        this._update({ bridge: 'connecting', relay: 'disconnected' });
+        this._spawnBundled();
+        return;
       }
       if (this._process && this._healthFailures >= 3) {
         log('[CodeKey] bridge health check timed out repeatedly, restarting bundled bridge');

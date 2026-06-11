@@ -367,8 +367,12 @@ export function renderSubscribe(state: SidebarState): string {
       }
       planClass += ' sub-paid';
     } else if (sub.tier === 'trial') {
-      planLabel = 'Trial';
+      const days = sub.expiresAt
+        ? Math.max(0, Math.ceil((new Date(sub.expiresAt).getTime() - Date.now()) / 86400000))
+        : 14;
+      planLabel = `Trial · ${days} day${days !== 1 ? 's' : ''}`;
       planClass = ' sub-trial';
+      if (days <= 3) planClass += ' sub-expiring';
     } else if (sub.usage) {
       planLabel = `Free · ${sub.usage.used}/${sub.usage.limit}`;
       planClass = sub.usage.used >= sub.usage.limit ? ' sub-exhausted'
@@ -376,7 +380,16 @@ export function renderSubscribe(state: SidebarState): string {
         : ' sub-free';
     }
   }
-  return `<div class="footer" id="subscriptionFooter"><span class="sub-label${planClass}">${planLabel}</span></div>`;
+  const qqHtml = `<div class="qq-group-row"><span class="qq-icon">QQ</span> <a class="qq-link" href="https://qm.qq.com/q/ryWvbgYpNY" target="_blank">827453239</a></div>`;
+  const expandedHtml = `<div class="redeem-panel" id="redeemPanel">
+    <a class="purchase-link" href="https://pay.ldxp.cn/shop/6T7QKRTE" target="_blank">${i18n(state.lang, 'Purchase →', '购买 →')}</a>
+    <div class="redeem-row">
+      <input class="redeem-input" id="redeemInput" placeholder="CK-XXXX-XXXX-XXXX" maxlength="19" spellcheck="false" />
+      <button class="redeem-btn" data-action="redeemCode">${i18n(state.lang, 'Redeem', '兑换')}</button>
+    </div>
+    <div class="redeem-status" id="redeemStatus"></div>
+  </div>`;
+  return `<div class="footer" id="subscriptionFooter">${qqHtml}<div class="sub-row" data-action="toggleRedeem"><span class="sub-label${planClass}">${planLabel}</span><span class="expand-icon">▸</span></div>${expandedHtml}</div>`;
 }
 
 // ── Pairing card ─────────────────────────────────────────
@@ -684,9 +697,9 @@ ${renderSubscribe(state)}
         }
       }
       // Update PD so openPairingWs uses fresh data
-      if (d.relayUrl) PD.relayUrl = d.relayUrl;
-      if (d.deviceId) PD.deviceId = d.deviceId;
-      if (d.deviceSecret) PD.deviceSecret = d.deviceSecret;
+      if (d.relayUrl !== undefined) PD.relayUrl = d.relayUrl || '';
+      if (d.deviceId !== undefined) PD.deviceId = d.deviceId || '';
+      if (d.deviceSecret !== undefined) PD.deviceSecret = d.deviceSecret || '';
       if (d.pairingStatus) {
         PD.pairingStatus = d.pairingStatus;
         if (d.pairingStatus === 'waiting') openPairingWs();
@@ -936,7 +949,64 @@ ${renderSubscribe(state)}
       try { sessionStorage.removeItem('pairingPlatform'); } catch(e) {}
     }
 
+    // Toggle redeem panel
+    if (action === 'toggleRedeem') {
+      var panel = document.getElementById('redeemPanel');
+      var icon = target.querySelector('.expand-icon');
+      if (panel) {
+        var isOpen = panel.classList.toggle('open');
+        if (icon) icon.classList.toggle('open', isOpen);
+        if (isOpen) setTimeout(function() {
+          var inp = document.getElementById('redeemInput');
+          if (inp) inp.focus();
+        }, 100);
+      }
+      return;
+    }
+
+    // Redeem code
+    if (action === 'redeemCode') {
+      var input = document.getElementById('redeemInput');
+      var status = document.getElementById('redeemStatus');
+      var btn = target;
+      if (!input || !status) return;
+      var code = input.value.trim().toUpperCase();
+      if (!code) { status.textContent = T('Enter a code', '请输入兑换码'); status.className = 'redeem-status err'; return; }
+      btn.disabled = true;
+      status.textContent = T('Redeeming...', '兑换中...');
+      status.className = 'redeem-status';
+      api.postMessage({ action: 'redeemCode', code: code });
+      return;
+    }
+
     api.postMessage({ action: action });
+  });
+
+  // Listen for redeem result from extension host
+  window.addEventListener('message', function(e) {
+    if (e.data && e.data.type === 'redeemResult') {
+      var status = document.getElementById('redeemStatus');
+      var btn = document.querySelector('.redeem-btn');
+      if (btn) btn.disabled = false;
+      if (!status) return;
+      if (e.data.ok) {
+        status.textContent = T('Redeemed! Subscription extended.', '兑换成功！订阅已延长。');
+        status.className = 'redeem-status ok';
+        var inp = document.getElementById('redeemInput');
+        if (inp) inp.value = '';
+      } else {
+        status.textContent = T('Failed: ', '兑换失败：') + e.data.error;
+        status.className = 'redeem-status err';
+      }
+    }
+  });
+
+  // Enter key on redeem input
+  document.addEventListener('keydown', function(e) {
+    if (e.key === 'Enter' && document.activeElement === document.getElementById('redeemInput')) {
+      var btn = document.querySelector('.redeem-btn');
+      if (btn && !btn.disabled) btn.click();
+    }
   });
 })();
 </script>
@@ -1309,6 +1379,28 @@ body{
 .sub-label.sub-approaching{color:var(--vscode-terminal-ansiYellow,#e2b714)}
 .sub-label.sub-exhausted{color:var(--vscode-terminal-ansiRed,#f14c4c)}
 .sub-label.sub-expiring{color:var(--vscode-terminal-ansiYellow,#e2b714)}
+.sub-row{display:flex;align-items:center;justify-content:center;gap:6px;cursor:pointer}
+.sub-row:hover .expand-icon{opacity:1}
+.expand-icon{font-size:10px;opacity:0.4;transition:transform .2s,opacity .2s;color:var(--vscode-descriptionForeground,#888)}
+.expand-icon.open{transform:rotate(90deg)}
+.redeem-panel{display:none;margin-top:6px;padding-top:6px;border-top:1px solid var(--vscode-panel-border,#2a2a3a)}
+.redeem-panel.open{display:block}
+.purchase-link{display:block;font-size:11px;color:var(--vscode-textLink-foreground,#5c9cf5);margin-bottom:6px;text-decoration:none}
+.purchase-link:hover{text-decoration:underline}
+.redeem-row{display:flex;gap:4px}
+.redeem-input{flex:1;min-width:0;background:var(--vscode-input-background,#1a1a2e);color:var(--vscode-input-foreground,#e8e8f0);border:1px solid var(--vscode-input-border,#333);border-radius:2px;padding:3px 6px;font-size:11px;font-family:monospace;outline:none}
+.redeem-input:focus{border-color:var(--vscode-focusBorder,#5c9cf5)}
+.redeem-btn{background:var(--vscode-button-background,#5c9cf5);color:var(--vscode-button-foreground,#fff);border:none;border-radius:2px;padding:3px 8px;font-size:11px;cursor:pointer;white-space:nowrap}
+.redeem-btn:disabled{opacity:0.5;cursor:default}
+.redeem-btn:hover:not(:disabled){background:var(--vscode-button-hoverBackground,#4a8ae8)}
+.redeem-status{font-size:10px;margin-top:4px;min-height:1.2em}
+.redeem-status.ok{color:var(--vscode-terminal-ansiGreen,#2ecc71)}
+.redeem-status.err{color:var(--vscode-terminal-ansiRed,#e74c3c)}
+.qq-group-row{display:flex;align-items:center;justify-content:center;gap:4px;font-size:10px;margin-bottom:3px;color:var(--vscode-descriptionForeground,#888)}
+.qq-icon{font-size:9px;font-weight:600;background:var(--vscode-badge-background,#333);color:var(--vscode-badge-foreground,#fff);padding:0 3px;border-radius:2px;line-height:1.4}
+.qq-number{color:var(--vscode-descriptionForeground,#888)}
+.qq-link{color:var(--vscode-textLink-foreground,#5c9cf5);text-decoration:none}
+.qq-link:hover{text-decoration:underline}
 
 /* ═══════════════════════════════════════════════
    PAIRING CARD

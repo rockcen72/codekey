@@ -81,6 +81,15 @@ Page({
     }
   },
 
+  onUnload() {
+    this.unsubscribeWs();
+    this._stopPolling();
+    for (const key of Object.keys(_summaryTimers)) {
+      clearTimeout(_summaryTimers[key]);
+      delete _summaryTimers[key];
+    }
+  },
+
   subscribeWs() {
     app.initWs();
     this._onEventPushBound = async (payload: any) => {

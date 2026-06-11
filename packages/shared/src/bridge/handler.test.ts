@@ -313,6 +313,34 @@ describe('ApprovalBridge canonical sessions', () => {
     await expect(second).resolves.toEqual({ approved: true });
   });
 
+  it('clears a pending CC approval when phone approval_forward arrives before event_ack', async () => {
+    const relay = new FakeRelay();
+    const bridge = new ApprovalBridge(relay as any);
+
+    const approval = bridge.handleApproval({
+      claudeSessionId: 'claude-a',
+      codekeyWindowId: 'window-1',
+      source: 'permission_request',
+      rawEvent: {
+        tool_name: 'Bash',
+        tool_input: { command: 'npm test', cwd: 'F:\\Work\\Codekey' },
+      },
+    });
+
+    await new Promise(resolve => setImmediate(resolve));
+
+    expect(bridge.getPendingApprovals()).toHaveLength(1);
+
+    relay.emit('approval_forward', {
+      eventId: 'server-event-1',
+      decision: 'approve',
+      sessionId: 'server-claude-a',
+    });
+
+    await expect(approval).resolves.toEqual({ approved: true });
+    expect(bridge.getPendingApprovals()).toEqual([]);
+  });
+
   it('auto-rejects handleApproval without source (replay guard)', async () => {
     const relay = new FakeRelay();
     const bridge = new ApprovalBridge(relay as any);
