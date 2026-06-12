@@ -64,6 +64,15 @@ export function deleteConfig(key: PolicyKey): void {
   configMap.delete(key);
 }
 
+/** Resolve effective config for an agent type using the fallback chain
+ *  (agentType → * → default). Does NOT include per-session overrides since
+ *  callers like _pushHistoryPolicyToRelay don't know localSessionId at push time. */
+export function getEffectiveConfig(agentType: string): HistoryPolicyConfig {
+  return configMap.get(agentType as PolicyKey)
+    ?? configMap.get('*')
+    ?? { policy: DEFAULT_HISTORY_SHARE_POLICY, recentCount: DEFAULT_RECENT_COUNT, updatedAt: 0 };
+}
+
 export function checkHistoryPolicy(localSessionId: string, agentType: string): PolicyResult {
   const key: PolicyKey = `${agentType}:${localSessionId}`;
   const cfg = configMap.get(key)

@@ -632,7 +632,8 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     try {
       const hpResp = await this._bridgeFetch(`${this._bridgeService.getBridgeUrl()}/v1/history-policies`);
       if (hpResp.ok) {
-        historyPolicies = (await hpResp.json()) as HistoryPolicyEntry[];
+        const raw = (await hpResp.json()) as Array<{ key: string; config: { policy: string; recentCount?: number; updatedAt: number } }>;
+        historyPolicies = raw.map(r => ({ key: r.key, ...r.config }));
       }
     } catch { /* bridge unreachable */ }
 
@@ -949,6 +950,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
               canDetach: isAttached,
               isCodexSession: true,
               resumed: isAttached,
+              serverSessionId: remote?.serverSessionId,
             });
           }
         }

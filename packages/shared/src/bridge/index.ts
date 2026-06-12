@@ -53,6 +53,7 @@ export {
   HistorySharePolicy,
   checkHistoryPolicy,
   getConfig,
+  getEffectiveConfig,
   getAllConfigs,
   setConfig,
   deleteConfig,

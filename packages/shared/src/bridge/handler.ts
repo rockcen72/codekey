@@ -14,7 +14,7 @@ import { RiskEngine } from '../risk.js';
 import { tryFormatInputRequiredEvent } from './input-card.js';
 import { runPrivacyPipeline, toCheckedPayload, PrivacyAuditCollector } from './privacy-pipeline.js';
 import type { AuditSink, PrivacyDecision, SourceType, PrivacyStats } from './privacy-pipeline.js';
-import { checkHistoryPolicy, HistorySharePolicy, getConfig, type PolicyKey } from './history-policy.js';
+import { checkHistoryPolicy, HistorySharePolicy, getEffectiveConfig } from './history-policy.js';
 
 interface PhoneCommandFingerprint {
   fingerprint: string;
@@ -378,7 +378,7 @@ export class ApprovalBridge {
    *  Called on session attach so the relay (and mini program) know the policy
    *  without waiting for the next sync cycle or a user interaction. */
   private _pushHistoryPolicyToRelay(agentType: string): void {
-    const cfg = getConfig(agentType as PolicyKey);
+    const cfg = getEffectiveConfig(agentType);
     this.relay.sendRaw(JSON.stringify({
       type: 'sync_history_policy',
       payload: { action: 'set', key: agentType, config: { ...cfg, updatedAt: cfg.updatedAt || Date.now() } },
