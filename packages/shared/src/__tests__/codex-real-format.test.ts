@@ -15,6 +15,7 @@ import { EventEmitter } from 'node:events';
 import { discoverLocalSessions, loadCodexConversation, normalizeCodexSessionTitle } from '../bridge/codex-local-session-resolver.js';
 import { CodexResumeManager } from '../bridge/codex-resume-manager.js';
 import { CodexTranscriptWatcher, type TranscriptEvent } from '../bridge/codex-transcript-watcher.js';
+import { HistorySharePolicy, setConfig } from '../bridge/history-policy.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -295,6 +296,7 @@ describe('Codex real transcript format', () => {
     });
 
     it('CodexResumeManager forwards appended assistant transcript output', async () => {
+      setConfig('*', { policy: HistorySharePolicy.Recent, updatedAt: Date.now() });
       const dir = path.join(tmpHome, 'sessions', '2026', '06', '01');
       mkdirSync(dir, { recursive: true });
       const sessionId = '019e8231-a3f7-7c43-8dfb-f2107c803690';
@@ -453,6 +455,7 @@ describe('Codex real transcript format', () => {
     });
 
     it('forwards assistant history to relay for phone display', async () => {
+      setConfig('*', { policy: HistorySharePolicy.Recent, updatedAt: Date.now() });
       const dir = path.join(tmpHome, 'sessions', '2026', '06', '01');
       mkdirSync(dir, { recursive: true });
       const file = path.join(dir, 'rollout-history.jsonl');
@@ -467,7 +470,7 @@ describe('Codex real transcript format', () => {
       });
       const manager = new CodexResumeManager(relay as any, new Set());
 
-      await (manager as any)._forwardRecentHistory('server-session', file);
+      await (manager as any)._forwardRecentHistory('server-session', 'dummy-session-id', file);
 
       expect(sent).toEqual(expect.arrayContaining([
         expect.objectContaining({

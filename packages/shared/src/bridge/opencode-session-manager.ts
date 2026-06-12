@@ -7,6 +7,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { discoverOpenCodePort } from './platform.js';
 import { tryFormatInputRequiredEvent } from './input-card.js';
+import { checkHistoryPolicy } from './history-policy.js';
 
 interface OpenCodeSessionInfo {
   id: string;
@@ -240,9 +241,11 @@ export class OpenCodeSessionManager {
     return true;
   }
 
-  /** Fetch recent messages and push as relay events. */
+  /** Fetch recent messages and push as relay events (gated by policy). */
   private async replayHistory(localSessionId: string, serverSessionId: string): Promise<void> {
-    const url = `${this.opencodeBaseUrl}/session/${encodeURIComponent(localSessionId)}/message?limit=5`;
+    const policy = checkHistoryPolicy(localSessionId, 'opencode');
+    if (!policy.allowed) return;
+    const url = `${this.opencodeBaseUrl}/session/${encodeURIComponent(localSessionId)}/message?limit=${policy.maxCount ?? 5}`;
     console.error('[opencode] replayHistory: fetching %s', url);
     try {
       const resp = await fetch(url);
@@ -266,7 +269,7 @@ export class OpenCodeSessionManager {
               eventType: 'user_prompt',
               data: { type: 'user_prompt', prompt: text, summary: text.slice(0, 200) },
               ts: info.time?.created ? new Date(info.time.created).toISOString() : new Date().toISOString(),
-            }, "history");
+            }, "history", policy.allowedFields);
           }
         } else if (info.role === 'assistant' && m.parts) {
           const text = m.parts
@@ -281,7 +284,7 @@ export class OpenCodeSessionManager {
               eventType: 'task_complete',
               data: { type: 'task_complete', summary: text, summaryShort: text.slice(0, 200), output: text },
               ts: info.time?.completed || info.time?.created ? new Date((info.time.completed || info.time.created) as number).toISOString() : new Date().toISOString(),
-            }, "history");
+            }, "history", policy.allowedFields);
           }
         }
       }
@@ -565,6 +568,8 @@ export class OpenCodeSessionManager {
     const serverSessionId = this.opencodeSessionToRelayId.get(sessionID);
     if (!serverSessionId) return;
 
+    if (!checkHistoryPolicy(sessionID, 'opencode').allowed) return;
+
     // OpenCode sometimes carries an error payload on session.idle even
     // when no separate session.error event was emitted (e.g. the agent
     // hit a max-iteration cap and gave up). Surface it as a proper
@@ -598,6 +603,8 @@ export class OpenCodeSessionManager {
     if (!sessionID) return;
     const serverSessionId = this.opencodeSessionToRelayId.get(sessionID);
     if (!serverSessionId) return;
+
+    if (!checkHistoryPolicy(sessionID, 'opencode').allowed) return;
 
     const errorObj = props.error as Record<string, unknown> | undefined;
     const message = (errorObj?.message as string) || 'Session error';
@@ -646,8 +653,10 @@ export class OpenCodeSessionManager {
       return;
     }
 
-    // User message typed in TUI: emit as user_prompt
+    // User message typed in TUI: emit as user_prompt (gated by policy)
     if (info.role === 'user') {
+      const policy = checkHistoryPolicy(sessionID, 'opencode');
+      if (!policy.allowed) return;
       const summary = info.summary as Record<string, unknown> | undefined;
       const text = (summary?.body as string) || (summary?.title as string) || '';
       if (text && !this._isRecentPhoneCommand(sessionID, text)) {
@@ -658,13 +667,14 @@ export class OpenCodeSessionManager {
           eventType: 'user_prompt',
           data: { type: 'user_prompt', prompt: text, summary: text.slice(0, 200) },
           ts: new Date().toISOString(),
-        }, "history");
+        }, "history", policy.allowedFields);
       }
       return;
     }
 
     const error = info.error as Record<string, unknown> | undefined;
     if (error) {
+      if (!checkHistoryPolicy(sessionID, 'opencode').allowed) return;
       this.bridge.sendEventToRelay(serverSessionId, {
         sessionId: serverSessionId,
         agent: 'opencode',
@@ -731,6 +741,11 @@ export class OpenCodeSessionManager {
     }
 
     if (partType === 'text') {
+      const policy = checkHistoryPolicy(sessionID, 'opencode');
+      // For text parts (assistant replies), we gate on Recent/Minimal but
+      // allow Sanitized to forward with field projection.
+      if (!policy.allowed && policy.allowedFields === undefined) return;
+
       const text = (part.text as string) || (props.delta as string) || '';
       if (!text) return;
 
@@ -770,12 +785,14 @@ export class OpenCodeSessionManager {
           summaryShort: text.slice(0, 200),
           output: text,
         },
-      }, "transcript");
+      }, "transcript", policy.allowedFields);
     } else if (partType === 'tool') {
       const state = part.state as Record<string, unknown> | undefined;
       if (state?.status === 'completed') {
         this.deliveredMessageParts.add(key);
         const title = (state.title as string) || (part.tool as string) || 'Tool completed';
+        const policy = checkHistoryPolicy(sessionID, 'opencode');
+        if (!policy.allowed) return;
         this.bridge.sendEventToRelay(serverSessionId, {
           sessionId: serverSessionId,
           agent: 'opencode',
@@ -784,7 +801,7 @@ export class OpenCodeSessionManager {
             type: 'task_complete',
             summary: title,
           },
-        }, "transcript");
+        }, "transcript", policy.allowedFields);
       }
     }
   }

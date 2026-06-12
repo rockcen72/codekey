@@ -2,6 +2,12 @@ import { EventEmitter } from 'node:events';
 import WebSocket from 'ws';
 import type { PrivacyCheckedPayload } from './privacy-pipeline.js';
 import {
+  type PolicyKey,
+  type HistoryPolicyConfig,
+  setConfig,
+  deleteConfig,
+} from './history-policy.js';
+import {
   type WsMessage,
   type DeviceInfo,
   HEARTBEAT_INTERVAL_MS,
@@ -152,6 +158,18 @@ export class RelayClient extends EventEmitter {
         }
         if (msg.type === 'mp_offline') {
           this.emit('mp_offline', (msg as any).payload?.platform || 'wechat');
+        }
+        if (msg.type === 'sync_history_policy') {
+          const { key, config, action } = (msg.payload ?? {}) as {
+            key?: PolicyKey; config?: HistoryPolicyConfig; action?: 'set' | 'delete';
+          };
+          if (action === 'delete' && key) {
+            deleteConfig(key);
+          } else if (key && config) {
+            setConfig(key, config);
+          }
+          this.emit('sync_history_policy', msg.payload);
+          return;
         }
         if (msg.type === 'command') {
           this.emit('command', msg.payload);

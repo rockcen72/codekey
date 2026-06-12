@@ -37,6 +37,13 @@ export interface PrivacyContext {
 
   /** Additional file paths associated with this event (if known) */
   extraPaths?: string[];
+
+  /**
+   * Allowed field names for sanitized mode.
+   * When set, the payload is projected to only include these keys at the
+   * inner data level. Typical values: ['summary', 'metadata', 'status', 'basename'].
+   */
+  allowedFields?: readonly string[];
 }
 
 export interface PrivacyDecision {
@@ -259,6 +266,36 @@ const EMPTY_DECISION: PrivacyDecision = {
 };
 
 /**
+ * Project a JSON event payload to only include allowed field names at the
+ * inner `data` level. Used by Sanitized history share policy.
+ *
+ * The outer structure (type, payload.sessionId, payload.eventType, payload.ts)
+ * is always preserved. Only `payload.data` fields are trimmed to the allowed set.
+ *
+ * If the payload cannot be parsed, returns it as-is (defense-in-depth).
+ */
+export function projectAllowedFields(rawPayload: string, allowedFields: readonly string[]): string {
+  if (!allowedFields || allowedFields.length === 0) return rawPayload;
+  try {
+    const root = JSON.parse(rawPayload);
+    if (!root || typeof root !== 'object') return rawPayload;
+    const payload = (root as Record<string, unknown>).payload as Record<string, unknown> | undefined;
+    if (!payload || typeof payload.data !== 'object') return rawPayload;
+    const data = payload.data as Record<string, unknown>;
+    const projected: Record<string, unknown> = {};
+    for (const key of Object.keys(data)) {
+      if (allowedFields.includes(key)) {
+        projected[key] = data[key];
+      }
+    }
+    payload.data = projected;
+    return JSON.stringify(root);
+  } catch {
+    return rawPayload;
+  }
+}
+
+/**
  * Extract file paths from a structured payload and/or raw string.
  * Priority: structuredPayload > extraPaths > heuristic from raw.
  * Handles Unix, Windows, and relative paths.
@@ -339,10 +376,15 @@ export function runPrivacyPipeline(
   const findings = scan(ctx.rawPayload);
   const sanitizedPayload = replace(ctx.rawPayload, findings);
 
+  // ── 2b. Sanitized mode field projection ──
+  const projectedPayload = ctx.allowedFields
+    ? projectAllowedFields(sanitizedPayload, ctx.allowedFields)
+    : sanitizedPayload;
+
   // ── 3. Field trimming ──
   const maxLen = MAX_LENGTH[ctx.source] ?? MAX_LENGTH.command;
-  const truncated = sanitizedPayload.length > maxLen;
-  const trimmedPayload = truncated ? truncateSafe(sanitizedPayload, maxLen) : sanitizedPayload;
+  const truncated = projectedPayload.length > maxLen;
+  const trimmedPayload = truncated ? truncateSafe(projectedPayload, maxLen) : projectedPayload;
 
   // ── 4. Decision ──
   let action: PrivacyDecision['action'] = 'send';

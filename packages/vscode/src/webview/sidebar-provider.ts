@@ -4,7 +4,7 @@ import * as crypto from 'node:crypto';
 import * as os from 'node:os';
 import WebSocket from 'ws';
 import { loadCredentials, clearCredentials, loadDesktopInstallId } from '../auth/credentials.js';
-import { createApi, ApiError, type SessionResponse, type SubscriptionResponse } from '../api/client.js';
+import { createApi, ApiError, type SessionResponse, type EventResponse, type SubscriptionResponse } from '../api/client.js';
 import { getAgents } from '../agents/registry.js';
 import { BridgeStatusService } from '../services/bridge-status.js';
 import { SessionStore } from '../services/session-store.js';
@@ -18,7 +18,9 @@ import {
   renderAgentsContent,
   renderApprovalsContent,
   renderSessionsContent,
+  renderSessionDetailContent,
   renderPrivacyContent,
+  renderHistoryPolicyContent,
   renderSubscribe,
   type SidebarState,
   type PendingApprovalItem,
@@ -132,6 +134,8 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
   private _privacyPollTimer?: ReturnType<typeof setInterval>;
   private _lastPrivacySig = '';
   private _lastSubscription?: SubscriptionResponse;
+  private _lastEvents: Record<string, EventResponse[]> = {};
+  private _lastRelaySessions: SessionResponse[] = [];
 
   /** Window during which a recent user-driven detach/attach overrides
    *  the lagging `remote` list. Long enough to absorb the WS round-trip
@@ -611,6 +615,8 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
           events[s.id] = await api.getSessionEvents(s.id).catch(() => []);
         }));
         deviceStatus = 'paired';
+        this._lastEvents = events;
+        this._lastRelaySessions = sessions;
         subscription = await api.getDeviceSubscription().catch(() => this._lastSubscription);
         if (subscription) this._lastSubscription = subscription;
       } catch (err) {
@@ -619,6 +625,16 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       }
     }
     if (allDeviceSessions.length === 0) allDeviceSessions = sessions;
+
+    // ── History policies ──────────────────────────────
+    type HistoryPolicyEntry = { key: string; policy: string; recentCount?: number; updatedAt: number };
+    let historyPolicies: HistoryPolicyEntry[] = [];
+    try {
+      const hpResp = await this._bridgeFetch(`${this._bridgeService.getBridgeUrl()}/v1/history-policies`);
+      if (hpResp.ok) {
+        historyPolicies = (await hpResp.json()) as HistoryPolicyEntry[];
+      }
+    } catch { /* bridge unreachable */ }
 
     // Pending approvals: prefer bridge's in-memory list (real-time, ~1s lag),
     // fall back to relay events scrape for older bridges that lack the endpoint.
@@ -1013,6 +1029,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       pairingPlatform: this._pairingState?.platform || creds?.platform || this._selectedPairingPlatform,
       pairing: this._pairingState,
       subscription,
+      historyPolicies,
     };
 
     if (this._firstPush) {
@@ -1027,6 +1044,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       approvalsHtml: renderApprovalsContent(state),
       sessionsHtml: renderSessionsContent(state),
       subscriptionHtml: renderSubscribe(state),
+      historyPolicyHtml: renderHistoryPolicyContent(state),
       deviceStatus,
       paired: deviceStatus === 'paired',
       agentCount: state.agents.filter(a => a.runtimeStatus === 'active').length,
@@ -1121,6 +1139,11 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
           break;
         }
         this._handleSessionPreview(msg.sessionId, msg.iscodex === true);
+        break;
+      case 'showSessionDetail':
+        this._handleShowSessionDetail(msg.serverSessionId, msg.sessionId);
+        break;
+      case 'hideSessionDetail':
         break;
       case 'toggleAttachClaudeSession':
         // Debounce: ignore actions within 1s of the last toggle to prevent
@@ -1310,6 +1333,12 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         break;
       case 'unpairDevice':
         this._handleUnpair();
+        break;
+      case 'setHistoryPolicy':
+        this._handleSetHistoryPolicy(msg.key, msg.policy, msg.recentCount);
+        break;
+      case 'deleteHistoryPolicy':
+        this._handleDeleteHistoryPolicy(msg.key);
         break;
     }
   }
@@ -1608,5 +1637,47 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         agentLabel: 'OpenCode',
       });
     }
+  }
+
+  private _handleShowSessionDetail(serverSessionId: string, _sessionId: string): void {
+    const lang = vscode.env.language;
+    const claudeSessions: any[] = (this as any)._lastSessions || [];
+    const events = this._lastEvents[serverSessionId] || [];
+    const sessions = this._lastRelaySessions;
+
+    // Build a minimal state-like object for the render function
+    const miniState: SidebarState = {
+      lang,
+      deviceStatus: 'paired',
+      phoneName: '',
+      bridge: {} as any,
+      agents: [],
+      pendingApprovals: [],
+      sessions,
+      events: { [serverSessionId]: events },
+      claudeSessions,
+      historyPolicies: [],
+    };
+
+    const html = renderSessionDetailContent(miniState, serverSessionId);
+    this._view?.webview.postMessage({ type: 'sessionDetail', serverSessionId, html });
+  }
+
+  private _handleSetHistoryPolicy(key: string, policy: string, recentCount?: number): void {
+    const bridgeUrl = this._bridgeService.getBridgeUrl();
+    if (!bridgeUrl) return;
+    this._bridgeFetch(`${bridgeUrl}/v1/history-policy`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ key, config: { policy, recentCount: recentCount ?? 10, updatedAt: Date.now() } }),
+    }).then(() => this._pushState()).catch((err) => log(`setHistoryPolicy failed: ${err}`));
+  }
+
+  private _handleDeleteHistoryPolicy(key: string): void {
+    const bridgeUrl = this._bridgeService.getBridgeUrl();
+    if (!bridgeUrl) return;
+    this._bridgeFetch(`${bridgeUrl}/v1/history-policy?key=${encodeURIComponent(key)}`, {
+      method: 'DELETE',
+    }).then(() => this._pushState()).catch((err) => log(`deleteHistoryPolicy failed: ${err}`));
   }
 }

@@ -9,6 +9,15 @@ import { CodexResumeManager } from './codex-resume-manager.js';
 import { discoverLocalSessions, normalizeCodexSessionTitle } from './codex-local-session-resolver.js';
 import { type OpenCodeSessionManager } from './opencode-session-manager.js';
 import { listRecentClaudeTranscripts, loadConversation } from './claude-transcripts.js';
+import {
+  HistorySharePolicy,
+  type PolicyKey,
+  type HistoryPolicyConfig,
+  getConfig,
+  getAllConfigs,
+  setConfig,
+  deleteConfig,
+} from './history-policy.js';
 
 export interface BridgeConfig {
   deviceId: string;
@@ -1278,6 +1287,74 @@ function handleRequest(req: IncomingMessage, res: ServerResponse, bridge: Approv
         res.end(JSON.stringify({ ok: false, error: 'invalid payload' }));
       }
     });
+    return;
+  }
+
+  // ── History Share Policy (Phase 2) ──────────────────────
+  // GET /v1/history-policy?key=sessionId
+  // Returns the current history policy config for a given key.
+  if (req.method === 'GET' && url.pathname === '/v1/history-policy') {
+    const key = (url.searchParams.get('key') || '*') as PolicyKey;
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(getConfig(key)));
+    return;
+  }
+
+  // GET /v1/history-policies
+  // Returns ALL configured history policy configs.
+  if (req.method === 'GET' && url.pathname === '/v1/history-policies') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(getAllConfigs()));
+    return;
+  }
+
+  // PUT /v1/history-policy
+  // Sets history policy config for a given key.
+  if (req.method === 'PUT' && url.pathname === '/v1/history-policy') {
+    readJsonBody(req, res).then((rawBody) => {
+      const body = rawBody as any;
+      try {
+        const { key, config } = body;
+        if (!key || !config || typeof config.policy !== 'string') {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: false, error: 'key and config.policy required' }));
+          return;
+        }
+        if (!Object.values(HistorySharePolicy).includes(config.policy)) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: false, error: 'invalid policy value' }));
+          return;
+        }
+        setConfig(key as PolicyKey, config as HistoryPolicyConfig);
+        bridge.relay.sendRaw(JSON.stringify({
+          type: 'sync_history_policy',
+          payload: { action: 'set', key, config: { ...config, updatedAt: Date.now() } },
+        }));
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: true }));
+      } catch {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: false, error: 'invalid payload' }));
+      }
+    }).catch((err: Error) => {
+      if (err?.message === 'payload too large') return;
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: false, error: 'invalid payload' }));
+    });
+    return;
+  }
+
+  // DELETE /v1/history-policy
+  // Deletes history policy config for a given key.
+  if (req.method === 'DELETE' && url.pathname === '/v1/history-policy') {
+    const key = (url.searchParams.get('key') || '*') as PolicyKey;
+    deleteConfig(key);
+    bridge.relay.sendRaw(JSON.stringify({
+      type: 'sync_history_policy',
+      payload: { action: 'delete', key },
+    }));
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ ok: true }));
     return;
   }
 

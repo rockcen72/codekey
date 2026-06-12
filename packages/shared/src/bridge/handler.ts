@@ -14,6 +14,7 @@ import { RiskEngine } from '../risk.js';
 import { tryFormatInputRequiredEvent } from './input-card.js';
 import { runPrivacyPipeline, toCheckedPayload, PrivacyAuditCollector } from './privacy-pipeline.js';
 import type { AuditSink, PrivacyDecision, SourceType, PrivacyStats } from './privacy-pipeline.js';
+import { checkHistoryPolicy, HistorySharePolicy, getConfig, type PolicyKey } from './history-policy.js';
 
 interface PhoneCommandFingerprint {
   fingerprint: string;
@@ -191,9 +192,9 @@ export class ApprovalBridge {
   }
 
   /** Public wrapper: send event to relay with privacy check. */
-  sendEventToRelay(serverSessionId: string, payload: Record<string, unknown>, source: SourceType): void {
+  sendEventToRelay(serverSessionId: string, payload: Record<string, unknown>, source: SourceType, allowedFields?: readonly string[]): void {
     const raw = JSON.stringify({ type: 'event', payload } as any);
-    this.privacyCheckAndSend(source, raw);
+    this.privacyCheckAndSend(source, raw, undefined, allowedFields);
   }
 
   /** Public wrapper: send error event to relay (routes through privacy pipeline). */
@@ -284,6 +285,8 @@ export class ApprovalBridge {
         }));
       }
     }
+    // Push initial history policy to relay immediately
+    this._pushHistoryPolicyToRelay('opencode');
     if (onRegistered) {
       try { onRegistered(localSessionId, serverSessionId); } catch {}
     }
@@ -355,9 +358,9 @@ export class ApprovalBridge {
    * Run the privacy pipeline on a payload and send via sendCheckedPayload if allowed.
    * Returns the decision (caller can check .action for 'block' / 'require_confirmation').
    */
-  privacyCheckAndSend(source: SourceType, rawPayload: string, structuredPayload?: Record<string, unknown>): PrivacyDecision {
+  privacyCheckAndSend(source: SourceType, rawPayload: string, structuredPayload?: Record<string, unknown>, allowedFields?: readonly string[]): PrivacyDecision {
     const decision = runPrivacyPipeline(
-      { source, rawPayload, structuredPayload },
+      { source, rawPayload, structuredPayload, allowedFields },
       undefined, // cwd — uses workspace root if available
       this._auditSink,
     );
@@ -369,6 +372,17 @@ export class ApprovalBridge {
       this.relay.sendCheckedPayload(toCheckedPayload(decision)!);
     }
     return decision;
+  }
+
+  /** Push current history share policy to relay so it has the value immediately.
+   *  Called on session attach so the relay (and mini program) know the policy
+   *  without waiting for the next sync cycle or a user interaction. */
+  private _pushHistoryPolicyToRelay(agentType: string): void {
+    const cfg = getConfig(agentType as PolicyKey);
+    this.relay.sendRaw(JSON.stringify({
+      type: 'sync_history_policy',
+      payload: { action: 'set', key: agentType, config: { ...cfg, updatedAt: cfg.updatedAt || Date.now() } },
+    }));
   }
 
   constructor(readonly relay: RelayClient, opts?: { auditSink?: AuditSink }) {
@@ -1144,8 +1158,14 @@ export class ApprovalBridge {
       return { approved: false };
     }
 
-    // Replay latest prompts asynchronously — don't block approval_required
-    this.replayUserPrompts(claudeSessionId, serverSessionId).catch(() => {});
+    // Push initial history policy to relay immediately
+    this._pushHistoryPolicyToRelay('claude-code-hook');
+
+    // Check history share policy before replaying prompts
+    const policy = checkHistoryPolicy(claudeSessionId, 'claude-code-hook');
+    if (policy.allowed && (policy.maxCount ?? 0) > 0) {
+      this.replayUserPrompts(claudeSessionId, serverSessionId, policy.maxCount).catch(() => {});
+    }
 
     const clientEventId = randomUUID();
 
@@ -1621,6 +1641,11 @@ export class ApprovalBridge {
         this.stopClaudeTranscriptSync(claudeSessionId);
         return;
       }
+      // Re-check policy on each sync cycle (user may have changed from Recent to Off)
+      if (!checkHistoryPolicy(claudeSessionId, 'claude-code-hook').allowed) {
+        this.stopClaudeTranscriptSync(claudeSessionId);
+        return;
+      }
       this.syncClaudeTranscript(claudeSessionId, currentServerSessionId).catch(() => {});
     }, 2_000);
     timer.unref?.();
@@ -1631,7 +1656,9 @@ export class ApprovalBridge {
     this.sessions.set(claudeSessionId, serverSessionId);
     this.transcriptAttachedIds.add(claudeSessionId);
     if (!this.primarySessionId) this.primarySessionId = serverSessionId;
-    this.startClaudeTranscriptSync(claudeSessionId, serverSessionId);
+    if (checkHistoryPolicy(claudeSessionId, 'claude-code-hook').allowed) {
+      this.startClaudeTranscriptSync(claudeSessionId, serverSessionId);
+    }
   }
 
   private stopClaudeTranscriptSync(claudeSessionId: string): void {
@@ -1641,7 +1668,9 @@ export class ApprovalBridge {
   }
 
   private async syncClaudeTranscript(claudeSessionId: string, serverSessionId: string): Promise<void> {
-    const entries = loadConversation(claudeSessionId, 100);
+    const policy = checkHistoryPolicy(claudeSessionId, 'claude-code-hook');
+    if (!policy.allowed) return;
+    const entries = loadConversation(claudeSessionId, policy.maxCount ?? 100);
     for (const entry of entries) {
       if (entry.role === 'user') {
         const dedupKey = `${claudeSessionId}:${entry.index}`;
@@ -1667,7 +1696,7 @@ export class ApprovalBridge {
             ts: entry.timestamp || new Date().toISOString(),
           },
         };
-        this.privacyCheckAndSend('transcript', JSON.stringify(relayMsg));
+        this.privacyCheckAndSend('transcript', JSON.stringify(relayMsg), undefined, policy.allowedFields);
         continue;
       }
 
@@ -1692,7 +1721,7 @@ export class ApprovalBridge {
           ts: entry.timestamp || new Date().toISOString(),
         },
       };
-      this.privacyCheckAndSend('transcript', JSON.stringify(relayMsg));
+      this.privacyCheckAndSend('transcript', JSON.stringify(relayMsg), undefined, policy.allowedFields);
       this.resolvePendingApprovalsForSession(serverSessionId);
     }
   }
@@ -1717,12 +1746,16 @@ export class ApprovalBridge {
   }
 
   /** Extract recent user prompts from transcript and emit as user_prompt events.
-   *  Dedup strategy: sentPromptKeys (cross-attach) + consumePhoneCommandMatch (one-shot per session). */
+   *  Dedup strategy: sentPromptKeys (cross-attach) + consumePhoneCommandMatch (one-shot per session).
+   *  @param maxCount - max number of prompts to replay (0 = none). */
   private async replayUserPrompts(
     claudeSessionId: string,
     serverSessionId: string,
+    maxCount = 20,
   ): Promise<void> {
-    const prompts = await extractUserPrompts(claudeSessionId, 20);
+    const policy = checkHistoryPolicy(claudeSessionId, 'claude-code-hook');
+    if (!policy.allowed) return;
+    const prompts = await extractUserPrompts(claudeSessionId, maxCount);
     for (const entry of prompts) {
       // 1) Cross-attach dedup via transcript line index
       const dedupKey = `${claudeSessionId}:${entry.index}`;
@@ -1750,7 +1783,7 @@ export class ApprovalBridge {
           ts: entry.timestamp,
         },
       };
-      this.privacyCheckAndSend('transcript', JSON.stringify(relayMsg));
+      this.privacyCheckAndSend('transcript', JSON.stringify(relayMsg), undefined, policy.allowedFields);
     }
   }
 
@@ -1854,10 +1887,17 @@ export class ApprovalBridge {
         },
       }));
     }
-    // Replay recent conversation history to relay (so phone sees same as sidebar)
-    this.replayUserPrompts(claudeSessionId, serverSessionId).catch(() => {});
-    this._backfillAssistantHistory(claudeSessionId, serverSessionId).catch(() => {});
-    this.startClaudeTranscriptSync(claudeSessionId, serverSessionId);
+    // Push initial history policy to relay immediately
+    this._pushHistoryPolicyToRelay('claude-code-hook');
+    // Check history share policy before replaying prompts
+    const policy = checkHistoryPolicy(claudeSessionId, 'claude-code-hook');
+    if (policy.allowed && (policy.maxCount ?? 0) > 0) {
+      this.replayUserPrompts(claudeSessionId, serverSessionId, policy.maxCount).catch(() => {});
+      this._backfillAssistantHistory(claudeSessionId, serverSessionId).catch(() => {});
+    }
+    if (policy.allowed) {
+      this.startClaudeTranscriptSync(claudeSessionId, serverSessionId);
+    }
     return serverSessionId;
   }
 

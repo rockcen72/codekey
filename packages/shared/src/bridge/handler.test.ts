@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ApprovalBridge } from './handler.js';
 import { OpenCodeSessionManager } from './opencode-session-manager.js';
+import { HistorySharePolicy, setConfig } from './history-policy.js';
 
 /** Create a temp CLAUDE_CONFIG_DIR with a transcript for the given sessionId.
  *  Returns the temp dir path. Caller must set process.env.CLAUDE_CONFIG_DIR. */
@@ -647,17 +648,18 @@ describe('ApprovalBridge canonical sessions', () => {
     expect(registerMsg).toBeDefined();
   });
 
-  it('reconcileAttachedSessions restores lost transcript sessions and backfills events', async () => {
-    const tmpDir = createTranscriptFixture('lost-session', 'User prompt');
-    appendTranscriptLine(tmpDir, 'lost-session', {
-      type: 'assistant',
-      timestamp: '2026-06-04T12:00:00Z',
-      message: { role: 'assistant', content: [{ type: 'text', text: 'Recovered assistant reply' }] },
-    });
-    process.env.CLAUDE_CONFIG_DIR = tmpDir;
-    try {
-      const relay = new FakeRelay();
-      const bridge = new ApprovalBridge(relay as any);
+    it('reconcileAttachedSessions restores lost transcript sessions and backfills events', async () => {
+      const tmpDir = createTranscriptFixture('lost-session', 'User prompt');
+      appendTranscriptLine(tmpDir, 'lost-session', {
+        type: 'assistant',
+        timestamp: '2026-06-04T12:00:00Z',
+        message: { role: 'assistant', content: [{ type: 'text', text: 'Recovered assistant reply' }] },
+      });
+      process.env.CLAUDE_CONFIG_DIR = tmpDir;
+      try {
+        const relay = new FakeRelay();
+        const bridge = new ApprovalBridge(relay as any);
+        enableHistory();
 
       (bridge as any).transcriptAttachedIds.add('lost-session');
       await bridge.reconcileAttachedSessions();
@@ -844,13 +846,20 @@ describe('ApprovalBridge canonical sessions', () => {
     await new Promise(resolve => setTimeout(resolve, 200));
   }
 
+  /** Set default history policy to Recent so transcript replay tests work. */
+  function enableHistory(): void {
+    setConfig('*', { policy: HistorySharePolicy.Recent, updatedAt: Date.now() });
+  }
+
   describe('user_prompt replay', () => {
+
     it('does not replay phone-originated commands as user_prompt events', async () => {
       const tmpDir = createTranscriptFixture('claude-a', 'Phone sent command');
       process.env.CLAUDE_CONFIG_DIR = tmpDir;
       try {
         const relay = new FakeRelay();
         const bridge = new ApprovalBridge(relay as any);
+        enableHistory();
 
         await bridge.ensureSession('claude-a');
 
@@ -876,6 +885,7 @@ describe('ApprovalBridge canonical sessions', () => {
       try {
         const relay = new FakeRelay();
         const bridge = new ApprovalBridge(relay as any);
+        enableHistory();
         await bridge.attachClaudeSession('claude-a');
         await flushAsync();
         const promptEvents = relay.sent
@@ -895,6 +905,7 @@ describe('ApprovalBridge canonical sessions', () => {
       try {
         const relay = new FakeRelay();
         const bridge = new ApprovalBridge(relay as any);
+        enableHistory();
         await bridge.attachClaudeSession('claude-a');
         await flushAsync();
         const beforeCount = relay.sent.length;
@@ -915,7 +926,7 @@ describe('ApprovalBridge canonical sessions', () => {
       try {
         const relay = new FakeRelay();
         const bridge = new ApprovalBridge(relay as any);
-
+        enableHistory();
         await bridge.attachClaudeSession('claude-a');
         await flushAsync();
         const beforeCount = relay.sent.length;
@@ -1085,6 +1096,7 @@ describe('ApprovalBridge canonical sessions', () => {
       try {
         const relay = new FakeRelay();
         const bridge = new ApprovalBridge(relay as any);
+        enableHistory();
 
         // Trigger handleApproval — approval_required is sent immediately, user_prompt arrives async
         const approvalPromise = bridge.handleApproval({
@@ -1129,6 +1141,7 @@ describe('ApprovalBridge canonical sessions', () => {
       try {
         const relay = new FakeRelay();
         const bridge = new ApprovalBridge(relay as any);
+        enableHistory();
 
         await bridge.ensureSession('claude-a');
         // Record phone command in session A
@@ -1174,6 +1187,7 @@ describe('ApprovalBridge canonical sessions', () => {
 
         // Reset sentPromptKeys so second attach doesn't hit the line-index dedup
         (bridge as any).sentPromptKeys = new Set();
+        enableHistory();
 
         // Second attach — fingerprint was consumed, should now replay
         await bridge.attachClaudeSession('claude-a');
@@ -1193,6 +1207,7 @@ describe('ApprovalBridge canonical sessions', () => {
       try {
         const relay = new FakeRelay();
         const bridge = new ApprovalBridge(relay as any);
+        enableHistory();
 
         await bridge.ensureSession('claude-a');
 

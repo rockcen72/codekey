@@ -47,3 +47,26 @@ export {
   killPort,
 } from './platform.js';
 export type { Platform } from './platform.js';
+
+// History Share Policy (Phase 2)
+export {
+  HistorySharePolicy,
+  checkHistoryPolicy,
+  getConfig,
+  getAllConfigs,
+  setConfig,
+  deleteConfig,
+  waitForPolicy,
+  sanitizeRecentCount,
+  DEFAULT_HISTORY_SHARE_POLICY,
+  DEFAULT_RECENT_COUNT,
+  MIN_RECENT_COUNT,
+  MAX_RECENT_COUNT,
+  SANITIZED_ALLOWED_FIELDS,
+} from './history-policy.js';
+export type {
+  HistoryPolicyConfig,
+  PolicyKey,
+  PolicyResult,
+  AgentType,
+} from './history-policy.js';

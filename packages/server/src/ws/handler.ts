@@ -888,6 +888,21 @@ export function wsHandler(sql: postgres.Sql) {
         });
         return;
       }
+
+      // sync_history_policy: bridge sends history share policy config.
+      // Forward to connected mini program clients so they can respect it.
+      if (msg.type === 'sync_history_policy') {
+        const mpList = clientClients.get(deviceId!);
+        if (mpList) {
+          const raw = JSON.stringify(msg);
+          for (const mp of mpList) {
+            if (mp.socket.readyState === mp.socket.OPEN) {
+              mp.socket.send(raw);
+            }
+          }
+        }
+        return;
+      }
     }
 
     function handleClientMessage(msg: any) {
@@ -955,6 +970,15 @@ export function wsHandler(sql: postgres.Sql) {
             socket.send(JSON.stringify({ type: 'error', code: result.code }));
           }
         });
+        return;
+      }
+
+      // sync_history_policy: forward to PC bridge so it can apply the policy locally.
+      if (msg.type === 'sync_history_policy') {
+        const pc = pcClients.get(deviceId!);
+        if (pc && pc.socket.readyState === pc.socket.OPEN) {
+          pc.socket.send(JSON.stringify(msg));
+        }
         return;
       }
     }

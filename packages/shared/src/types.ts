@@ -176,7 +176,9 @@ export type WsMessage =
   // Raw-only client-originated messages (sent via sendRaw, not typed serialization):
   | { type: 'attach_session'; payload: { sessionId: string; claudeSessionId: string; metadata?: SessionMetadataPayload } }
   | { type: 'detach_session'; payload: { sessionId: string } }
-  | { type: 'query_attached_sessions' };
+  | { type: 'query_attached_sessions' }
+  // History Share Policy (Phase 2)
+  | { type: 'sync_history_policy'; payload: { key: string; config?: { policy: string; recentCount?: number; updatedAt: number }; action?: 'set' | 'delete' } };
 
 // ── Device Pairing ─────────────────────────────────────
 

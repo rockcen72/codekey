@@ -36,6 +36,13 @@ export interface PrivacyInfo {
   recentEntries: { timestamp: string; source: string; action: string; sanitized: boolean; blocked: boolean; payloadPreview: string; findingCount: number; payloadLength: number }[];
 }
 
+export interface HistoryPolicyEntry {
+  key: string;
+  policy: string;
+  recentCount?: number;
+  updatedAt: number;
+}
+
 export interface SidebarState {
   deviceStatus: 'unpaired' | 'paired' | 'offline';
   deviceId?: string;
@@ -60,6 +67,7 @@ export interface SidebarState {
   lang?: string;
   subscription?: SubscriptionInfo;
   privacy?: PrivacyInfo;
+  historyPolicies?: HistoryPolicyEntry[];
 }
 
 export interface ClaudeSessionItem {
@@ -325,6 +333,58 @@ function renderPrivacy(state: SidebarState): string {
   </div>`;
 }
 
+const HISTORY_AGENTS: { key: string; label: string; labelZh: string }[] = [
+  { key: '*', label: 'Default (All agents)', labelZh: '默认（所有助手）' },
+  { key: 'claude-code-hook', label: 'Claude Code', labelZh: 'Claude Code' },
+  { key: 'codex', label: 'Codex', labelZh: 'Codex' },
+  { key: 'opencode', label: 'OpenCode', labelZh: 'OpenCode' },
+];
+
+export function renderHistoryPolicyContent(state: SidebarState): string {
+  const policies = state.historyPolicies || [];
+  const lookup = new Map<string, HistoryPolicyEntry>();
+  for (const p of policies) lookup.set(p.key, p);
+
+  const optLabels: Record<string, string> = {
+    off: i18n(state.lang, 'Off', '关闭'),
+    minimal: i18n(state.lang, 'Minimal', '最小化'),
+    recent: i18n(state.lang, 'Recent', '最近'),
+    sanitized: i18n(state.lang, 'Sanitized', '脱敏'),
+    manual: i18n(state.lang, 'Manual', '手动'),
+  };
+  const opts = ['off', 'minimal', 'recent', 'sanitized', 'manual'];
+
+  return HISTORY_AGENTS.map(({ key, label, labelZh }) => {
+    const entry = lookup.get(key);
+    const current = entry?.policy || 'off';
+    const rc = entry?.recentCount ?? 10;
+    const showCount = current === 'recent' || current === 'sanitized';
+    const labelText = i18n(state.lang, label, labelZh);
+    return `<div class="hp-row" data-hp-key="${key}">
+      <span class="hp-label">${labelText}</span>
+      <div class="hp-controls">
+        <select class="hp-select" data-hp-key="${key}">
+          ${opts.map(o => `<option value="${o}"${o === current ? ' selected' : ''}>${optLabels[o]}</option>`).join('')}
+        </select>
+        <input class="hp-count${showCount ? '' : ' hidden'}" type="number" min="1" max="50" value="${rc}" data-hp-key="${key}" />
+        ${entry ? `<button class="hp-reset btn-ghost btn-sm" data-hp-key="${key}" title="${i18n(state.lang, 'Reset', '重置')}">↺</button>` : ''}
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function renderHistoryPolicy(state: SidebarState): string {
+  return `<div class="card">
+    <div class="card-header">
+      <span class="card-label">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+        ${i18n(state.lang, 'History Share', '历史分享')}
+      </span>
+    </div>
+    <div id="historyPolicyContent">${renderHistoryPolicyContent(state)}</div>
+  </div>`;
+}
+
 export function renderSessionsContent(state: SidebarState): string {
   const items = state.claudeSessions.filter(s => s && s.sessionId).slice().sort((a, b) => {
     const ta = a.updatedAt ? new Date(a.updatedAt).getTime() : 0;
@@ -352,6 +412,54 @@ export function renderSessionsContent(state: SidebarState): string {
     + '</div>';
 }
 
+export function renderSessionDetailContent(state: SidebarState, serverSessionId: string): string {
+  const events = state.events[serverSessionId] || [];
+  const session = state.sessions.find(s => s.id === serverSessionId);
+  const claudeSession = state.claudeSessions.find(s => s.serverSessionId === serverSessionId);
+  const title = claudeSession ? h(_displayTitle(claudeSession)) : session?.metadata?.title ? h(String(session.metadata.title)) : h(serverSessionId.slice(0, 8));
+  const agentType = session?.agent_type || 'unknown';
+  const lang = state.lang;
+  const backText = i18n(lang, 'Back', '返回');
+  const emptyText = i18n(lang, 'No shared events yet', '暂无已分享事件');
+
+  let eventHtml: string;
+  if (events.length === 0) {
+    eventHtml = `<div class="sd-empty">${emptyText}</div>`;
+  } else {
+    eventHtml = events.slice().reverse().map((ev) => {
+      const et = h(ev.type);
+      const summary = ev.data?.summary || ev.data?.prompt || ev.data?.command || ev.data?.output || '';
+      const summaryText = h(summary.slice(0, 300));
+      const ts = ev.created_at ? formatTime(ev.created_at) : '';
+      const typeLabel = eventTypeLabel(ev.type, lang);
+      return `<div class="sd-event">
+        <div class="sd-event-header">
+          <span class="sd-event-type ${et}">${typeLabel}</span>
+          <span class="sd-event-ts">${h(ts)}</span>
+        </div>
+        <div class="sd-event-data">${summaryText || '<span style="color:#50506e">(no content)</span>'}</div>
+      </div>`;
+    }).join('');
+  }
+
+  return `<div class="sd-header">
+    <button class="sd-back" data-action="hideSessionDetail">&#9664; ${backText}</button>
+    <span class="sd-title" title="${title}">${title}</span>
+    <span class="sd-agent">${h(agentType)}</span>
+  </div>
+  <div class="session-scroll" style="max-height:300px">${eventHtml}</div>`;
+}
+
+function eventTypeLabel(type: string, lang?: string): string {
+  switch (type) {
+    case 'user_prompt': return i18n(lang, 'Prompt', '提示');
+    case 'task_complete': return i18n(lang, 'Complete', '完成');
+    case 'approval_required': return i18n(lang, 'Approval', '审批');
+    case 'command_started': return i18n(lang, 'Command', '命令');
+    default: return type;
+  }
+}
+
 function _sessionItemHtml(lang: string | undefined, s: any, extraCls: string): string {
       const isAttached = s.attached;
       const sid = s.sessionId;
@@ -365,7 +473,7 @@ function _sessionItemHtml(lang: string | undefined, s: any, extraCls: string): s
       const serverSessionId = s.serverSessionId || '';
       return `<div class="session-item${extraCls}" data-sid="${h(sid)}" data-agent="${agent}">
         <div class="session-title-row">
-          <span class="session-title-click" data-action="togglePreview" data-session-id="${h(sid)}" data-iscodex="${isCodex}" data-isopencode="${isOpenCode}">
+          <span class="session-title-click" data-action="togglePreview" data-session-id="${h(sid)}" data-server-session-id="${h(serverSessionId)}" data-iscodex="${isCodex}" data-isopencode="${isOpenCode}">
             <span class="chevron">&#9654;</span>
             <span class="session-title" title="${h(title)}">${h(truncate(title, 60))}</span>
           </span>
@@ -637,6 +745,7 @@ ${renderAgents(state)}
 ${renderClaudeSessions(state)}
 ${renderApprovals(state)}
 ${renderPrivacy(state)}
+${renderHistoryPolicy(state)}
 ${renderSubscribe(state)}
 <script nonce="${NONCE}">
 (function() {
@@ -644,6 +753,10 @@ ${renderSubscribe(state)}
 	  var lang = document.documentElement.lang || 'en';
 	  function T(en, zh) { return lang.indexOf('zh') === 0 && zh ? zh : en; }
 	  api.T = T;
+
+  // Session detail view state
+  var _inDetailView = false;
+  var _currentDetailServerSessionId = null;
 
   // Pairing data injected from extension host state
   var PD = ${JSON.stringify({
@@ -699,7 +812,7 @@ ${renderSubscribe(state)}
   }
   // Cache last HTML per section — skip swap when unchanged to preserve
   // user-opened previews / scroll position / active tab state.
-  var _lastHtml = { deviceContent: '', pairingContent: '', agentsContent: '', approvalsContent: '', sessionsContent: '', subscriptionHtml: '', privacyContent: '' };
+  var _lastHtml = { deviceContent: '', pairingContent: '', agentsContent: '', approvalsContent: '', sessionsContent: '', subscriptionHtml: '', privacyContent: '', historyPolicyContent: '' };
   function swap(id, html) {
     if (html === undefined) return false;
     if (_lastHtml[id] === html) return false;
@@ -733,8 +846,9 @@ ${renderSubscribe(state)}
       swap('agentsContent', d.agentsHtml);
       swap('approvalsContent', d.approvalsHtml);
       swap('privacyContent', d.privacyHtml);
+      swap('historyPolicyContent', d.historyPolicyHtml);
       replaceById('subscriptionFooter', d.subscriptionHtml);
-      if (swap('sessionsContent', d.sessionsHtml)) applyAgentFilter();
+      if (!_inDetailView) { if (swap('sessionsContent', d.sessionsHtml)) applyAgentFilter(); }
       // Update badges
       if (d.agentCount !== undefined) {
         var ab = document.getElementById('agentsBadge');
@@ -790,6 +904,12 @@ ${renderSubscribe(state)}
         el.innerHTML = '<div class="preview-empty">No conversation history</div>';
       }
       el.style.display = 'block';
+    }
+
+    if (e.data && e.data.type === 'sessionDetail') {
+      var sc2 = document.getElementById('sessionsContent');
+      if (sc2) { sc2.innerHTML = e.data.html; _inDetailView = true; }
+      return;
     }
 
     if (e.data && e.data.type === 'sessionsRefreshStatus') {
@@ -963,6 +1083,16 @@ ${renderSubscribe(state)}
 
     if (action === 'togglePreview') {
       var sid = target.dataset.sessionId;
+      // Attached session: navigate to detail view instead of inline preview
+      var serverSid = target.dataset.serverSessionId;
+      if (serverSid) {
+        _inDetailView = true;
+        _currentDetailServerSessionId = serverSid;
+        var sc = document.getElementById('sessionsContent');
+        if (sc) sc.innerHTML = '<div class="session-scroll"><div class="sd-empty">Loading...</div></div>';
+        api.postMessage({ action: 'showSessionDetail', sessionId: sid, serverSessionId: serverSid });
+        return;
+      }
       var el = document.getElementById('preview-' + sid);
       if (!el) return;
       var item = target.closest('.session-item');
@@ -1042,7 +1172,54 @@ ${renderSubscribe(state)}
       return;
     }
 
+    if (target.classList.contains('hp-reset')) {
+      var key = target.dataset.hpKey;
+      if (key) { api.postMessage({ action: 'deleteHistoryPolicy', key: key }); }
+      return;
+    }
+
+    // Back from session detail to session list
+    if (action === 'hideSessionDetail') {
+      _inDetailView = false;
+      _currentDetailServerSessionId = null;
+      // Force a full state push to get fresh sessions + events
+      api.postMessage({ action: 'refreshClaudeSessions' });
+      return;
+    }
+
     api.postMessage({ action: action });
+  });
+
+  // ── History Policy controls ───────────────────
+  document.addEventListener('change', function(e) {
+    var target = e.target;
+    if (target.classList.contains('hp-select')) {
+      var row = target.closest('.hp-row');
+      var key = row ? row.dataset.hpKey : '';
+      if (!key) return;
+      var policy = target.value;
+      var countInput = row ? row.querySelector('.hp-count') : null;
+      var showCount = policy === 'recent' || policy === 'sanitized';
+      if (countInput) { countInput.classList.toggle('hidden', !showCount); }
+      var recentCount = countInput ? parseInt(countInput.value) || 10 : 10;
+      api.postMessage({ action: 'setHistoryPolicy', key: key, policy: policy, recentCount: recentCount });
+      return;
+    }
+  });
+
+  document.addEventListener('input', function(e) {
+    var target = e.target;
+    if (target.classList.contains('hp-count')) {
+      var row = target.closest('.hp-row');
+      var key = row ? row.dataset.hpKey : '';
+      if (!key) return;
+      var select = row ? row.querySelector('.hp-select') : null;
+      var policy = select ? select.value : 'off';
+      var recentCount = parseInt(target.value) || 10;
+      if (recentCount < 1) recentCount = 1;
+      if (recentCount > 50) recentCount = 50;
+      api.postMessage({ action: 'setHistoryPolicy', key: key, policy: policy, recentCount: recentCount });
+    }
   });
 
   // Listen for redeem result from extension host
@@ -1432,6 +1609,31 @@ body{
 .pv-bubble-right{background:rgba(0,255,224,.08);color:var(--vscode-textLink-foreground,#00ffe0);float:right}
 
 /* ═══════════════════════════════════════════════
+   SESSION DETAIL
+   ═══════════════════════════════════════════════ */
+.sd-header{display:flex;align-items:center;gap:6px;padding:6px 0;border-bottom:1px solid rgba(255,255,255,.05);margin-bottom:6px}
+.sd-back{font-size:10px;color:var(--vscode-textLink-foreground,#00ffe0);cursor:pointer;background:none;border:none;padding:2px 6px;border-radius:2px;flex-shrink:0}
+.sd-back:hover{background:rgba(255,255,255,.05)}
+.sd-title{font-size:11px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}
+.sd-agent{font-size:9px;color:var(--vscode-descriptionForeground,#50506e);flex-shrink:0}
+.sd-empty{font-size:10px;color:var(--vscode-descriptionForeground,#50506e);text-align:center;padding:12px 0}
+.sd-event{margin-bottom:4px;padding:4px 6px;border-radius:3px;font-size:10px;line-height:1.4}
+.sd-event:hover{background:rgba(255,255,255,.02)}
+.sd-event-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:2px}
+.sd-event-type{font-weight:600;font-size:9px;text-transform:uppercase;letter-spacing:.03em}
+.sd-event-type.user_prompt{color:#2ecc71}
+.sd-event-type.task_complete{color:#5c9cf5}
+.sd-event-type.approval_required{color:#e2b714}
+.sd-event-type.command_started{color:#a855f7}
+.sd-event-type.event{color:#8888a8}
+.sd-event-ts{font-size:8px;color:var(--vscode-descriptionForeground,#50506e)}
+.sd-event-data{font-size:10px;color:var(--vscode-editor-foreground);white-space:pre-wrap;word-break:break-word;max-height:60px;overflow:hidden}
+.sd-event-data.expanded{max-height:none}
+.sd-expand{font-size:8px;color:var(--vscode-textLink-foreground,#00ffe0);cursor:pointer;background:none;border:none;padding:0;margin-top:2px}
+.sd-expand:hover{text-decoration:underline}
+.sd-event+.sd-event{border-top:1px solid rgba(255,255,255,.03)}
+
+/* ═══════════════════════════════════════════════
    MISC
    ═══════════════════════════════════════════════ */
 .empty-state{font-size:11px;color:var(--vscode-descriptionForeground,#50506e);text-align:center;padding:8px 0}
@@ -1577,6 +1779,40 @@ body{
 .privacy-preview{font-size:10px;color:var(--vscode-descriptionForeground,#7878a0);margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:monospace}
 
 /* ═══════════════════════════════════════════════
+   HISTORY SHARE
+   ═══════════════════════════════════════════════ */
+.hp-row{
+  display:flex;align-items:center;justify-content:space-between;
+  padding:5px 0;gap:8px;
+  border-bottom:1px solid rgba(255,255,255,.03);
+}
+.hp-row:last-child{border-bottom:none;padding-bottom:0}
+.hp-row:first-child{padding-top:0}
+.hp-label{font-size:11px;color:var(--vscode-editor-foreground,#e8e8f0);flex-shrink:0;white-space:nowrap}
+.hp-controls{display:flex;align-items:center;gap:4px;flex-shrink:0}
+.hp-select{
+  background:var(--vscode-dropdown-background,#1a1a2e);
+  color:var(--vscode-dropdown-foreground,#e8e8f0);
+  border:1px solid var(--vscode-dropdown-border,#333);
+  border-radius:4px;padding:2px 4px;
+  font-size:10px;font-family:var(--vscode-font-family,system-ui);
+  cursor:pointer;outline:none;min-width:68px;
+}
+.hp-select:focus{border-color:var(--vscode-focusBorder,#5c9cf5)}
+.hp-count{
+  width:40px;background:var(--vscode-input-background,#1a1a2e);
+  color:var(--vscode-input-foreground,#e8e8f0);
+  border:1px solid var(--vscode-input-border,#333);
+  border-radius:4px;padding:2px 4px;
+  font-size:10px;font-family:var(--vscode-font-family,system-ui);
+  text-align:center;outline:none;
+}
+.hp-count:focus{border-color:var(--vscode-focusBorder,#5c9cf5)}
+.hp-count.hidden{display:none}
+.hp-reset{font-size:12px;padding:2px 4px;cursor:pointer;color:var(--vscode-descriptionForeground,#50506e);background:none;border:none;border-radius:3px;line-height:1}
+.hp-reset:hover{color:var(--vscode-editor-foreground);background:var(--vscode-panel-border,#1e1e2e)}
+
+/* ═══════════════════════════════════════════════
    ANIMATIONS
    ═══════════════════════════════════════════════ */
 @keyframes fadeIn{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:translateY(0)}}
@@ -1586,4 +1822,5 @@ body{
 .card:nth-child(4){animation-delay:.15s}
 .card:nth-child(5){animation-delay:.2s}
 .card:nth-child(6){animation-delay:.25s}
+.card:nth-child(7){animation-delay:.3s}
 `;

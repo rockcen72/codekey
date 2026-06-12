@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { ApprovalBridge } from '../bridge/handler.js';
 import { discoverLocalOpenCodeSessions, OpenCodeSessionManager } from '../bridge/opencode-session-manager.js';
+import { HistorySharePolicy, setConfig } from '../bridge/history-policy.js';
 
 class FakeRelay extends EventEmitter {
   sent: string[] = [];
@@ -48,6 +49,8 @@ describe('OpenCodeSessionManager event handling', () => {
     relay = new FakeRelay();
     bridge = new ApprovalBridge(relay as any);
     bridge.listenRelayCommands();
+    // Default to Recent so streaming/text/task tests can send events
+    setConfig('*', { policy: HistorySharePolicy.Recent, updatedAt: Date.now() });
     manager = new OpenCodeSessionManager('http://127.0.0.1:4096', bridge);
     // Register handlers without starting SSE
     bridge.registerExternalApprovalResponder({
