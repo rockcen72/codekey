@@ -18,6 +18,7 @@ import {
   renderAgentsContent,
   renderApprovalsContent,
   renderSessionsContent,
+  renderPrivacyContent,
   renderSubscribe,
   type SidebarState,
   type PendingApprovalItem,
@@ -36,6 +37,7 @@ const AGENT_DISPLAY_NAMES: Record<string, string> = {
 
 const POLL_MS = 5000;
 const APPROVAL_POLL_MS = 1000;
+const PRIVACY_POLL_MS = 5000;
 const BRIDGE_FETCH_TIMEOUT_MS = 2000;
 
 interface BridgePendingApproval {
@@ -127,6 +129,8 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
    *  fall back to a 30s retry interval instead of 1s polling. */
   private _approvalPoll404Count = 0;
   private _approvalPollRetryTimer?: ReturnType<typeof setTimeout>;
+  private _privacyPollTimer?: ReturnType<typeof setInterval>;
+  private _lastPrivacySig = '';
   private _lastSubscription?: SubscriptionResponse;
 
   /** Window during which a recent user-driven detach/attach overrides
@@ -169,10 +173,23 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
 
     this._bridgeDisposable = this._bridgeService.onDidChange(() => this._pushState());
 
+    webviewView.onDidDispose(() => {
+      this._view = undefined;
+      this._lastPrivacySig = '';
+      this._stopPolling();
+      this._stopApprovalPolling();
+      this._stopPrivacyPolling();
+      if (this._bridgeDisposable) {
+        this._bridgeDisposable.dispose();
+        this._bridgeDisposable = undefined;
+      }
+    });
+
     this._bridgeService.ensureStarted();
     this._pushState().catch(err => log(`_pushState (initial) failed: ${err?.stack || err}`));
     this._startPolling();
     this._startApprovalPolling();
+    this._startPrivacyPolling();
   }
 
   /** Fast (1s) poll of bridge's in-memory pending approvals.
@@ -243,6 +260,32 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       // bridge unreachable, leave previous state
     } finally {
       this._approvalPollInFlight = false;
+    }
+  }
+
+  private async _pollPrivacy(): Promise<void> {
+    if (!this._view) return;
+    try {
+      const resp = await this._bridgeFetch(`${this._bridgeService.getBridgeUrl()}/v1/privacy-stats`);
+      if (!resp.ok) return;
+      const stats = await resp.json() as { summary: { forwarded: number; blocked: number; sanitized: number; totalFindings: number }; recentEntries: any[] };
+      const sig = stats.summary.forwarded + '|' + stats.summary.blocked + '|' + stats.summary.sanitized + '|' + stats.recentEntries.length;
+      if (sig === this._lastPrivacySig) return;
+      this._lastPrivacySig = sig;
+      const state: SidebarState = {
+        deviceStatus: 'paired',
+        phoneName: '',
+        bridge: this._bridgeService.state,
+        agents: [],
+        pendingApprovals: [],
+        sessions: [],
+        events: {},
+        claudeSessions: [],
+        privacy: stats,
+      };
+      this._view.webview.postMessage({ type: 'stateUpdate', privacyHtml: renderPrivacyContent(state) });
+    } catch {
+      // bridge unreachable — leave previous state
     }
   }
 
@@ -1014,9 +1057,25 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
   }
 
   private _stopApprovalPolling(): void {
+    if (this._approvalPollRetryTimer) {
+      clearTimeout(this._approvalPollRetryTimer);
+      this._approvalPollRetryTimer = undefined;
+    }
     if (this._approvalPollTimer) {
       clearInterval(this._approvalPollTimer);
       this._approvalPollTimer = undefined;
+    }
+  }
+
+  private _startPrivacyPolling(): void {
+    this._stopPrivacyPolling();
+    this._privacyPollTimer = setInterval(() => this._pollPrivacy(), PRIVACY_POLL_MS);
+  }
+
+  private _stopPrivacyPolling(): void {
+    if (this._privacyPollTimer) {
+      clearInterval(this._privacyPollTimer);
+      this._privacyPollTimer = undefined;
     }
   }
 

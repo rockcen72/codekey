@@ -31,6 +31,11 @@ export interface SubscriptionInfo {
   usage: { used: number; limit: number; period: string } | null;
 }
 
+export interface PrivacyInfo {
+  summary: { forwarded: number; blocked: number; sanitized: number; totalFindings: number };
+  recentEntries: { timestamp: string; source: string; action: string; sanitized: boolean; blocked: boolean; payloadPreview: string; findingCount: number; payloadLength: number }[];
+}
+
 export interface SidebarState {
   deviceStatus: 'unpaired' | 'paired' | 'offline';
   deviceId?: string;
@@ -54,6 +59,7 @@ export interface SidebarState {
   pairingPlatform?: string;
   lang?: string;
   subscription?: SubscriptionInfo;
+  privacy?: PrivacyInfo;
 }
 
 export interface ClaudeSessionItem {
@@ -271,6 +277,51 @@ function renderApprovals(state: SidebarState): string {
       <span class="approval-badges" id="approvalsBadge">${badgesHtml}</span>
     </div>
     <div id="approvalsContent">${renderApprovalsContent(state)}</div>
+  </div>`;
+}
+
+export function renderPrivacyContent(state: SidebarState): string {
+  const p = state.privacy;
+  if (!p) {
+    return '<div class="empty-state">' + i18n(state.lang, 'Privacy pipeline not available', '隐私管道未就绪') + '</div>';
+  }
+  const s = p.summary;
+  const sourceLabels: Record<string, string> = { approval: 'Approve', transcript: 'Transcript', history: 'History', command: 'Command' };
+  const actionLabels: Record<string, string> = { forwarded: 'Forwarded', blocked: 'Blocked', sanitized: 'Sanitized' };
+  const entries = p.recentEntries.slice(-5).reverse();
+  const hasFindings = s.totalFindings > 0;
+  return `<div class="privacy-summary">
+    <div class="privacy-row">
+      <span class="privacy-pill">${h(String(s.forwarded))} ${i18n(state.lang, 'fwd', '已发')}</span>
+      <span class="privacy-pill${hasFindings ? ' privacy-pill-warn' : ''}">${h(String(s.sanitized))} ${i18n(state.lang, 'sanitized', '已脱敏')}</span>
+      <span class="privacy-pill${s.blocked > 0 ? ' privacy-pill-block' : ''}">${h(String(s.blocked))} ${i18n(state.lang, 'blocked', '已拦截')}</span>
+    </div>
+    ${hasFindings ? `<div class="privacy-row"><span class="privacy-findings">${h(String(s.totalFindings))} ${i18n(state.lang, 'secrets redacted', '个秘密已擦除')}</span></div>` : ''}
+    ${entries.length > 0 ? `<div class="privacy-entries">${entries.map(e => {
+      const src = sourceLabels[e.source] || e.source;
+      const act = actionLabels[e.action] || e.action;
+      const preview = e.payloadPreview ? h(truncate(e.payloadPreview, 80)) : '';
+      return `<div class="privacy-entry">
+        <div class="privacy-entry-hdr">
+          <span class="privacy-tag ${e.action}">${h(act)}</span>
+          <span class="privacy-source">${h(src)}</span>
+          <span class="privacy-len">${h(String(e.payloadLength))}B</span>
+        </div>
+        ${preview ? `<div class="privacy-preview">${preview}</div>` : ''}
+      </div>`;
+    }).join('')}</div>` : '<div class="empty-state">' + i18n(state.lang, 'No events yet', '暂无数据') + '</div>'}
+  </div>`;
+}
+
+function renderPrivacy(state: SidebarState): string {
+  return `<div class="card">
+    <div class="card-header">
+      <span class="card-label">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+        ${i18n(state.lang, 'Privacy', '隐私')}
+      </span>
+    </div>
+    <div id="privacyContent">${renderPrivacyContent(state)}</div>
   </div>`;
 }
 
@@ -585,6 +636,7 @@ ${renderPairing(state)}
 ${renderAgents(state)}
 ${renderClaudeSessions(state)}
 ${renderApprovals(state)}
+${renderPrivacy(state)}
 ${renderSubscribe(state)}
 <script nonce="${NONCE}">
 (function() {
@@ -647,7 +699,7 @@ ${renderSubscribe(state)}
   }
   // Cache last HTML per section — skip swap when unchanged to preserve
   // user-opened previews / scroll position / active tab state.
-  var _lastHtml = { deviceContent: '', pairingContent: '', agentsContent: '', approvalsContent: '', sessionsContent: '', subscriptionHtml: '' };
+  var _lastHtml = { deviceContent: '', pairingContent: '', agentsContent: '', approvalsContent: '', sessionsContent: '', subscriptionHtml: '', privacyContent: '' };
   function swap(id, html) {
     if (html === undefined) return false;
     if (_lastHtml[id] === html) return false;
@@ -680,6 +732,7 @@ ${renderSubscribe(state)}
       applySavedPlatform(false);
       swap('agentsContent', d.agentsHtml);
       swap('approvalsContent', d.approvalsHtml);
+      swap('privacyContent', d.privacyHtml);
       replaceById('subscriptionFooter', d.subscriptionHtml);
       if (swap('sessionsContent', d.sessionsHtml)) applyAgentFilter();
       // Update badges
@@ -1502,6 +1555,26 @@ body{
   background:rgba(0,255,224,.08);color:var(--vscode-textLink-foreground,#00ffe0);
   border-color:rgba(0,255,224,.15);
 }
+
+/* ═══════════════════════════════════════════════
+   PRIVACY PANEL
+   ═══════════════════════════════════════════════ */
+.privacy-summary{padding:0}
+.privacy-row{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px;align-items:center}
+.privacy-pill{font-size:10px;background:var(--vscode-panel-border,#1e1e2e);color:var(--vscode-descriptionForeground,#7878a0);border-radius:4px;padding:2px 6px;white-space:nowrap}
+.privacy-pill-warn{color:#f59e0b;border:1px solid #f59e0b33}
+.privacy-pill-block{color:#f74d4d;border:1px solid #f74d4d33}
+.privacy-findings{font-size:10px;color:var(--vscode-descriptionForeground,#7878a0)}
+.privacy-entries{display:flex;flex-direction:column;gap:4px;margin-top:4px;max-height:180px;overflow-y:auto}
+.privacy-entry{background:var(--vscode-panel-border,#1e1e2e);border-radius:6px;padding:5px 7px}
+.privacy-entry-hdr{display:flex;align-items:center;gap:6px;font-size:10px}
+.privacy-tag{font-size:9px;padding:1px 4px;border-radius:3px;font-weight:600;text-transform:uppercase}
+.privacy-tag.forwarded{background:#86efac22;color:#86efac}
+.privacy-tag.blocked{background:#f74d4d22;color:#f74d4d}
+.privacy-tag.sanitized{background:#f59e0b22;color:#f59e0b}
+.privacy-source{color:var(--vscode-descriptionForeground,#7878a0)}
+.privacy-len{margin-left:auto;color:var(--vscode-descriptionForeground,#50506e)}
+.privacy-preview{font-size:10px;color:var(--vscode-descriptionForeground,#7878a0);margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:monospace}
 
 /* ═══════════════════════════════════════════════
    ANIMATIONS

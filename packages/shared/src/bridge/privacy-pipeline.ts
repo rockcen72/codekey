@@ -92,6 +92,59 @@ export interface AuditEntry {
 /** Callback type for audit logging. Injected by the host (VS Code). */
 export type AuditSink = (entry: AuditEntry) => void;
 
+export interface PrivacyStats {
+  summary: {
+    forwarded: number;
+    blocked: number;
+    sanitized: number;
+    totalFindings: number;
+  };
+  recentEntries: AuditEntry[];
+}
+
+const MAX_AUDIT_ENTRIES = 500;
+
+export class PrivacyAuditCollector {
+  private _entries: AuditEntry[] = [];
+  private _forwarded = 0;
+  private _blocked = 0;
+  private _sanitized = 0;
+  private _totalFindings = 0;
+
+  get sink(): AuditSink {
+    return (entry: AuditEntry) => {
+      this._entries.push(entry);
+      if (this._entries.length > MAX_AUDIT_ENTRIES) {
+        this._entries.splice(0, this._entries.length - MAX_AUDIT_ENTRIES);
+      }
+      if (entry.action === 'blocked') this._blocked++;
+      else if (entry.action === 'sanitized') this._sanitized++;
+      else this._forwarded++;
+      this._totalFindings += entry.findingCount;
+    };
+  }
+
+  stats(): PrivacyStats {
+    return {
+      summary: {
+        forwarded: this._forwarded,
+        blocked: this._blocked,
+        sanitized: this._sanitized,
+        totalFindings: this._totalFindings,
+      },
+      recentEntries: [...this._entries],
+    };
+  }
+
+  reset(): void {
+    this._entries = [];
+    this._forwarded = 0;
+    this._blocked = 0;
+    this._sanitized = 0;
+    this._totalFindings = 0;
+  }
+}
+
 /** Size limits per source type (in characters) */
 const MAX_LENGTH: Record<SourceType, number> = {
   approval: 50_000,

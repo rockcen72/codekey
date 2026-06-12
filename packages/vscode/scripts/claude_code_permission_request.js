@@ -6,20 +6,26 @@ const HEALTH_TIMEOUT_MS = 1_500;
 const TIMEOUT_MS = 120_000;
 const DIAG_LOG = require('path').join(require('os').homedir(), '.claude', 'codekey-permission-diagnostic.log');
 const DIAG_ENABLED = process.env.CODEKEY_DEBUG_LOG === '1';
+const DIAG_MAX = 5 * 1024 * 1024;
 const fs = require('fs');
 function diag(msg) {
   if (!DIAG_ENABLED) return;
-  try { fs.appendFileSync(DIAG_LOG, new Date().toISOString() + ' ' + msg + '\n'); } catch {}
+  try {
+    // rotate if current log >= 5MB (max 3 backups)
+    try { const sz = fs.statSync(DIAG_LOG).size; if (sz >= DIAG_MAX) { try { fs.unlinkSync(DIAG_LOG + '.3'); } catch {} try { fs.renameSync(DIAG_LOG + '.2', DIAG_LOG + '.3'); } catch {} try { fs.renameSync(DIAG_LOG + '.1', DIAG_LOG + '.2'); } catch {} fs.renameSync(DIAG_LOG, DIAG_LOG + '.1'); } } catch {}
+    fs.appendFileSync(DIAG_LOG, new Date().toISOString() + ' ' + msg + '\n');
+  } catch {}
 }
-/** Minimal sanitizer for diagnostic logging — redacts common secret patterns. */
+/** Sanitizer for diagnostic logging — aligned with handler.ts desensitize(). */
 function sanitizeForDiag(raw) {
   return raw
-    .replace(/sk-[A-Za-z0-9]{20,}/g, 'sk-***')
-    .replace(/sk-ant-[A-Za-z0-9]{20,}/g, 'sk-ant-***')
-    .replace(/ghp_[A-Za-z0-9]{36}/g, 'ghp_***')
-    .replace(/AKIA[0-9A-Z]{16}/g, 'AKIA***')
-    .replace(/Bearer\s+[A-Za-z0-9\-._~+/]{20,}/g, 'Bearer ***')
-    .replace(/-----BEGIN\s+(RSA\s+)?PRIVATE\s+KEY-----[\s\S]*?-----END\s+(RSA\s+)?PRIVATE\s+KEY-----/g, '-----BEGIN PRIVATE KEY-----\n***\n-----END PRIVATE KEY-----');
+    .replace(/-----BEGIN[\s\S]*?PRIVATE KEY-----[\s\S]*?-----END[\s\S]*?PRIVATE KEY-----/g, '-----BEGIN PRIVATE KEY-----\n***\n-----END PRIVATE KEY-----')
+    .replace(/\bsk-[A-Za-z0-9_-]{12,}/g, 'sk-****')
+    .replace(/\bgh[pousr]_[A-Za-z0-9]{16,}/g, 'gh_****')
+    .replace(/\bAKIA[0-9A-Z]{16}\b/g, 'AKIA****')
+    .replace(/\b(Bearer\s+)[A-Za-z0-9._-]{12,}/gi, '$1****')
+    .replace(/([a-z][a-z0-9+.-]*:\/\/[^\s:/@]+:)[^\s@]+@/gi, '$1****@')
+    .replace(/\b(password|passwd|pwd|token|secret|api[_-]?key|access[_-]?key|auth[_-]?token)(\s*["']?\s*[=:]\s*["']?)([^\s"'&;,]+)/gi, '$1$2****');
 }
 
 async function bridgeReady() {
@@ -38,7 +44,7 @@ async function bridgeReady() {
     }
     return true;
   } catch (err) {
-    diag('health check failed: ' + (err.message || err));
+    diag('health check failed: ' + sanitizeForDiag(err.message || err));
     return false;
   } finally {
     clearTimeout(timer);
@@ -58,17 +64,17 @@ async function isSessionAttached(sessionId) {
     const body = await res.json();
     const attached = Array.isArray(body && body.attached) ? body.attached : [];
     const ok = attached.includes(sessionId);
-    diag('attached-sessions check: sid=' + sessionId + ' attached=' + ok + ' total=' + attached.length);
+    diag('attached-sessions check: sid=' + sanitizeForDiag(sessionId) + ' attached=' + ok + ' total=' + attached.length);
     return ok;
   } catch (err) {
-    diag('attached-sessions check failed: ' + (err.message || err));
+    diag('attached-sessions check failed: ' + sanitizeForDiag(err.message || err));
     return false;
   } finally {
     clearTimeout(timer);
   }
 }
 
-diag('hook started, BRIDGE_URL=' + BRIDGE_URL + ' args=' + process.argv.join(' '));
+diag('hook started, BRIDGE_URL=' + BRIDGE_URL + ' args=' + sanitizeForDiag(process.argv.join(' ')));
 let input = '';
 process.stdin.setEncoding('utf-8');
 process.stdin.on('data', (c) => { input += c; });
@@ -89,15 +95,15 @@ process.stdin.on('end', async () => {
       for (var key of Object.keys(event)) {
         if (key.toLowerCase().indexOf('session') !== -1 && typeof event[key] === 'string') {
           sid = event[key];
-          diag('found session ID via fallback key=' + key + ' value=' + sid);
+          diag('found session ID via fallback key=' + key + ' value=' + sanitizeForDiag(sid));
           break;
         }
       }
     }
 
-    diag('resolved claudeSessionId=' + sid);
+    diag('resolved claudeSessionId=' + sanitizeForDiag(sid));
     const codekeyWindowId = process.env.CODEKEY_WINDOW_ID || '';
-    diag('codekeyWindowId=' + codekeyWindowId + ' CODEKEY_WINDOW_ID=' + (process.env.CODEKEY_WINDOW_ID || '(unset)'));
+    diag('codekeyWindowId=' + sanitizeForDiag(codekeyWindowId) + ' CODEKEY_WINDOW_ID=' + sanitizeForDiag(process.env.CODEKEY_WINDOW_ID || '(unset)'));
 
     if (!(await bridgeReady())) {
       diag('bridge not ready, bypassing CodeKey');
@@ -122,7 +128,7 @@ process.stdin.on('end', async () => {
         signal: ctrl.signal,
       });
     } catch (fetchErr) {
-      diag('fetch failed: ' + (fetchErr.message || fetchErr));
+      diag('fetch failed: ' + sanitizeForDiag(fetchErr.message || fetchErr));
       process.exit(0);
     }
     clearTimeout(timer);
@@ -130,7 +136,7 @@ process.stdin.on('end', async () => {
     if (!res.ok) { diag('bridge returned non-OK, exiting 0'); process.exit(0); }
     var result = await res.json();
     if (result && result.bypass) {
-      diag('bridge requested bypass: ' + (result.reason || ''));
+      diag('bridge requested bypass: ' + sanitizeForDiag(result.reason || ''));
       process.exit(0);
     }
     diag('bridge result: approved=' + result.approved);
@@ -150,7 +156,7 @@ process.stdin.on('end', async () => {
       }));
     }
   } catch (err) {
-    diag('hook error: ' + (err?.message ?? err));
+    diag('hook error: ' + sanitizeForDiag(err?.message ?? err));
     process.exit(0);
   }
 });

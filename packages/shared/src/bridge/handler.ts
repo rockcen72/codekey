@@ -12,8 +12,8 @@ import { MAX_PROMPT_LENGTH } from '../types.js';
 import type { AgentEventPayload, SessionEventMessage } from '../types.js';
 import { RiskEngine } from '../risk.js';
 import { tryFormatInputRequiredEvent } from './input-card.js';
-import { runPrivacyPipeline, toCheckedPayload } from './privacy-pipeline.js';
-import type { AuditSink, PrivacyDecision, SourceType } from './privacy-pipeline.js';
+import { runPrivacyPipeline, toCheckedPayload, PrivacyAuditCollector } from './privacy-pipeline.js';
+import type { AuditSink, PrivacyDecision, SourceType, PrivacyStats } from './privacy-pipeline.js';
 
 interface PhoneCommandFingerprint {
   fingerprint: string;
@@ -347,6 +347,7 @@ export class ApprovalBridge {
 
   private _relayConnected = false;
   private _auditSink?: AuditSink;
+  readonly auditCollector = new PrivacyAuditCollector();
 
   get auditSink(): AuditSink | undefined { return this._auditSink; }
 
@@ -372,6 +373,13 @@ export class ApprovalBridge {
 
   constructor(readonly relay: RelayClient, opts?: { auditSink?: AuditSink }) {
     this._auditSink = opts?.auditSink;
+    // Wire the collector's sink so privacy pipeline stats are always captured
+    if (this._auditSink) {
+      const outer = this._auditSink;
+      this._auditSink = (entry) => { this.auditCollector.sink(entry); outer(entry); };
+    } else {
+      this._auditSink = this.auditCollector.sink;
+    }
     // Match session_registered by clientRequestId (NOT by once() — prevents race)
     this.relay.on('session_registered', (payload: unknown) => {
       const p = payload as { clientRequestId?: string; sessionId: string };

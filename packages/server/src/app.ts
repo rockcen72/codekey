@@ -12,6 +12,7 @@ import { subscriptionRoutes } from './routes/subscription.js';
 import { wsHandler } from './ws/handler.js';
 import { initDb } from './db/init.js';
 import { rateLimit } from './middleware/rate-limit.js';
+import { runRetentionCleanup } from './services/cleanup.js';
 import type postgres from 'postgres';
 
 const CLEANUP_INTERVAL_MS = 60_000; // check every 60s
@@ -59,22 +60,7 @@ async function runCleanup(sql: postgres.Sql): Promise<void> {
 
   // Retention: delete finished sessions and their events.
   // Active/paused sessions are never touched.
-  const rawDays = process.env.EVENT_RETENTION_DAYS;
-  const retentionDays = rawDays === undefined || rawDays === '' ? 7 : Number(rawDays);
-  if (retentionDays > 0 && Number.isInteger(retentionDays)) {
-    await sql`
-      DELETE FROM events WHERE session_id IN (
-        SELECT id FROM sessions
-        WHERE status = 'finished'
-          AND finished_at < now() - interval '1 day' * ${retentionDays}::int
-      )
-    `;
-    await sql`
-      DELETE FROM sessions
-      WHERE status = 'finished'
-        AND finished_at < now() - interval '1 day' * ${retentionDays}::int
-    `;
-  }
+  await runRetentionCleanup(sql);
 }
 
 function startAutoCleanup(sql: postgres.Sql): () => void {
