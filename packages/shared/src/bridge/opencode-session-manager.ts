@@ -161,20 +161,21 @@ export class OpenCodeSessionManager {
   }
 
   async listSessions(limit = 50): Promise<OpenCodeSessionInfo[]> {
-    const httpSessions = await this.fetchOpenCodeSessions();
-    // When OpenCode is not running, return empty — don't show stale disk sessions.
-    if (httpSessions === null) return [];
-
+    this.refreshOpenCodeUrl();
     const localSessions = discoverLocalOpenCodeSessions(limit);
+    const httpSessions = await this.fetchOpenCodeSessions();
+
     const byId = new Map(localSessions.map((session) => [session.id, session]));
-    for (const session of httpSessions) {
-      if (!session.id) continue;
-      const local = byId.get(session.id);
-      byId.set(session.id, {
-        ...local,
-        ...session,
-        title: normalizeOpenCodeTitle(session.title) || local?.title,
-      });
+    if (httpSessions !== null) {
+      for (const session of httpSessions) {
+        if (!session.id) continue;
+        const local = byId.get(session.id);
+        byId.set(session.id, {
+          ...local,
+          ...session,
+          title: normalizeOpenCodeTitle(session.title) || local?.title,
+        });
+      }
     }
     return [...byId.values()]
       .filter((s) => {

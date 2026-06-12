@@ -485,6 +485,30 @@ describe('OpenCodeSessionManager event handling', () => {
         { id: 'ses_local', title: 'Local OpenCode title', directory: 'F:/Work/Codekey' },
       ]);
     });
+
+    it('falls back to local storage when the OpenCode HTTP session endpoint is unavailable', async () => {
+      const sessionDir = join(opencodeDataDir, 'storage', 'session', 'global');
+      mkdirSync(sessionDir, { recursive: true });
+      writeFileSync(join(sessionDir, 'ses_local_offline.json'), JSON.stringify({
+        id: 'ses_local_offline',
+        directory: 'F:/Work/Codekey',
+        title: 'Offline OpenCode title',
+        time: { created: 1, updated: 30 },
+      }), 'utf-8');
+      writeFileSync(join(sessionDir, 'ses_subagent.json'), JSON.stringify({
+        id: 'ses_subagent',
+        title: '@explore',
+        time: { created: 1, updated: 40 },
+      }), 'utf-8');
+      vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+        if (url.endsWith('/session')) return { ok: false, json: async () => [] } as unknown as Response;
+        return { ok: true, body: null } as Response;
+      }));
+
+      await expect(manager.listSessions()).resolves.toMatchObject([
+        { id: 'ses_local_offline', title: 'Offline OpenCode title', directory: 'F:/Work/Codekey' },
+      ]);
+    });
   });
 
   describe('message.part.updated', () => {
