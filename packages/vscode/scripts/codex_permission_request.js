@@ -5,9 +5,20 @@ const BRIDGE_URL = process.env.CODEKEY_BRIDGE_URL || 'http://127.0.0.1:3001';
 const HEALTH_TIMEOUT_MS = 1_500;
 const TIMEOUT_MS = 300_000;
 const DIAG_LOG = require('path').join(require('os').homedir(), '.codex', 'codekey-hook.log');
+const DIAG_ENABLED = process.env.CODEKEY_DEBUG_LOG === '1';
 const fs = require('fs');
 function diag(msg) {
+  if (!DIAG_ENABLED) return;
   try { fs.appendFileSync(DIAG_LOG, new Date().toISOString() + ' ' + msg + '\n'); } catch {}
+}
+/** Minimal sanitizer for diagnostic logging — redacts common secret patterns. */
+function sanitizeForDiag(raw) {
+  return raw
+    .replace(/sk-[A-Za-z0-9]{20,}/g, 'sk-***')
+    .replace(/sk-ant-[A-Za-z0-9]{20,}/g, 'sk-ant-***')
+    .replace(/ghp_[A-Za-z0-9]{36}/g, 'ghp_***')
+    .replace(/AKIA[0-9A-Z]{16}/g, 'AKIA***')
+    .replace(/Bearer\s+[A-Za-z0-9\-._~+/]{20,}/g, 'Bearer ***');
 }
 
 async function bridgeReady() {
@@ -39,7 +50,7 @@ process.stdin.setEncoding('utf-8');
 process.stdin.on('data', (c) => { input += c; });
 process.stdin.on('end', async () => {
   diag('stdin end, total input len=' + input.length);
-  diag('input preview: ' + input.slice(0, 500));
+  diag('input preview: ' + sanitizeForDiag(input.slice(0, 500)));
   try {
     const event = JSON.parse(input);
     diag('event keys: ' + Object.keys(event).join(', '));

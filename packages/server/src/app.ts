@@ -56,6 +56,25 @@ async function runCleanup(sql: postgres.Sql): Promise<void> {
   })();
   await sql`DELETE FROM approval_usage WHERE period < ${cutoffPeriod}`;
   await sql`DELETE FROM approval_events_dedup WHERE period < ${cutoffPeriod}`;
+
+  // Retention: delete finished sessions and their events.
+  // Active/paused sessions are never touched.
+  const rawDays = process.env.EVENT_RETENTION_DAYS;
+  const retentionDays = rawDays === undefined || rawDays === '' ? 7 : Number(rawDays);
+  if (retentionDays > 0 && Number.isInteger(retentionDays)) {
+    await sql`
+      DELETE FROM events WHERE session_id IN (
+        SELECT id FROM sessions
+        WHERE status = 'finished'
+          AND finished_at < now() - interval '1 day' * ${retentionDays}::int
+      )
+    `;
+    await sql`
+      DELETE FROM sessions
+      WHERE status = 'finished'
+        AND finished_at < now() - interval '1 day' * ${retentionDays}::int
+    `;
+  }
 }
 
 function startAutoCleanup(sql: postgres.Sql): () => void {
