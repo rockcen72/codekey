@@ -31,7 +31,12 @@ export type { TranscriptEvent, CodexTranscriptWatcherOptions } from './codex-tra
 export { CodexResumeManager } from './codex-resume-manager.js';
 export { OpenCodeSessionManager } from './opencode-session-manager.js';
 
-// Cross-platform utilities
+// Privacy pipeline
+export { runPrivacyPipeline, type PrivacyContext, type PrivacyDecision, type AuditEntry, type AuditSink, type SourceType } from './privacy-pipeline.js';
+export { scan, replace, scanAndReplace, type Finding, type Rule } from './secret-scanner.js';
+export { CodeKeyIgnore } from './codekeyignore.js';
+export { DEFAULT_BLOCKED_PATTERNS, matchesAny } from './blocklist.js';
+export type { PrivacyCheckedPayload } from './relay-client.js';
 export {
   detectPlatform,
   binaryName,

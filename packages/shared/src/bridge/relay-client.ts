@@ -17,6 +17,14 @@ interface PendingEntry<T> {
   ts: number;
 }
 
+/** A payload that has passed through the privacy pipeline. */
+export interface PrivacyCheckedPayload {
+  raw: string;
+  /** Brand tag — only runPrivacyPipeline can produce this. */
+  readonly __privacyChecked: true;
+  checkedAt: number;
+}
+
 export class RelayClient extends EventEmitter {
   private ws: WebSocket | null = null;
   private deviceId: string;
@@ -209,6 +217,14 @@ export class RelayClient extends EventEmitter {
       this.pendingRaw.push({ data: json, ts: Date.now() });
       this.evictOldPending();
     }
+  }
+
+  /**
+   * Send a payload that has passed through the privacy pipeline.
+   * All user-data outbound paths should use this instead of sendRaw.
+   */
+  sendCheckedPayload(payload: PrivacyCheckedPayload): void {
+    this.sendRaw(payload.raw);
   }
 
   sendEvent(sessionId: string, msg: WsMessage): void {
