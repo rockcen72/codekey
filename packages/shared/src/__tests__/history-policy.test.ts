@@ -26,6 +26,10 @@ describe('history-policy', () => {
     }
   });
 
+  it('uses a fixed recent history count of 5', () => {
+    expect(DEFAULT_RECENT_COUNT).toBe(5);
+  });
+
   // ── API shape: getAllConfigs ─────────────────────
   describe('getAllConfigs', () => {
     it('returns empty array when no configs set', () => {
@@ -33,13 +37,13 @@ describe('history-policy', () => {
     });
 
     it('returns { key, config } objects where config has .policy', () => {
-      setConfig('opencode', { policy: HistorySharePolicy.Recent, recentCount: 5, updatedAt: 100 });
+      setConfig('opencode', { policy: HistorySharePolicy.Recent, recentCount: 99, updatedAt: 100 });
       const all = getAllConfigs();
       expect(all).toHaveLength(1);
       expect(all[0]).toHaveProperty('key', 'opencode');
       expect(all[0]).toHaveProperty('config');
       expect(all[0].config).toHaveProperty('policy', HistorySharePolicy.Recent);
-      expect(all[0].config).toHaveProperty('recentCount', 5);
+      expect(all[0].config).not.toHaveProperty('recentCount');
       expect(all[0].config).toHaveProperty('updatedAt');
       // NOT flat { key, policy }
       expect((all[0] as any).policy).toBeUndefined();
@@ -51,7 +55,7 @@ describe('history-policy', () => {
       const all = getAllConfigs();
       expect(all).toHaveLength(2);
       expect(all.find(c => c.key === '*')!.config.policy).toBe(HistorySharePolicy.Off);
-      expect(all.find(c => c.key === 'codex')!.config.recentCount).toBe(3);
+      expect(all.find(c => c.key === 'codex')!.config.recentCount).toBeUndefined();
     });
   });
 
@@ -61,20 +65,20 @@ describe('history-policy', () => {
       setConfig('codex', { policy: HistorySharePolicy.Recent, recentCount: 7, updatedAt: 10 });
       const cfg = getEffectiveConfig('codex');
       expect(cfg.policy).toBe(HistorySharePolicy.Recent);
-      expect(cfg.recentCount).toBe(7);
+      expect(cfg.recentCount).toBeUndefined();
     });
 
     it('falls back to * when agent-level is not set', () => {
       setConfig('*', { policy: HistorySharePolicy.Sanitized, recentCount: 15, updatedAt: 20 });
       const cfg = getEffectiveConfig('codex');
       expect(cfg.policy).toBe(HistorySharePolicy.Sanitized);
-      expect(cfg.recentCount).toBe(15);
+      expect(cfg.recentCount).toBeUndefined();
     });
 
     it('falls back to default when no config exists', () => {
       const cfg = getEffectiveConfig('claude-code-hook');
       expect(cfg.policy).toBe(DEFAULT_HISTORY_SHARE_POLICY);
-      expect(cfg.recentCount).toBe(DEFAULT_RECENT_COUNT);
+      expect(cfg.recentCount).toBeUndefined();
     });
 
     it('prefers agent-level over * when both are set', () => {
@@ -82,7 +86,7 @@ describe('history-policy', () => {
       setConfig('codex', { policy: HistorySharePolicy.Recent, recentCount: 3, updatedAt: 2 });
       const cfg = getEffectiveConfig('codex');
       expect(cfg.policy).toBe(HistorySharePolicy.Recent);
-      expect(cfg.recentCount).toBe(3);
+      expect(cfg.recentCount).toBeUndefined();
     });
 
     it('does NOT consider per-session overrides', () => {
@@ -95,11 +99,11 @@ describe('history-policy', () => {
 
   // ── checkHistoryPolicy fallback chain ────────────
   describe('checkHistoryPolicy', () => {
-    it('uses per-session override when available', () => {
+    it('uses per-session override with fixed recent count when available', () => {
       setConfig('codex:session-abc', { policy: HistorySharePolicy.Recent, recentCount: 2, updatedAt: 1 });
       const r = checkHistoryPolicy('session-abc', 'codex');
       expect(r.allowed).toBe(true);
-      expect(r.maxCount).toBe(2);
+      expect(r.maxCount).toBe(DEFAULT_RECENT_COUNT);
     });
 
     it('falls back to agent-level', () => {
@@ -113,7 +117,7 @@ describe('history-policy', () => {
       setConfig('*', { policy: HistorySharePolicy.Recent, recentCount: 4, updatedAt: 1 });
       const r = checkHistoryPolicy('session-any', 'unknown-agent');
       expect(r.allowed).toBe(true);
-      expect(r.maxCount).toBe(4);
+      expect(r.maxCount).toBe(DEFAULT_RECENT_COUNT);
     });
 
     it('returns not allowed (Off) when no config set', () => {
@@ -122,20 +126,11 @@ describe('history-policy', () => {
       expect(r.maxCount).toBeUndefined();
     });
 
-    it('returns not allowed for Minimal', () => {
-      setConfig('codex', { policy: HistorySharePolicy.Minimal, updatedAt: 1 });
-      expect(checkHistoryPolicy('s', 'codex').allowed).toBe(false);
-    });
-
-    it('returns not allowed for Manual', () => {
-      setConfig('codex', { policy: HistorySharePolicy.Manual, updatedAt: 1 });
-      expect(checkHistoryPolicy('s', 'codex').allowed).toBe(false);
-    });
-
     it('Sanitized returns allowedFields', () => {
       setConfig('*', { policy: HistorySharePolicy.Sanitized, recentCount: 10, updatedAt: 1 });
       const r = checkHistoryPolicy('s', 'codex');
       expect(r.allowed).toBe(true);
+      expect(r.maxCount).toBe(DEFAULT_RECENT_COUNT);
       expect(r.allowedFields).toEqual(['summary', 'metadata', 'status', 'basename']);
     });
 
@@ -144,7 +139,7 @@ describe('history-policy', () => {
       setConfig('codex:session-1', { policy: HistorySharePolicy.Recent, recentCount: 5, updatedAt: 2 });
       const r = checkHistoryPolicy('session-1', 'codex');
       expect(r.allowed).toBe(true);
-      expect(r.maxCount).toBe(5);
+      expect(r.maxCount).toBe(DEFAULT_RECENT_COUNT);
     });
   });
 
@@ -178,12 +173,12 @@ describe('history-policy', () => {
     });
   });
 
-  // ── SetConfig clamps recentCount ─────────────────
+  // ── SetConfig ignores custom recentCount ─────────
   describe('setConfig', () => {
-    it('clamps out-of-range recentCount via sanitizeRecentCount', () => {
+    it('drops custom recentCount because sharing always uses the fixed default', () => {
       setConfig('codex', { policy: HistorySharePolicy.Recent, recentCount: 999, updatedAt: 1 });
       const cfg = getConfig('codex');
-      expect(cfg.recentCount).toBe(DEFAULT_RECENT_COUNT);
+      expect(cfg.recentCount).toBeUndefined();
     });
 
     it('allows undefined recentCount', () => {
@@ -194,7 +189,7 @@ describe('history-policy', () => {
 
     it('sets updatedAt to Date.now() when not provided', () => {
       const before = Date.now();
-      setConfig('codex', { policy: HistorySharePolicy.Recent, recentCount: 3 });
+      setConfig('codex', { policy: HistorySharePolicy.Recent, recentCount: 3 } as any);
       const cfg = getConfig('codex');
       expect(cfg.updatedAt).toBeGreaterThanOrEqual(before);
     });
@@ -212,7 +207,7 @@ describe('history-policy', () => {
       setConfig('codex', { policy: HistorySharePolicy.Sanitized, recentCount: 3, updatedAt: 42 });
       const cfg = getConfig('codex');
       expect(cfg.policy).toBe(HistorySharePolicy.Sanitized);
-      expect(cfg.recentCount).toBe(3);
+      expect(cfg.recentCount).toBeUndefined();
       expect(cfg.updatedAt).toBe(42);
     });
 

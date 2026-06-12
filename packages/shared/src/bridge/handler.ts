@@ -14,7 +14,7 @@ import { RiskEngine } from '../risk.js';
 import { tryFormatInputRequiredEvent } from './input-card.js';
 import { runPrivacyPipeline, toCheckedPayload, PrivacyAuditCollector } from './privacy-pipeline.js';
 import type { AuditSink, PrivacyDecision, SourceType, PrivacyStats } from './privacy-pipeline.js';
-import { checkHistoryPolicy, HistorySharePolicy, getEffectiveConfig } from './history-policy.js';
+import { checkHistoryPolicy, HistorySharePolicy, getEffectiveConfig, DEFAULT_RECENT_COUNT } from './history-policy.js';
 
 interface PhoneCommandFingerprint {
   fingerprint: string;
@@ -300,6 +300,8 @@ export class ApprovalBridge {
     serverSessionId: string,
     fetchMessages: (sessionId: string) => Promise<any[]>,
   ): Promise<void> {
+    const policy = checkHistoryPolicy(localSessionId, 'opencode');
+    if (!policy.allowed) return;
     try {
       const msgs = await fetchMessages(localSessionId);
       if (!Array.isArray(msgs) || msgs.length === 0) return;
@@ -423,6 +425,11 @@ export class ApprovalBridge {
           try { h(ack.clientEventId, ack.serverEventId); } catch {}
         }
       }
+    });
+
+    // Re-evaluate sync timers when relay pushes a policy change (e.g. phone changes policy).
+    this.relay.on('sync_history_policy', () => {
+      this.reevaluateClaudeSync();
     });
 
     // Resolve pending approval from phone decision (keyed by serverEventId,
@@ -1667,10 +1674,25 @@ export class ApprovalBridge {
     this.claudeTranscriptSyncTimers.delete(claudeSessionId);
   }
 
+  /** Re-evaluate sync timers after a history policy changes.
+   *  Called from server.ts PUT/DELETE /v1/history-policy. */
+  reevaluateClaudeSync(): void {
+    for (const [claudeSessionId, serverSessionId] of this.sessions) {
+      if (!this.transcriptAttachedIds.has(claudeSessionId)) continue;
+      const policy = checkHistoryPolicy(claudeSessionId, 'claude-code-hook');
+      const timerExists = this.claudeTranscriptSyncTimers.has(claudeSessionId);
+      if (policy.allowed && !timerExists) {
+        this.startClaudeTranscriptSync(claudeSessionId, serverSessionId);
+      } else if (!policy.allowed && timerExists) {
+        this.stopClaudeTranscriptSync(claudeSessionId);
+      }
+    }
+  }
+
   private async syncClaudeTranscript(claudeSessionId: string, serverSessionId: string): Promise<void> {
     const policy = checkHistoryPolicy(claudeSessionId, 'claude-code-hook');
     if (!policy.allowed) return;
-    const entries = loadConversation(claudeSessionId, policy.maxCount ?? 100);
+    const entries = loadConversation(claudeSessionId, policy.maxCount ?? DEFAULT_RECENT_COUNT);
     for (const entry of entries) {
       if (entry.role === 'user') {
         const dedupKey = `${claudeSessionId}:${entry.index}`;

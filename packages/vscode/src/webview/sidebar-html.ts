@@ -39,7 +39,6 @@ export interface PrivacyInfo {
 export interface HistoryPolicyEntry {
   key: string;
   policy: string;
-  recentCount?: number;
   updatedAt: number;
 }
 
@@ -86,6 +85,8 @@ export interface ClaudeSessionItem {
   serverSessionId?: string;
   /** True when this Codex session has been resumed */
   resumed?: boolean;
+  /** Transient sync button state controlled by the extension host */
+  syncStatus?: 'syncing' | 'done';
 }
 
 // ── Helpers ──────────────────────────────────────────────
@@ -124,22 +125,6 @@ function tag(text: string, cls: string): string {
 
 function renderBrandHeader(): string {
    return `<div class="brand">
-     <div class="brand-icon">
-       <div class="brand-glow"></div>
-       <div class="ck-logo">
-         <div class="ck-phone">
-           <div class="ck-notch"></div>
-           <div class="ck-check"></div>
-         </div>
-         <div class="ck-bracket ck-bracket-l"></div>
-         <div class="ck-bracket ck-bracket-r"></div>
-         <div class="ck-signal">
-           <div class="ck-signal-arc ck-signal-arc-outer"></div>
-           <div class="ck-signal-arc ck-signal-arc-inner"></div>
-           <div class="ck-signal-dot"></div>
-         </div>
-       </div>
-     </div>
     <div class="brand-name">Code<span class="brand-em">Key</span></div>
     <div class="brand-sub">A I &nbsp;C o d i n g &nbsp;R e m o t e</div>
   </div>`;
@@ -294,31 +279,58 @@ export function renderPrivacyContent(state: SidebarState): string {
     return '<div class="empty-state">' + i18n(state.lang, 'Privacy pipeline not available', '隐私管道未就绪') + '</div>';
   }
   const s = p.summary;
-  const sourceLabels: Record<string, string> = { approval: 'Approve', transcript: 'Transcript', history: 'History', command: 'Command' };
-  const actionLabels: Record<string, string> = { forwarded: 'Forwarded', blocked: 'Blocked', sanitized: 'Sanitized' };
-  const entries = p.recentEntries.slice(-5).reverse();
   const hasFindings = s.totalFindings > 0;
   return `<div class="privacy-summary">
     <div class="privacy-row">
-      <span class="privacy-pill">${h(String(s.forwarded))} ${i18n(state.lang, 'fwd', '已发')}</span>
-      <span class="privacy-pill${hasFindings ? ' privacy-pill-warn' : ''}">${h(String(s.sanitized))} ${i18n(state.lang, 'sanitized', '已脱敏')}</span>
-      <span class="privacy-pill${s.blocked > 0 ? ' privacy-pill-block' : ''}">${h(String(s.blocked))} ${i18n(state.lang, 'blocked', '已拦截')}</span>
+      <span class="privacy-pill privacy-pill-clickable" data-action="showPrivacyDetail" data-filter="forwarded">
+        ${h(String(s.forwarded))} ${i18n(state.lang, 'fwd', '已发')}
+      </span>
+      <span class="privacy-pill${hasFindings ? ' privacy-pill-warn' : ''} privacy-pill-clickable" data-action="showPrivacyDetail" data-filter="sanitized">
+        ${h(String(s.sanitized))} ${i18n(state.lang, 'sanitized', '脱敏')}
+      </span>
+      <span class="privacy-pill${s.blocked > 0 ? ' privacy-pill-block' : ''} privacy-pill-clickable" data-action="showPrivacyDetail" data-filter="blocked">
+        ${h(String(s.blocked))} ${i18n(state.lang, 'blocked', '拦截')}
+      </span>
     </div>
     ${hasFindings ? `<div class="privacy-row"><span class="privacy-findings">${h(String(s.totalFindings))} ${i18n(state.lang, 'secrets redacted', '个秘密已擦除')}</span></div>` : ''}
-    ${entries.length > 0 ? `<div class="privacy-entries">${entries.map(e => {
+  </div>`;
+}
+
+export function renderPrivacyDetailContent(state: SidebarState, filter: string): string {
+  const p = state.privacy;
+  if (!p) return '';
+  const entries = p.recentEntries;
+  const filtered = filter === 'all' ? entries : entries.filter(e => e.action === filter);
+  const actionLabels: Record<string, string> = { forwarded: 'Forwarded', blocked: 'Blocked', sanitized: 'Sanitized' };
+  const sourceLabels: Record<string, string> = { approval: 'Approve', transcript: 'Transcript', history: 'History', command: 'Command' };
+  const backText = i18n(state.lang, 'Back', '返回');
+  const emptyText = i18n(state.lang, 'No events', '无记录');
+  const filterLabel = filter === 'all' ? i18n(state.lang, 'All Events', '全部记录') : (actionLabels[filter] || filter);
+  let entriesHtml: string;
+  if (filtered.length === 0) {
+    entriesHtml = `<div class="sd-empty">${emptyText}</div>`;
+  } else {
+    entriesHtml = filtered.slice().reverse().map(e => {
       const src = sourceLabels[e.source] || e.source;
       const act = actionLabels[e.action] || e.action;
-      const preview = e.payloadPreview ? h(truncate(e.payloadPreview, 80)) : '';
-      return `<div class="privacy-entry">
-        <div class="privacy-entry-hdr">
+      const preview = e.payloadPreview ? h(truncate(e.payloadPreview, 200)) : '';
+      const ts = e.timestamp ? formatTime(e.timestamp) : '';
+      return `<div class="sd-event">
+        <div class="sd-event-header">
           <span class="privacy-tag ${e.action}">${h(act)}</span>
-          <span class="privacy-source">${h(src)}</span>
-          <span class="privacy-len">${h(String(e.payloadLength))}B</span>
+          <span class="sd-event-source">${h(src)}</span>
+          <span class="sd-event-ts">${h(ts)}</span>
+          <span class="sd-event-len">${h(String(e.payloadLength))}B</span>
         </div>
-        ${preview ? `<div class="privacy-preview">${preview}</div>` : ''}
+        ${preview ? `<div class="sd-event-data preview-line">${preview}</div>` : ''}
       </div>`;
-    }).join('')}</div>` : '<div class="empty-state">' + i18n(state.lang, 'No events yet', '暂无数据') + '</div>'}
-  </div>`;
+    }).join('');
+  }
+  return `<div class="sd-header">
+    <button class="sd-back" data-action="hidePrivacyDetail">&#9664; ${backText}</button>
+    <span class="sd-title">${h(filterLabel)}</span>
+  </div>
+  <div class="session-scroll" style="max-height:300px">${entriesHtml}</div>`;
 }
 
 function renderPrivacy(state: SidebarState): string {
@@ -347,18 +359,14 @@ export function renderHistoryPolicyContent(state: SidebarState): string {
 
   const optLabels: Record<string, string> = {
     off: i18n(state.lang, 'Off', '关闭'),
-    minimal: i18n(state.lang, 'Minimal', '最小化'),
-    recent: i18n(state.lang, 'Recent', '最近'),
-    sanitized: i18n(state.lang, 'Sanitized', '脱敏'),
-    manual: i18n(state.lang, 'Manual', '手动'),
+    recent: i18n(state.lang, 'Full', '会话过程'),
+    sanitized: i18n(state.lang, 'Summary', '任务摘要'),
   };
-  const opts = ['off', 'minimal', 'recent', 'sanitized', 'manual'];
+  const opts = ['off', 'recent', 'sanitized'];
 
   return HISTORY_AGENTS.map(({ key, label, labelZh }) => {
     const entry = lookup.get(key);
     const current = entry?.policy || 'off';
-    const rc = entry?.recentCount ?? 10;
-    const showCount = current === 'recent' || current === 'sanitized';
     const labelText = i18n(state.lang, label, labelZh);
     return `<div class="hp-row" data-hp-key="${key}">
       <span class="hp-label">${labelText}</span>
@@ -366,8 +374,6 @@ export function renderHistoryPolicyContent(state: SidebarState): string {
         <select class="hp-select" data-hp-key="${key}">
           ${opts.map(o => `<option value="${o}"${o === current ? ' selected' : ''}>${optLabels[o]}</option>`).join('')}
         </select>
-        <input class="hp-count${showCount ? '' : ' hidden'}" type="number" min="1" max="50" value="${rc}" data-hp-key="${key}" />
-        ${entry ? `<button class="hp-reset btn-ghost btn-sm" data-hp-key="${key}" title="${i18n(state.lang, 'Reset', '重置')}">↺</button>` : ''}
       </div>
     </div>`;
   }).join('');
@@ -378,7 +384,7 @@ function renderHistoryPolicy(state: SidebarState): string {
     <div class="card-header">
       <span class="card-label">
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-        ${i18n(state.lang, 'History Share', '历史分享')}
+        ${i18n(state.lang, 'Event Share', '事件共享')}
       </span>
     </div>
     <div id="historyPolicyContent">${renderHistoryPolicyContent(state)}</div>
@@ -463,9 +469,11 @@ function eventTypeLabel(type: string, lang?: string): string {
 function _sessionItemHtml(lang: string | undefined, s: any, extraCls: string): string {
       const isAttached = s.attached;
       const sid = s.sessionId;
-      const isSyncing = s.syncing === true;
-      const btnCls = isSyncing ? 'btn-syncing' : isAttached ? 'btn-attached' : '';
-      const btnText = isSyncing ? '' : isAttached ? i18n(lang, 'Unsync', '取消同步') : i18n(lang, 'Sync', '同步');
+      const syncStatus = s.syncStatus || (s.syncing === true ? 'syncing' : '');
+      const isSyncing = syncStatus === 'syncing';
+      const isDone = syncStatus === 'done';
+      const btnCls = isSyncing ? 'btn-syncing' : isDone ? 'btn-done' : isAttached ? 'btn-attached' : '';
+      const btnText = isSyncing ? '' : isDone ? i18n(lang, 'Done', '完成') : isAttached ? i18n(lang, 'Unsync', '取消同步') : i18n(lang, 'Sync', '同步');
       const agent = s.isOpenCodeSession ? 'opencode' : s.isCodexSession ? 'codex' : 'claude-code';
       const isCodex = s.isCodexSession ? 'true' : 'false';
       const isOpenCode = s.isOpenCodeSession ? 'true' : '';
@@ -477,7 +485,7 @@ function _sessionItemHtml(lang: string | undefined, s: any, extraCls: string): s
             <span class="chevron">&#9654;</span>
             <span class="session-title" title="${h(title)}">${h(truncate(title, 60))}</span>
           </span>
-          <button class="btn btn-sm ${btnCls}" data-action="toggleAttachClaudeSession" data-session-id="${h(sid)}" data-title="${h(title)}" data-server-session-id="${h(serverSessionId)}" data-attached="${isAttached ? 'true' : 'false'}"${s.isCodexSession ? ' data-iscodex="true"' : ''}${s.isOpenCodeSession ? ' data-isopencode="true"' : ''}>${isSyncing ? '<span class="spinner"></span>' : btnText}</button>
+          <button class="btn btn-sm ${btnCls}" data-action="toggleAttachClaudeSession" data-session-id="${h(sid)}" data-title="${h(title)}" data-server-session-id="${h(serverSessionId)}" data-attached="${isAttached ? 'true' : 'false'}"${s.isCodexSession ? ' data-iscodex="true"' : ''}${s.isOpenCodeSession ? ' data-isopencode="true"' : ''}${syncStatus ? ' disabled' : ''}>${isSyncing ? '<span class="spinner"></span>' : btnText}</button>
         </div>
         <div class="session-meta">
           <span class="session-cwd">${h(truncate(s.cwd || '', 50))}</span>
@@ -757,6 +765,8 @@ ${renderSubscribe(state)}
   // Session detail view state
   var _inDetailView = false;
   var _currentDetailServerSessionId = null;
+  // Privacy detail view state
+  var _inPrivacyDetail = false;
 
   // Pairing data injected from extension host state
   var PD = ${JSON.stringify({
@@ -845,7 +855,7 @@ ${renderSubscribe(state)}
       applySavedPlatform(false);
       swap('agentsContent', d.agentsHtml);
       swap('approvalsContent', d.approvalsHtml);
-      swap('privacyContent', d.privacyHtml);
+      if (!_inPrivacyDetail) { swap('privacyContent', d.privacyHtml); }
       swap('historyPolicyContent', d.historyPolicyHtml);
       replaceById('subscriptionFooter', d.subscriptionHtml);
       if (!_inDetailView) { if (swap('sessionsContent', d.sessionsHtml)) applyAgentFilter(); }
@@ -909,6 +919,16 @@ ${renderSubscribe(state)}
     if (e.data && e.data.type === 'sessionDetail') {
       var sc2 = document.getElementById('sessionsContent');
       if (sc2) { sc2.innerHTML = e.data.html; _inDetailView = true; }
+      return;
+    }
+
+    if (e.data && e.data.type === 'privacyDetail') {
+      var pc = document.getElementById('privacyContent');
+      if (pc) {
+        pc.innerHTML = e.data.html;
+        _lastHtml.privacyContent = e.data.html;
+        _inPrivacyDetail = true;
+      }
       return;
     }
 
@@ -1110,6 +1130,10 @@ ${renderSubscribe(state)}
     }
 
     if (action === 'toggleAttachClaudeSession') {
+      // Immediately show spinner — avoids "Sync" text lingering before server round-trip
+      target.classList.add('btn-syncing');
+      target.disabled = true;
+      target.innerHTML = '<span class="spinner"></span>';
       api.postMessage({
         action: action,
         sessionId: target.dataset.sessionId,
@@ -1172,18 +1196,32 @@ ${renderSubscribe(state)}
       return;
     }
 
-    if (target.classList.contains('hp-reset')) {
-      var key = target.dataset.hpKey;
-      if (key) { api.postMessage({ action: 'deleteHistoryPolicy', key: key }); }
-      return;
-    }
-
     // Back from session detail to session list
     if (action === 'hideSessionDetail') {
       _inDetailView = false;
       _currentDetailServerSessionId = null;
       // Force a full state push to get fresh sessions + events
       api.postMessage({ action: 'refreshClaudeSessions' });
+      return;
+    }
+
+    if (action === 'showPrivacyDetail') {
+      var filter = target.dataset.filter || 'all';
+      _inPrivacyDetail = true;
+      var pc = document.getElementById('privacyContent');
+      if (pc) {
+        var loadingHtml = '<div class="session-scroll"><div class="sd-empty">Loading...</div></div>';
+        pc.innerHTML = loadingHtml;
+        _lastHtml.privacyContent = loadingHtml;
+      }
+      api.postMessage({ action: 'showPrivacyDetail', filter: filter });
+      return;
+    }
+
+    if (action === 'hidePrivacyDetail') {
+      _inPrivacyDetail = false;
+      _lastHtml.privacyContent = '';
+      api.postMessage({ action: 'hidePrivacyDetail' });
       return;
     }
 
@@ -1198,27 +1236,8 @@ ${renderSubscribe(state)}
       var key = row ? row.dataset.hpKey : '';
       if (!key) return;
       var policy = target.value;
-      var countInput = row ? row.querySelector('.hp-count') : null;
-      var showCount = policy === 'recent' || policy === 'sanitized';
-      if (countInput) { countInput.classList.toggle('hidden', !showCount); }
-      var recentCount = countInput ? parseInt(countInput.value) || 10 : 10;
-      api.postMessage({ action: 'setHistoryPolicy', key: key, policy: policy, recentCount: recentCount });
+      api.postMessage({ action: 'setHistoryPolicy', key: key, policy: policy });
       return;
-    }
-  });
-
-  document.addEventListener('input', function(e) {
-    var target = e.target;
-    if (target.classList.contains('hp-count')) {
-      var row = target.closest('.hp-row');
-      var key = row ? row.dataset.hpKey : '';
-      if (!key) return;
-      var select = row ? row.querySelector('.hp-select') : null;
-      var policy = select ? select.value : 'off';
-      var recentCount = parseInt(target.value) || 10;
-      if (recentCount < 1) recentCount = 1;
-      if (recentCount > 50) recentCount = 50;
-      api.postMessage({ action: 'setHistoryPolicy', key: key, policy: policy, recentCount: recentCount });
     }
   });
 
@@ -1273,26 +1292,13 @@ body{
    BRAND
    ═══════════════════════════════════════════════ */
 .brand{
-  text-align:center;padding:20px 16px 16px;
+  text-align:center;padding:14px 16px 12px;
   position:relative;
 }
 .brand::after{
   content:'';position:absolute;bottom:0;left:50%;transform:translateX(-50%);
   width:40px;height:1px;
   background:linear-gradient(90deg,transparent,var(--vscode-textLink-foreground,#00ffe0),transparent);
-}
-.brand-icon{
-  display:inline-flex;align-items:center;justify-content:center;
-  width:48px;height:48px;margin-bottom:8px;
-  background:var(--vscode-sideBar-background,#181824);
-  border:1px solid var(--vscode-panel-border,#1e1e2e);
-  border-radius:12px;position:relative;overflow:hidden;
-}
-.brand-icon svg{display:none}
-.brand-glow{
-  position:absolute;inset:-2px;border-radius:12px;
-  background:linear-gradient(135deg,var(--vscode-textLink-foreground,#00ffe0),var(--vscode-textLink-foreground,#7c5cfc));
-  opacity:.06;z-index:-1;
 }
 .brand-name{
   font-family:Georgia,'Times New Roman',serif;
@@ -1308,57 +1314,6 @@ body{
   font-size:10px;color:var(--vscode-descriptionForeground,#50506e);
   letter-spacing:.15em;text-transform:uppercase;
   margin-top:1px;
-}
-
-/* ── CSS-drawn CodeKey logo ──────────────────────── */
-.ck-logo{
-  position:absolute;inset:0;width:100%;height:100%;
-  background:#161412;border-radius:12px;
-}
-.ck-phone{
-  position:absolute;left:15px;top:8px;
-  width:18px;height:32px;
-  border:1.5px solid #f7f3ee;border-radius:5px;
-}
-.ck-notch{
-  position:absolute;left:6.5px;top:2.5px;
-  width:5px;height:1.2px;border-radius:1px;
-  background:#f7f3ee;
-}
-.ck-check{
-  position:absolute;left:4px;top:13px;
-  width:10px;height:6px;
-  border-left:2.2px solid #86efac;
-  border-bottom:2.2px solid #86efac;
-  border-radius:1px;
-  transform:rotate(-45deg);
-}
-.ck-bracket{
-  position:absolute;top:19px;
-  width:6.5px;height:6.5px;
-  border-color:#7dd3fc;
-  border-style:solid;
-  transform:rotate(45deg);
-}
-.ck-bracket-l{left:5.5px;border-width:0 0 2px 2px}
-.ck-bracket-r{right:5.5px;border-width:2px 2px 0 0}
-.ck-signal{
-  position:absolute;right:4px;top:3px;
-  width:13px;height:13px;
-  transform:rotate(45deg);
-}
-.ck-signal-arc{
-  position:absolute;left:50%;
-  border-top:1.8px solid #f59e0b;
-  border-radius:999px 999px 0 0;
-  transform:translateX(-50%);
-}
-.ck-signal-arc-outer{top:2px;width:10px;height:7px}
-.ck-signal-arc-inner{top:6.5px;width:6px;height:4px}
-.ck-signal-dot{
-  position:absolute;left:5px;bottom:1px;
-  width:3px;height:3px;border-radius:50%;
-  background:#f59e0b;
 }
 
 /* ═══════════════════════════════════════════════
@@ -1583,10 +1538,11 @@ body{
 }
 .session-title-row .btn{flex-shrink:0;min-width:56px}
 .btn-attached{
-  background:rgba(46,204,113,.12);border-color:rgba(46,204,113,.3);color:#2ecc71;
+  background:rgba(46,204,113,.1);border-color:#2ecc71;color:#2ecc71;
 }
 .btn-attached:hover{background:rgba(46,204,113,.2);border-color:#2ecc71}
 .btn-syncing{background:rgba(128,128,128,.1);border-color:var(--vscode-panel-border,#1e1e2e);pointer-events:none}
+.btn-done{background:rgba(46,204,113,.1);border-color:#2ecc71;color:#2ecc71;pointer-events:none}
 @keyframes spin{to{transform:rotate(360deg)}}
 .spinner{display:inline-block;width:12px;height:12px;border:2px solid var(--vscode-descriptionForeground,#50506e);border-top-color:transparent;border-radius:50%;animation:spin .6s linear infinite;vertical-align:middle}
 .session-meta{
@@ -1627,7 +1583,10 @@ body{
 .sd-event-type.command_started{color:#a855f7}
 .sd-event-type.event{color:#8888a8}
 .sd-event-ts{font-size:8px;color:var(--vscode-descriptionForeground,#50506e)}
+.sd-event-source{font-size:9px;color:var(--vscode-descriptionForeground,#7878a0);flex-shrink:0}
+.sd-event-len{font-size:8px;color:var(--vscode-descriptionForeground,#50506e);margin-left:auto}
 .sd-event-data{font-size:10px;color:var(--vscode-editor-foreground);white-space:pre-wrap;word-break:break-word;max-height:60px;overflow:hidden}
+.sd-event-data.preview-line{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-height:none}
 .sd-event-data.expanded{max-height:none}
 .sd-expand{font-size:8px;color:var(--vscode-textLink-foreground,#00ffe0);cursor:pointer;background:none;border:none;padding:0;margin-top:2px}
 .sd-expand:hover{text-decoration:underline}
@@ -1764,6 +1723,9 @@ body{
 .privacy-summary{padding:0}
 .privacy-row{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px;align-items:center}
 .privacy-pill{font-size:10px;background:var(--vscode-panel-border,#1e1e2e);color:var(--vscode-descriptionForeground,#7878a0);border-radius:4px;padding:2px 6px;white-space:nowrap}
+.privacy-pill-clickable{cursor:pointer;transition:opacity .15s;user-select:none}
+.privacy-pill-clickable:hover{opacity:.8}
+.privacy-pill-clickable:active{opacity:.6}
 .privacy-pill-warn{color:#f59e0b;border:1px solid #f59e0b33}
 .privacy-pill-block{color:#f74d4d;border:1px solid #f74d4d33}
 .privacy-findings{font-size:10px;color:var(--vscode-descriptionForeground,#7878a0)}
@@ -1796,22 +1758,9 @@ body{
   border:1px solid var(--vscode-dropdown-border,#333);
   border-radius:4px;padding:2px 4px;
   font-size:10px;font-family:var(--vscode-font-family,system-ui);
-  cursor:pointer;outline:none;min-width:68px;
+  cursor:pointer;outline:none;min-width:88px;
 }
 .hp-select:focus{border-color:var(--vscode-focusBorder,#5c9cf5)}
-.hp-count{
-  width:40px;background:var(--vscode-input-background,#1a1a2e);
-  color:var(--vscode-input-foreground,#e8e8f0);
-  border:1px solid var(--vscode-input-border,#333);
-  border-radius:4px;padding:2px 4px;
-  font-size:10px;font-family:var(--vscode-font-family,system-ui);
-  text-align:center;outline:none;
-}
-.hp-count:focus{border-color:var(--vscode-focusBorder,#5c9cf5)}
-.hp-count.hidden{display:none}
-.hp-reset{font-size:12px;padding:2px 4px;cursor:pointer;color:var(--vscode-descriptionForeground,#50506e);background:none;border:none;border-radius:3px;line-height:1}
-.hp-reset:hover{color:var(--vscode-editor-foreground);background:var(--vscode-panel-border,#1e1e2e)}
-
 /* ═══════════════════════════════════════════════
    ANIMATIONS
    ═══════════════════════════════════════════════ */

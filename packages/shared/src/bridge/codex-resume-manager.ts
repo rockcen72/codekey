@@ -3,7 +3,7 @@ import type { RelayClient } from './relay-client.js';
 import type { ApprovalBridge } from './handler.js';
 import { runPrivacyPipeline, toCheckedPayload } from './privacy-pipeline.js';
 import type { AuditSink } from './privacy-pipeline.js';
-import { checkHistoryPolicy } from './history-policy.js';
+import { checkHistoryPolicy, DEFAULT_RECENT_COUNT } from './history-policy.js';
 import { cleanCodexDisplayText, discoverLocalSessions, findMostRecentSession, type CodexLocalSession } from './codex-local-session-resolver.js';
 import { CodexResumeRuntime, type ResumeResult } from './codex-resume-runtime.js';
 import { resolveCodexBinary } from './codex-binary.js';
@@ -356,7 +356,7 @@ export class CodexResumeManager {
 
       const messages: { type: string; text: string; ts: string }[] = [];
       // Scan newest-first for user/assistant messages (same as loadCodexConversation)
-      const maxCount = policy.maxCount ?? 10;
+      const maxCount = policy.maxCount ?? DEFAULT_RECENT_COUNT;
       for (let i = lines.length - 1; i >= 0 && messages.length < maxCount; i--) {
         try {
           const obj = JSON.parse(lines[i]);

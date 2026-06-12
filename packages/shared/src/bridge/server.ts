@@ -1326,10 +1326,12 @@ function handleRequest(req: IncomingMessage, res: ServerResponse, bridge: Approv
           return;
         }
         setConfig(key as PolicyKey, config as HistoryPolicyConfig);
+        const normalizedConfig = getConfig(key as PolicyKey);
         bridge.relay.sendRaw(JSON.stringify({
           type: 'sync_history_policy',
-          payload: { action: 'set', key, config: { ...config, updatedAt: Date.now() } },
+          payload: { action: 'set', key, config: { ...normalizedConfig, updatedAt: normalizedConfig.updatedAt || Date.now() } },
         }));
+        bridge.reevaluateClaudeSync();
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ ok: true }));
       } catch {
@@ -1353,6 +1355,7 @@ function handleRequest(req: IncomingMessage, res: ServerResponse, bridge: Approv
       type: 'sync_history_policy',
       payload: { action: 'delete', key },
     }));
+    bridge.reevaluateClaudeSync();
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ ok: true }));
     return;
