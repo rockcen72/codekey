@@ -196,19 +196,16 @@ export class ApprovalBridge {
     this.privacyCheckAndSend(source, raw);
   }
 
-  /** Public wrapper: send error event to relay. */
+  /** Public wrapper: send error event to relay (routes through privacy pipeline). */
   sendErrorToRelay(serverSessionId: string, message: string, agent = 'opencode'): void {
-    this.relay.sendRaw(JSON.stringify({
-      type: 'event',
-      payload: {
-        clientEventId: `error:${serverSessionId}:${Date.now()}`,
-        sessionId: serverSessionId,
-        agent,
-        eventType: 'error',
-        data: { type: 'error', message },
-        ts: new Date().toISOString(),
-      },
-    }));
+    this.sendEventToRelay(serverSessionId, {
+      clientEventId: `error:${serverSessionId}:${Date.now()}`,
+      sessionId: serverSessionId,
+      agent,
+      eventType: 'error',
+      data: { type: 'error', message },
+      ts: new Date().toISOString(),
+    }, 'command');
   }
 
   /** Public wrapper: evaluate command risk via RiskEngine. */

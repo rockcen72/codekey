@@ -1465,3 +1465,27 @@ describe('ApprovalBridge pendingPhoneDeliveryCount cleanup paths', () => {
     expect((bridge as any)._hookDedupTimer).toBeUndefined();
   });
 });
+
+describe('sendErrorToRelay privacy pipeline', () => {
+  it('routes error events through sendCheckedPayload not raw sendRaw', async () => {
+    const relay = new FakeRelay();
+    const sendCheckedSpy = vi.spyOn(relay, 'sendCheckedPayload');
+    const bridge = new ApprovalBridge(relay as any);
+
+    bridge.sendErrorToRelay('srv-1', 'Test error msg');
+
+    expect(sendCheckedSpy).toHaveBeenCalled();
+  });
+
+  it('redacts secrets from error messages through the pipeline', async () => {
+    const relay = new FakeRelay();
+    const bridge = new ApprovalBridge(relay as any);
+
+    bridge.sendErrorToRelay('srv-1', 'API key sk-ant-ABCDEF0123456789abcdef01234567 leaked');
+
+    const checked = relay.sent.find((s) => s.includes('sk-ant-'));
+    expect(checked).toBeDefined();
+    expect(checked).toContain('sk-ant-***');
+    expect(checked).not.toContain('sk-ant-ABCDEF0123456789abcdef01234567');
+  });
+});
