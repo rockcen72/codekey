@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { runPrivacyPipeline, toCheckedPayload } from '../bridge/privacy-pipeline.js';
+import { runPrivacyPipeline, toCheckedPayload, truncateSafe } from '../bridge/privacy-pipeline.js';
 
 describe('privacy-pipeline', () => {
   describe('runPrivacyPipeline', () => {
@@ -119,7 +119,40 @@ describe('privacy-pipeline', () => {
       expect(checked!.checkedAt).toBeGreaterThan(0);
     });
 
-    // Regression: approval payload with both blocked path AND secret
+    describe('truncateSafe (JSON integrity)', () => {
+  it('produces valid JSON when error message exceeds command MAX_LENGTH (5000)', () => {
+    const longMsg = 'x'.repeat(6000);
+    const raw = JSON.stringify({
+      type: 'event',
+      payload: {
+        clientEventId: 'err:abc:1',
+        sessionId: 'sess-1',
+        eventType: 'error',
+        data: { type: 'error', message: longMsg },
+        ts: '2026-06-12T00:00:00.000Z',
+      },
+    });
+    const result = truncateSafe(raw, 5000);
+    expect(result.length).toBeLessThanOrEqual(5000);
+    expect(() => JSON.parse(result)).not.toThrow();
+  });
+
+  it('preserves valid JSON for approval payload with long command text', () => {
+    const longCmd = 'cmd ' + 'arg '.repeat(2000);
+    const raw = JSON.stringify({ type: 'approval', payload: { command: longCmd } });
+    const result = truncateSafe(raw, 5000);
+    expect(result.length).toBeLessThanOrEqual(5000);
+    const parsed = JSON.parse(result);
+    expect(parsed).toHaveProperty('type', 'approval');
+  });
+
+  it('truncateSafe passes through short payloads unchanged', () => {
+    const raw = JSON.stringify({ type: 'event', payload: { msg: 'hello' } });
+    expect(truncateSafe(raw, 10000)).toBe(raw);
+  });
+});
+
+// Regression: approval payload with both blocked path AND secret
     // must produce a checked payload whose raw is the SANITIZED version,
     // not the original rawPayload (privacy bypass CVE prevention).
     it('sanitizes secrets even when approval requires confirmation (.env + token)', () => {

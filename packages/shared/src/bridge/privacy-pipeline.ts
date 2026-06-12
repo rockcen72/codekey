@@ -100,6 +100,57 @@ const MAX_LENGTH: Record<SourceType, number> = {
   command: 5_000,
 };
 
+/**
+ * Recursively truncate all string values in a parsed JSON tree.
+ * Primitives (null, boolean, number) pass through unchanged.
+ */
+function truncateJsonStrings(value: unknown, maxStrLen: number): unknown {
+  if (typeof value === 'string') return value.slice(0, maxStrLen);
+  if (Array.isArray(value)) return value.map(v => truncateJsonStrings(v, maxStrLen));
+  if (value && typeof value === 'object') {
+    const result: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+      result[k] = truncateJsonStrings(v, maxStrLen);
+    }
+    return result;
+  }
+  return value;
+}
+
+/**
+ * Truncate a string to `maxLen` while guaranteeing the output is valid JSON.
+ *
+ * If the payload is valid JSON and the raw slice happens to be valid (fast
+ * path), return it directly.  Otherwise, parse the full object, truncate
+ * string fields recursively, and re-stringify — the result is always valid
+ * JSON and never exceeds `maxLen`.
+ */
+export function truncateSafe(payload: string, maxLen: number): string {
+  if (payload.length <= maxLen) return payload;
+
+  const sliced = payload.slice(0, maxLen);
+  try {
+    JSON.parse(sliced);
+    return sliced;
+  } catch {
+    // JSON was cut in the middle of a token.  Parse the full object,
+    // iteratively trim string fields, then re-stringify.
+    try {
+      const parsed = JSON.parse(payload);
+      let strLimit = 2000;
+      const MIN_STR = 100;
+      while (strLimit >= MIN_STR) {
+        const reStrung = JSON.stringify(truncateJsonStrings(parsed, strLimit));
+        if (reStrung.length <= maxLen) return reStrung;
+        strLimit >>= 1;
+      }
+      return JSON.stringify(truncateJsonStrings(parsed, MIN_STR));
+    } catch {
+      return sliced;
+    }
+  }
+}
+
 const EMPTY_DECISION: PrivacyDecision = {
   action: 'skip',
   sanitizedPayload: '',
@@ -194,7 +245,7 @@ export function runPrivacyPipeline(
   // ── 3. Field trimming ──
   const maxLen = MAX_LENGTH[ctx.source] ?? MAX_LENGTH.command;
   const truncated = sanitizedPayload.length > maxLen;
-  const trimmedPayload = truncated ? sanitizedPayload.slice(0, maxLen) : sanitizedPayload;
+  const trimmedPayload = truncated ? truncateSafe(sanitizedPayload, maxLen) : sanitizedPayload;
 
   // ── 4. Decision ──
   let action: PrivacyDecision['action'] = 'send';
