@@ -190,9 +190,14 @@ export class ApprovalBridge {
     };
   }
 
-  /** Public wrapper: send event to relay via sendEvent(). */
-  sendEventToRelay(serverSessionId: string, payload: Record<string, unknown>): void {
-    this.relay.sendEvent(serverSessionId, { type: 'event', payload } as any);
+  /** Public wrapper: send event to relay, optionally privacy-checked. */
+  sendEventToRelay(serverSessionId: string, payload: Record<string, unknown>, source?: SourceType): void {
+    if (source) {
+      const raw = JSON.stringify({ type: 'event', payload } as any);
+      this.privacyCheckAndSend(source, raw);
+    } else {
+      this.relay.sendEvent(serverSessionId, { type: 'event', payload } as any);
+    }
   }
 
   /** Public wrapper: send error event to relay. */
@@ -360,9 +365,12 @@ export class ApprovalBridge {
       undefined, // cwd — uses workspace root if available
       this._auditSink,
     );
-    if (decision.action === 'send') {
+    // 'send' and 'require_confirmation' both transmit — in the current
+    // UX model, the phone approval IS the user's confirmation.
+    if (decision.action === 'send' || decision.action === 'require_confirmation') {
       const checked = toCheckedPayload(decision);
       if (checked) this.relay.sendCheckedPayload(checked);
+      else this.relay.sendRaw(rawPayload); // fallback if pipeline didn't modify
     }
     return decision;
   }
@@ -1453,7 +1461,7 @@ export class ApprovalBridge {
     }
 
     if (shouldForwardRelayEvent) {
-      this.relay.sendEvent(serverSessionId, relayMsg);
+      this.privacyCheckAndSend('approval', JSON.stringify(relayMsg));
     }
 
     // Clear pending approvals only when CC actually finishes a turn
@@ -1597,7 +1605,7 @@ export class ApprovalBridge {
           ts: new Date().toISOString(),
         },
       };
-      this.relay.sendEvent(payload.sessionId, relayMsg);
+      this.privacyCheckAndSend('command', JSON.stringify(relayMsg));
     });
   }
 
@@ -1656,7 +1664,7 @@ export class ApprovalBridge {
             ts: entry.timestamp || new Date().toISOString(),
           },
         };
-        this.relay.sendEvent(serverSessionId, relayMsg);
+        this.privacyCheckAndSend('transcript', JSON.stringify(relayMsg));
         continue;
       }
 

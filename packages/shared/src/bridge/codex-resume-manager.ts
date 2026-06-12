@@ -34,10 +34,11 @@ export class CodexResumeManager {
   private approvalBridge: ApprovalBridge | null = null;
   private _auditSink?: AuditSink;
 
-  constructor(relay: RelayClient, resumedServerSessionIds: Set<string>, approvalBridge?: ApprovalBridge, storagePath?: string) {
+  constructor(relay: RelayClient, resumedServerSessionIds: Set<string>, approvalBridge?: ApprovalBridge, storagePath?: string, auditSink?: AuditSink) {
     this.relay = relay;
     this.resumedServerSessionIds = resumedServerSessionIds;
     this.approvalBridge = approvalBridge ?? null;
+    this._auditSink = auditSink;
     void storagePath;
 
     // Listen for session_registered to resolve pending registrations

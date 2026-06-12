@@ -70,7 +70,7 @@ async function main(): Promise<void> {
   const resumedServerSessionIds = new Set<string>();
   bridge.registerResumedServerSessionIds(resumedServerSessionIds);
   const resumeStoragePath = path.join(os.tmpdir(), 'codekey-resume-sessions.json');
-  const codexResumeManager = new CodexResumeManager(relay, resumedServerSessionIds, bridge, resumeStoragePath);
+  const codexResumeManager = new CodexResumeManager(relay, resumedServerSessionIds, bridge, resumeStoragePath, createAuditSink());
   codexResumeManager.startListening();
 
   // ── OpenCode Session Manager ─────────────────────────────

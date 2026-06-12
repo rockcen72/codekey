@@ -317,6 +317,7 @@ describe('Codex real transcript format', () => {
             });
           }
         },
+        sendCheckedPayload(p: { raw: string }) { this.sendRaw(p.raw); },
       });
       const manager = new CodexResumeManager(relay as any, new Set());
 
@@ -397,6 +398,7 @@ describe('Codex real transcript format', () => {
         sendRaw(value: string) {
           sent.push(JSON.parse(value));
         },
+        sendCheckedPayload(p: { raw: string }) { this.sendRaw(p.raw); },
       });
       const manager = new CodexResumeManager(relay as any, new Set());
 
@@ -461,6 +463,7 @@ describe('Codex real transcript format', () => {
         sendRaw(value: string) {
           sent.push(JSON.parse(value));
         },
+        sendCheckedPayload(p: { raw: string }) { this.sendRaw(p.raw); },
       });
       const manager = new CodexResumeManager(relay as any, new Set());
 

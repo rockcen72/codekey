@@ -75,6 +75,10 @@ class FakeRelay extends EventEmitter {
   sendEvent(_sessionId: string, msg: unknown): void {
     this.sent.push(JSON.stringify(msg));
   }
+
+  sendCheckedPayload(payload: { raw: string }): void {
+    this.sendRaw(payload.raw);
+  }
 }
 
 describe('ApprovalBridge canonical sessions', () => {
