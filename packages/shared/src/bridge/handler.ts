@@ -190,14 +190,10 @@ export class ApprovalBridge {
     };
   }
 
-  /** Public wrapper: send event to relay, optionally privacy-checked. */
-  sendEventToRelay(serverSessionId: string, payload: Record<string, unknown>, source?: SourceType): void {
-    if (source) {
-      const raw = JSON.stringify({ type: 'event', payload } as any);
-      this.privacyCheckAndSend(source, raw);
-    } else {
-      this.relay.sendEvent(serverSessionId, { type: 'event', payload } as any);
-    }
+  /** Public wrapper: send event to relay with privacy check. */
+  sendEventToRelay(serverSessionId: string, payload: Record<string, unknown>, source: SourceType): void {
+    const raw = JSON.stringify({ type: 'event', payload } as any);
+    this.privacyCheckAndSend(source, raw);
   }
 
   /** Public wrapper: send error event to relay. */
@@ -320,7 +316,7 @@ export class ApprovalBridge {
               eventType: 'user_prompt',
               data: { type: 'user_prompt', prompt: text, summary: text.slice(0, 200) },
               ts: info.time?.created ? new Date(info.time.created).toISOString() : new Date().toISOString(),
-            });
+            }, 'history');
           }
         } else if (info.role === 'assistant' && m.parts) {
           const text = m.parts.filter((p: any) => p.type === 'text' && p.text).map((p: any) => p.text).join('\n');
@@ -332,7 +328,7 @@ export class ApprovalBridge {
               eventType: 'task_complete',
               data: { type: 'task_complete', summary: text, summaryShort: text.slice(0, 200), output: text },
               ts: info.time?.completed || info.time?.created ? new Date((info.time.completed || info.time.created) as number).toISOString() : new Date().toISOString(),
-            });
+            }, 'history');
           }
         }
       }
@@ -1174,7 +1170,7 @@ export class ApprovalBridge {
       (relayMsg.payload as Record<string, unknown>).sessionLabel = label;
     }
 
-    this.relay.sendEvent(serverSessionId, relayMsg);
+    this.privacyCheckAndSend('approval', JSON.stringify(relayMsg));
 
     // Resolve any existing pending approvals for this same session so approvals
     // don't accumulate in the sidebar when the user handles them inline in CC.
@@ -1371,7 +1367,7 @@ export class ApprovalBridge {
       if (label) {
         (relayMsg.payload as Record<string, unknown>).sessionLabel = label;
       }
-      this.relay.sendEvent(serverSessionId, relayMsg);
+      this.privacyCheckAndSend('approval', JSON.stringify(relayMsg));
       this.trackPendingApproval({
         id: clientEventId,
         serverSessionId,
@@ -1501,7 +1497,7 @@ export class ApprovalBridge {
           ts: new Date().toISOString(),
         },
       };
-      this.relay.sendEvent(serverSessionId, msg);
+      this.privacyCheckAndSend('transcript', JSON.stringify(msg));
     }
 
     // Note: task_complete does NOT clean up local caches — session lifecycle
@@ -1562,7 +1558,7 @@ export class ApprovalBridge {
             ts: new Date().toISOString(),
           },
         };
-        this.relay.sendEvent(payload.sessionId, errorMsg);
+        this.privacyCheckAndSend('command', JSON.stringify(errorMsg));
         return;
       }
 
@@ -1689,7 +1685,7 @@ export class ApprovalBridge {
           ts: entry.timestamp || new Date().toISOString(),
         },
       };
-      this.relay.sendEvent(serverSessionId, relayMsg);
+      this.privacyCheckAndSend('transcript', JSON.stringify(relayMsg));
       this.resolvePendingApprovalsForSession(serverSessionId);
     }
   }
@@ -1747,7 +1743,7 @@ export class ApprovalBridge {
           ts: entry.timestamp,
         },
       };
-      this.relay.sendEvent(serverSessionId, relayMsg);
+      this.privacyCheckAndSend('transcript', JSON.stringify(relayMsg));
     }
   }
 
@@ -1787,7 +1783,7 @@ export class ApprovalBridge {
     };
     console.error('[bridge] phone command claimed: sending command_started sessionId=%s text=%s',
       serverSessionId, text.slice(0, 80));
-    this.relay.sendEvent(serverSessionId, relayMsg);
+    this.privacyCheckAndSend('command', JSON.stringify(relayMsg));
   }
 
   /** Check and consume one matching fingerprint (one-shot). */

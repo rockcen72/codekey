@@ -7,7 +7,7 @@ interface MockRelayClient {
 }
 
 function createMockRelay(): MockRelayClient {
-  return { on: vi.fn(), sendRaw: vi.fn() };
+  return { on: vi.fn(), sendRaw: vi.fn(), sendCheckedPayload: vi.fn((p: any) => { /*no-op*/ }) };
 }
 
 function sentMessages(relay: MockRelayClient, type?: string): Record<string, unknown>[] {

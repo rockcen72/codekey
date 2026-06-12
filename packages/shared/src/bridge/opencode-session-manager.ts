@@ -265,7 +265,7 @@ export class OpenCodeSessionManager {
               eventType: 'user_prompt',
               data: { type: 'user_prompt', prompt: text, summary: text.slice(0, 200) },
               ts: info.time?.created ? new Date(info.time.created).toISOString() : new Date().toISOString(),
-            });
+            }, "history");
           }
         } else if (info.role === 'assistant' && m.parts) {
           const text = m.parts
@@ -280,7 +280,7 @@ export class OpenCodeSessionManager {
               eventType: 'task_complete',
               data: { type: 'task_complete', summary: text, summaryShort: text.slice(0, 200), output: text },
               ts: info.time?.completed || info.time?.created ? new Date((info.time.completed || info.time.created) as number).toISOString() : new Date().toISOString(),
-            });
+            }, "history");
           }
         }
       }
@@ -488,7 +488,7 @@ export class OpenCodeSessionManager {
         risk,
         summary: title || `${permissionType}: ${command.slice(0, 200)}`,
       },
-    });
+    }, "approval");
 
     this.bridge.trackPendingApproval({
       id: clientEventId,
@@ -578,7 +578,7 @@ export class OpenCodeSessionManager {
         agent: 'opencode',
         eventType: 'error',
         data: { type: 'error', message },
-      });
+      }, "transcript");
     }
 
     this.bridge.sendEventToRelay(serverSessionId, {
@@ -589,7 +589,7 @@ export class OpenCodeSessionManager {
         type: 'task_complete',
         summary: errorObj ? (errorObj.message as string) || 'Session idle with error' : 'Session idle',
       },
-    });
+    }, "transcript");
   }
 
   private onSessionError(props: Record<string, unknown>): void {
@@ -609,7 +609,7 @@ export class OpenCodeSessionManager {
         type: 'error',
         message,
       },
-    });
+    }, "transcript");
   }
 
   // ── Message handling ────────────────────────────────────
@@ -641,7 +641,7 @@ export class OpenCodeSessionManager {
         agent: 'opencode',
         eventType: 'input_required',
         data: inputCard,
-      });
+      }, "approval");
       return;
     }
 
@@ -657,7 +657,7 @@ export class OpenCodeSessionManager {
           eventType: 'user_prompt',
           data: { type: 'user_prompt', prompt: text, summary: text.slice(0, 200) },
           ts: new Date().toISOString(),
-        });
+        }, "history");
       }
       return;
     }
@@ -672,7 +672,7 @@ export class OpenCodeSessionManager {
           type: 'error',
           message: (error.message as string) || 'Unknown error',
         },
-      });
+      }, "transcript");
     }
   }
 
@@ -708,7 +708,7 @@ export class OpenCodeSessionManager {
             agent: 'opencode',
             eventType: 'input_required',
             data: inputCard,
-          });
+          }, "approval");
         }).catch(() => {});
       }
       // Skip all other events for unmapped sessions (text, tool, etc.)
@@ -725,7 +725,7 @@ export class OpenCodeSessionManager {
         agent: 'opencode',
         eventType: 'input_required',
         data: inputCard,
-      });
+      }, "approval");
       return;
     }
 
@@ -769,7 +769,7 @@ export class OpenCodeSessionManager {
           summaryShort: text.slice(0, 200),
           output: text,
         },
-      });
+      }, "transcript");
     } else if (partType === 'tool') {
       const state = part.state as Record<string, unknown> | undefined;
       if (state?.status === 'completed') {
@@ -783,7 +783,7 @@ export class OpenCodeSessionManager {
             type: 'task_complete',
             summary: title,
           },
-        });
+        }, "transcript");
       }
     }
   }
@@ -881,7 +881,7 @@ export class OpenCodeSessionManager {
       eventType: 'user_prompt',
       data: { type: 'user_prompt', prompt: text, summary: text.slice(0, 200) },
       ts: new Date().toISOString(),
-    });
+    }, "history");
     this.bridge.sendEventToRelay(sessionId, {
       clientEventId: `oc-started:${Date.now()}:${Math.random()}`,
       sessionId,
@@ -889,7 +889,7 @@ export class OpenCodeSessionManager {
       eventType: 'command_started',
       data: { type: 'command_started', command: text },
       ts: new Date().toISOString(),
-    });
+    }, "transcript");
 
     try {
       const url = `${this.opencodeBaseUrl}/session/${encodeURIComponent(opencodeSessionId)}/prompt_async`;
