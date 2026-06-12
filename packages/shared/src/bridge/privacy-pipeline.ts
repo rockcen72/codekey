@@ -120,10 +120,12 @@ function truncateJsonStrings(value: unknown, maxStrLen: number): unknown {
 /**
  * Truncate a string to `maxLen` while guaranteeing the output is valid JSON.
  *
- * If the payload is valid JSON and the raw slice happens to be valid (fast
- * path), return it directly.  Otherwise, parse the full object, truncate
- * string fields recursively, and re-stringify — the result is always valid
- * JSON and never exceeds `maxLen`.
+ * Strategy (in order of preference):
+ *   1. Raw slice — if the cut happens to land on a JSON boundary, return it.
+ *   2. Deep truncation — parse the full object, iteratively halve the
+ *      per-string limit until the re-stringified result fits.
+ *      Meticulous halving continues until strLimit reaches 1, which always
+ *      fits (each string is 1 char; structure amortises to minutes).
  */
 export function truncateSafe(payload: string, maxLen: number): string {
   if (payload.length <= maxLen) return payload;
@@ -133,18 +135,16 @@ export function truncateSafe(payload: string, maxLen: number): string {
     JSON.parse(sliced);
     return sliced;
   } catch {
-    // JSON was cut in the middle of a token.  Parse the full object,
-    // iteratively trim string fields, then re-stringify.
     try {
       const parsed = JSON.parse(payload);
       let strLimit = 2000;
-      const MIN_STR = 100;
-      while (strLimit >= MIN_STR) {
+      while (true) {
         const reStrung = JSON.stringify(truncateJsonStrings(parsed, strLimit));
         if (reStrung.length <= maxLen) return reStrung;
-        strLimit >>= 1;
+        if (strLimit <= 1) break;
+        strLimit = Math.ceil(strLimit / 2);
       }
-      return JSON.stringify(truncateJsonStrings(parsed, MIN_STR));
+      return JSON.stringify(truncateJsonStrings(parsed, 1));
     } catch {
       return sliced;
     }

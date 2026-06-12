@@ -150,6 +150,17 @@ describe('privacy-pipeline', () => {
     const raw = JSON.stringify({ type: 'event', payload: { msg: 'hello' } });
     expect(truncateSafe(raw, 10000)).toBe(raw);
   });
+
+  it('guarantees valid JSON <= maxLen even with many small string fields', () => {
+    // 60 fields × 100 chars + structure ≈ 6500+ chars, exceeding 5000 limit
+    const fields: Record<string, string> = {};
+    for (let i = 0; i < 60; i++) fields[`f${i}`] = 'x'.repeat(200);
+    const raw = JSON.stringify({ type: 'event', payload: fields });
+    expect(raw.length).toBeGreaterThan(5000);
+    const result = truncateSafe(raw, 5000);
+    expect(result.length).toBeLessThanOrEqual(5000);
+    expect(() => JSON.parse(result)).not.toThrow();
+  });
 });
 
 // Regression: approval payload with both blocked path AND secret
