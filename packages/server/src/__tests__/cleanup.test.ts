@@ -17,6 +17,7 @@ describeDb('Cleanup — runRetentionCleanup', () => {
 
   afterAll(async () => {
     for (const did of cleanupIds) {
+      try { await sql`DELETE FROM approvals WHERE event_id IN (SELECT id FROM events WHERE session_id IN (SELECT id FROM sessions WHERE device_id = ${did}))`; } catch { /* ignore */ }
       try { await sql`DELETE FROM events WHERE session_id IN (SELECT id FROM sessions WHERE device_id = ${did})`; } catch { /* ignore */ }
       try { await sql`DELETE FROM sessions WHERE device_id = ${did}`; } catch { /* ignore */ }
       try { await sql`DELETE FROM device_tokens WHERE device_id = ${did}`; } catch { /* ignore */ }
@@ -37,16 +38,22 @@ describeDb('Cleanup — runRetentionCleanup', () => {
       VALUES (${deviceId}, 'test', 'finished', now() - interval '8 days', now() - interval '8 days')
       RETURNING id
     `;
-    await sql`
+    const [evt] = await sql`
       INSERT INTO events (session_id, type, data)
       VALUES (${oldFinished.id}, 'test', ${sql.json({ msg: 'old event' })})
+      RETURNING id
+    `;
+    await sql`
+      INSERT INTO approvals (event_id, session_id, decision, command, risk_level, message)
+      VALUES (${evt.id}, ${oldFinished.id}, 'approved', 'test-cmd', 'low', 'test approval')
     `;
 
     await runRetentionCleanup(sql);
 
     const remaining = await sql`SELECT id FROM sessions WHERE id = ${oldFinished.id}`;
     expect(remaining.length).toBe(0);
-
+    const approvals = await sql`SELECT id FROM approvals WHERE session_id = ${oldFinished.id}`;
+    expect(approvals.length).toBe(0);
     const events = await sql`SELECT id FROM events WHERE session_id = ${oldFinished.id}`;
     expect(events.length).toBe(0);
   });

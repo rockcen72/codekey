@@ -12,6 +12,15 @@ export async function runRetentionCleanup(sql: postgres.Sql): Promise<void> {
   if (days <= 0) return;
 
   await sql`
+    DELETE FROM approvals WHERE event_id IN (
+      SELECT id FROM events WHERE session_id IN (
+        SELECT id FROM sessions
+        WHERE status = 'finished'
+          AND finished_at < now() - interval '1 day' * ${days}::int
+      )
+    )
+  `;
+  await sql`
     DELETE FROM events WHERE session_id IN (
       SELECT id FROM sessions
       WHERE status = 'finished'
