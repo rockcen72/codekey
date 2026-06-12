@@ -12,6 +12,8 @@ import { MAX_PROMPT_LENGTH } from '../types.js';
 import type { AgentEventPayload, SessionEventMessage } from '../types.js';
 import { RiskEngine } from '../risk.js';
 import { tryFormatInputRequiredEvent } from './input-card.js';
+import { runPrivacyPipeline, toCheckedPayload } from './privacy-pipeline.js';
+import type { AuditSink, PrivacyDecision, SourceType } from './privacy-pipeline.js';
 
 interface PhoneCommandFingerprint {
   fingerprint: string;
@@ -345,7 +347,28 @@ export class ApprovalBridge {
     return ids;
   }
 
-  constructor(readonly relay: RelayClient) {
+  private _relayConnected = false;
+  private _auditSink?: AuditSink;
+
+  /**
+   * Run the privacy pipeline on a payload and send via sendCheckedPayload if allowed.
+   * Returns the decision (caller can check .action for 'block' / 'require_confirmation').
+   */
+  privacyCheckAndSend(source: SourceType, rawPayload: string, structuredPayload?: Record<string, unknown>): PrivacyDecision {
+    const decision = runPrivacyPipeline(
+      { source, rawPayload, structuredPayload },
+      undefined, // cwd — uses workspace root if available
+      this._auditSink,
+    );
+    if (decision.action === 'send') {
+      const checked = toCheckedPayload(decision);
+      if (checked) this.relay.sendCheckedPayload(checked);
+    }
+    return decision;
+  }
+
+  constructor(readonly relay: RelayClient, opts?: { auditSink?: AuditSink }) {
+    this._auditSink = opts?.auditSink;
     // Match session_registered by clientRequestId (NOT by once() — prevents race)
     this.relay.on('session_registered', (payload: unknown) => {
       const p = payload as { clientRequestId?: string; sessionId: string };

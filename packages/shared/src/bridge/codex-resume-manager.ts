@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import type { RelayClient } from './relay-client.js';
 import type { ApprovalBridge } from './handler.js';
+import { runPrivacyPipeline, toCheckedPayload } from './privacy-pipeline.js';
+import type { AuditSink } from './privacy-pipeline.js';
 import { cleanCodexDisplayText, discoverLocalSessions, findMostRecentSession, type CodexLocalSession } from './codex-local-session-resolver.js';
 import { CodexResumeRuntime, type ResumeResult } from './codex-resume-runtime.js';
 import { resolveCodexBinary } from './codex-binary.js';
@@ -30,6 +32,7 @@ export class CodexResumeManager {
   private _listening = false;
 
   private approvalBridge: ApprovalBridge | null = null;
+  private _auditSink?: AuditSink;
 
   constructor(relay: RelayClient, resumedServerSessionIds: Set<string>, approvalBridge?: ApprovalBridge, storagePath?: string) {
     this.relay = relay;
@@ -521,7 +524,16 @@ export class CodexResumeManager {
    * Uses RelayClient.sendEvent which sends pre-serialized.
    */
   private _forwardEvent(serverSessionId: string, msg: Record<string, unknown>): void {
-    this.relay.sendRaw(JSON.stringify(msg));
+    const raw = JSON.stringify(msg);
+    const decision = runPrivacyPipeline(
+      { source: 'transcript', rawPayload: raw, agent: 'codex' },
+      undefined,
+      this._auditSink,
+    );
+    if (decision.action === 'block') return;
+    const checked = toCheckedPayload(decision);
+    if (checked) this.relay.sendCheckedPayload(checked);
+    else this.relay.sendRaw(raw);
   }
 }
 

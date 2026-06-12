@@ -61,18 +61,16 @@ export const DEFAULT_BLOCKED_PATTERNS: string[] = [
 
 /**
  * Check if a file path matches any pattern in a given list.
- * Uses .gitignore-compatible matching:
+ * Uses gitignore-inspired matching (subset only):
  *   - Patterns without `/` match against the basename
  *   - Patterns with `/` match against the full relative path
  *   - `*` matches any chars except `/`
  *   - `**` matches any chars including `/`
  *   - `?` matches any single char except `/`
  *
- * Examples:
- *   `.env`        → matches `.env`, `repo/.env`, `F:/repo/.env`
- *   `*.pem`       → matches `key.pem`, `secret/key.pem`
- *   `node_modules/**` → matches `a/node_modules/b/file.js`
- *   `secret/**`   → matches `secret/foo`, `a/secret/foo`
+ * Not supported: ! negation, rooted (/foo) patterns, directory-only (foo/) patterns.
+ * This subset is sufficient for CodeKey's default blocklist and .codekeyignore;
+ * full gitignore compatibility is not a goal.
  */
 export function matchesAny(filePath: string, patterns: string[]): boolean {
   const normalized = filePath.replace(/\\/g, '/');

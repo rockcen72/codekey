@@ -604,7 +604,7 @@ function handleRequest(req: IncomingMessage, res: ServerResponse, bridge: Approv
           toolName,
           risk: 'medium',
         });
-        bridge.relay.sendRaw(JSON.stringify({
+        const codexPayload = JSON.stringify({
           type: 'event',
           payload: {
             clientEventId,
@@ -620,7 +620,8 @@ function handleRequest(req: IncomingMessage, res: ServerResponse, bridge: Approv
             },
             ts: new Date().toISOString(),
           },
-        }));
+        });
+        bridge.privacyCheckAndSend('approval', codexPayload);
 
       } catch (err) {
         console.error('[codex-hooks] error:', err);
