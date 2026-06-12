@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { runPrivacyPipeline, toCheckedPayload, truncateSafe } from '../bridge/privacy-pipeline.js';
+import { runPrivacyPipeline, toCheckedPayload, truncateSafe, PrivacyAuditCollector } from '../bridge/privacy-pipeline.js';
 
 describe('privacy-pipeline', () => {
   describe('runPrivacyPipeline', () => {
@@ -197,6 +197,65 @@ describe('privacy-pipeline', () => {
       // The checked payload must have the secret redacted
       expect(checked!.raw).toContain('sk-ant-***');
       expect(checked!.raw).not.toContain('sk-ant-ABCDEFGHIJKLMNOPQRST');
+    });
+  });
+
+  describe('PrivacyAuditCollector', () => {
+    it('accumulates forwarded entries and tracks stats', () => {
+      const collector = new PrivacyAuditCollector();
+      const sink = collector.sink;
+      sink({ timestamp: 't1', source: 'command', action: 'forwarded', sanitized: false, blocked: false, payloadPreview: 'ls', findingCount: 0, payloadLength: 4 });
+      sink({ timestamp: 't2', source: 'approval', action: 'forwarded', sanitized: false, blocked: false, payloadPreview: 'git push', findingCount: 0, payloadLength: 8 });
+      expect(collector.stats().summary.forwarded).toBe(2);
+      expect(collector.stats().summary.blocked).toBe(0);
+      expect(collector.stats().summary.sanitized).toBe(0);
+      expect(collector.stats().summary.totalFindings).toBe(0);
+      expect(collector.stats().recentEntries.length).toBe(2);
+    });
+
+    it('tracks sanitized and blocked entries separately', () => {
+      const collector = new PrivacyAuditCollector();
+      const sink = collector.sink;
+      sink({ timestamp: 't1', source: 'approval', action: 'sanitized', sanitized: true, blocked: false, payloadPreview: 'key=sk-ant-xxx', findingCount: 1, payloadLength: 20 });
+      sink({ timestamp: 't2', source: 'transcript', action: 'blocked', sanitized: false, blocked: true, payloadPreview: '.env contents', findingCount: 0, payloadLength: 13 });
+      sink({ timestamp: 't3', source: 'history', action: 'forwarded', sanitized: false, blocked: false, payloadPreview: 'ls', findingCount: 0, payloadLength: 2 });
+      const stats = collector.stats();
+      expect(stats.summary.forwarded).toBe(1);
+      expect(stats.summary.blocked).toBe(1);
+      expect(stats.summary.sanitized).toBe(1);
+      expect(stats.summary.totalFindings).toBe(1);
+    });
+
+    it('accumulates totalFindings across multiple entries', () => {
+      const collector = new PrivacyAuditCollector();
+      const sink = collector.sink;
+      sink({ timestamp: 't1', source: 'approval', action: 'sanitized', sanitized: true, blocked: false, payloadPreview: 'a', findingCount: 2, payloadLength: 5 });
+      sink({ timestamp: 't2', source: 'approval', action: 'sanitized', sanitized: true, blocked: false, payloadPreview: 'b', findingCount: 3, payloadLength: 5 });
+      expect(collector.stats().summary.totalFindings).toBe(5);
+    });
+
+    it('ring buffer caps at MAX_AUDIT_ENTRIES (500)', () => {
+      const collector = new PrivacyAuditCollector();
+      const sink = collector.sink;
+      for (let i = 0; i < 600; i++) {
+        sink({ timestamp: `t${i}`, source: 'command', action: 'forwarded', sanitized: false, blocked: false, payloadPreview: 'x', findingCount: 0, payloadLength: 1 });
+      }
+      expect(collector.stats().recentEntries.length).toBeLessThanOrEqual(500);
+      // oldest entries are dropped
+      expect(collector.stats().recentEntries[0].timestamp).not.toBe('t0');
+    });
+
+    it('reset clears all state', () => {
+      const collector = new PrivacyAuditCollector();
+      collector.sink({ timestamp: 't1', source: 'approval', action: 'sanitized', sanitized: true, blocked: false, payloadPreview: 'sk-xxx', findingCount: 2, payloadLength: 6 });
+      expect(collector.stats().summary.sanitized).toBe(1);
+      collector.reset();
+      const stats = collector.stats();
+      expect(stats.summary.forwarded).toBe(0);
+      expect(stats.summary.blocked).toBe(0);
+      expect(stats.summary.sanitized).toBe(0);
+      expect(stats.summary.totalFindings).toBe(0);
+      expect(stats.recentEntries).toEqual([]);
     });
   });
 });
