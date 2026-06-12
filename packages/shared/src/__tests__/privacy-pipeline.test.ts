@@ -161,6 +161,24 @@ describe('privacy-pipeline', () => {
     expect(result.length).toBeLessThanOrEqual(5000);
     expect(() => JSON.parse(result)).not.toThrow();
   });
+
+  it('drops trailing fields when structure alone exceeds maxLen (squeeze fallback)', () => {
+    // 700 fields × 1-char strings → structure ~7600 chars, exceeds 5000
+    // squeezeToMaxLen must drop trailing fields so total fits
+    const fields: Record<string, string> = {};
+    for (let i = 0; i < 700; i++) fields[`f${i}`] = 'x';
+    const raw = JSON.stringify({ type: 'event', payload: fields });
+    expect(raw.length).toBeGreaterThan(5000);
+    const result = truncateSafe(raw, 5000);
+    expect(result.length).toBeLessThanOrEqual(5000);
+    expect(() => JSON.parse(result)).not.toThrow();
+    const parsed = JSON.parse(result) as { type: string; payload: Record<string, string> };
+    // At strLimit=1 every string is 1 char ("event" → "e")
+    expect(parsed.type).toBe('e');
+    // payload survived with early fields intact, trailing ones dropped
+    expect(Object.keys(parsed.payload).length).toBeGreaterThan(0);
+    expect(parsed.payload).toHaveProperty('f0');
+  });
 });
 
 // Regression: approval payload with both blocked path AND secret

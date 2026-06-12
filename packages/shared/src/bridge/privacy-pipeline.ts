@@ -118,14 +118,54 @@ function truncateJsonStrings(value: unknown, maxStrLen: number): unknown {
 }
 
 /**
- * Truncate a string to `maxLen` while guaranteeing the output is valid JSON.
+ * Drop trailing entries from objects/arrays until the stringified result
+ * fits within `maxLen`.  Last-resort fallback when even 1-char strings
+ * exceed the limit (extremely many fields).
+ *
+ * When recursing into nested values, the budget is reduced to account
+ * for the parent's structural overhead, so the child doesn't consume
+ * more than its fair share and later get dropped by the parent.
+ */
+function squeezeToMaxLen(value: unknown, maxLen: number): unknown {
+  if (Array.isArray(value)) {
+    const result: unknown[] = [];
+    for (const item of value) {
+      result.push(squeezeToMaxLen(item, maxLen));
+      if (JSON.stringify(result).length > maxLen) {
+        result.pop();
+        break;
+      }
+    }
+    return result;
+  }
+  if (value && typeof value === 'object') {
+    const obj = value as Record<string, unknown>;
+    const result: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(obj)) {
+      const currentSize = JSON.stringify(result).length;
+      const overhead = k.length + 6; // `,"key":` or `"key":` for first entry
+      const budget = Math.max(2, maxLen - currentSize - overhead);
+      result[k] = typeof v === 'object' && v !== null ? squeezeToMaxLen(v, budget) : v;
+      if (JSON.stringify(result).length > maxLen) {
+        delete result[k];
+        break;
+      }
+    }
+    return result;
+  }
+  return value;
+}
+
+/**
+ * Truncate a string to `maxLen` while guaranteeing the output is valid JSON
+ * and never exceeds `maxLen`.
  *
  * Strategy (in order of preference):
  *   1. Raw slice — if the cut happens to land on a JSON boundary, return it.
- *   2. Deep truncation — parse the full object, iteratively halve the
+ *   2. Deep string truncation — parse the full object, iteratively halve the
  *      per-string limit until the re-stringified result fits.
- *      Meticulous halving continues until strLimit reaches 1, which always
- *      fits (each string is 1 char; structure amortises to minutes).
+ *   3. Squeeze — drop trailing entries when structure (not string length)
+ *      pushes the total over maxLen.  Always produces valid JSON ≤ maxLen.
  */
 export function truncateSafe(payload: string, maxLen: number): string {
   if (payload.length <= maxLen) return payload;
@@ -137,6 +177,7 @@ export function truncateSafe(payload: string, maxLen: number): string {
   } catch {
     try {
       const parsed = JSON.parse(payload);
+      // 2. Deep string truncation
       let strLimit = 2000;
       while (true) {
         const reStrung = JSON.stringify(truncateJsonStrings(parsed, strLimit));
@@ -144,7 +185,10 @@ export function truncateSafe(payload: string, maxLen: number): string {
         if (strLimit <= 1) break;
         strLimit = Math.ceil(strLimit / 2);
       }
-      return JSON.stringify(truncateJsonStrings(parsed, 1));
+      // 3. Squeeze — drop entries if structure alone exceeds maxLen
+      const packedAt1 = JSON.stringify(truncateJsonStrings(parsed, 1));
+      if (packedAt1.length <= maxLen) return packedAt1;
+      return JSON.stringify(squeezeToMaxLen(truncateJsonStrings(parsed, 1), maxLen));
     } catch {
       return sliced;
     }
