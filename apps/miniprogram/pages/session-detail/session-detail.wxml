@@ -24,7 +24,7 @@
     </text>
   </view>
 
-  <scroll-view class="timeline" scroll-y scroll-into-view="{{scrollToId}}" scroll-top="{{scrollTop}}" scroll-with-animation bindscroll="onScroll">
+  <scroll-view class="timeline {{hasPrimaryPendingEvent && !approvalSheetOpen ? 'timeline-with-dock' : ''}}" scroll-y scroll-into-view="{{scrollToId}}" scroll-top="{{scrollTop}}" scroll-with-animation bindscroll="onScroll">
     <view class="empty" wx:if="{{chatMessages.length === 0}}">
       <text class="empty-icon">◌</text>
       <text class="empty-title">暂无消息</text>
@@ -44,6 +44,17 @@
         <view class="chat-stack user-stack" id="msg-{{item.id}}">
           <text class="sender-name">{{item.senderName || '你'}}</text>
           <view class="msg-bubble user">
+            <text class="msg-text">{{item.content}}</text>
+            <text wx:if="{{item.displayTime}}" class="msg-time">{{item.displayTime}}</text>
+          </view>
+        </view>
+      </view>
+
+      <!-- Agent message bubble -->
+      <view wx:elif="{{item.isCommandStarted}}" class="msg-row left">
+        <view class="chat-stack agent-stack" id="msg-{{item.id}}">
+          <text class="sender-name">{{item.senderName || 'agent'}}</text>
+          <view class="msg-bubble agent agent-{{item.agentClass}}">
             <text class="msg-text">{{item.content}}</text>
             <text wx:if="{{item.displayTime}}" class="msg-time">{{item.displayTime}}</text>
           </view>

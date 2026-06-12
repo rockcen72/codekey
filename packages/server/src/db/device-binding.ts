@@ -27,7 +27,8 @@ export async function replaceActiveDeviceBinding(
   tx: DbLike,
   userId: number,
   deviceId: string,
-): Promise<{ replaced: string[] }> {
+  options: { allowDifferentUser?: boolean } = {},
+): Promise<{ replaced: string[]; previousUserId: number | null; alreadyBound: boolean }> {
   // Step 0: 锁 user 行，串行化同一用户的并发 claim
   // 当用户无 active binding 时，Step 1 的 FOR UPDATE 锁空集不阻塞，
   // 两个事务能同时进入后续流程，导致 partial unique index 冲突或
@@ -47,7 +48,9 @@ export async function replaceActiveDeviceBinding(
     WHERE device_id = ${deviceId}
     FOR UPDATE
   `;
-  if (existingBinding && Number(existingBinding.user_id) !== userId) {
+  const previousUserId = existingBinding?.user_id == null ? null : Number(existingBinding.user_id);
+  const alreadyBound = previousUserId === userId && existingBinding?.unbound_at === null;
+  if (previousUserId !== null && previousUserId !== userId && !options.allowDifferentUser) {
     throw new DeviceBoundToOtherUser();
   }
 
@@ -83,5 +86,5 @@ export async function replaceActiveDeviceBinding(
     `;
   }
 
-  return { replaced: oldDeviceIds };
+  return { replaced: oldDeviceIds, previousUserId, alreadyBound };
 }

@@ -72,6 +72,7 @@ export interface EventRecord {
 export interface ConfirmResult {
   clientToken: string;
   deviceId: string;
+  desktopNotified?: boolean;
 }
 
 export function createApi(serverUrl: string) {

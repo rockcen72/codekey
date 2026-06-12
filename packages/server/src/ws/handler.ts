@@ -37,6 +37,45 @@ export function isPendingInteractiveEvent(eventType: string): boolean {
   return eventType === 'approval_required' || eventType === 'input_required';
 }
 
+async function recordAgentCommandStarted(
+  sql: postgres.Sql,
+  sessionId: string,
+  deviceId: string,
+  agentType: string,
+  command: string,
+): Promise<void> {
+  const [event] = await sql`
+    INSERT INTO events (session_id, type, data, pending, created_at)
+    VALUES (${sessionId}, 'command_started',
+            ${sql.json({
+              type: 'command_started',
+              command,
+              clientEventId: `server-started:${sessionId}:${Date.now()}`,
+            })},
+            false, now())
+    RETURNING id
+  `;
+  await sql`UPDATE sessions SET last_active_at = now() WHERE id = ${sessionId}`.catch(() => {});
+
+  const clients = clientClients.get(deviceId);
+  if (!clients) return;
+  for (const client of clients) {
+    if (client.socket.readyState === client.socket.OPEN) {
+      client.socket.send(JSON.stringify({
+        type: 'event_push',
+        payload: {
+          sessionId,
+          eventId: event.id,
+          eventType: 'command_started',
+          summary: command,
+          summaryShort: command.slice(0, 200),
+          agent: agentType,
+        },
+      }));
+    }
+  }
+}
+
 export function applyInheritedSessionTitle(metadata: Record<string, string>, title: unknown): void {
   if (metadata.title) return;
   if (typeof title !== 'string' || !title.trim()) return;
@@ -865,7 +904,7 @@ export function wsHandler(sql: postgres.Sql) {
         }
 
         sql`
-          SELECT id, metadata FROM sessions
+          SELECT id, agent_type, metadata FROM sessions
           WHERE id = ${sessionId} AND device_id = ${deviceId}
           LIMIT 1
         `.then((rows) => {
@@ -881,6 +920,19 @@ export function wsHandler(sql: postgres.Sql) {
           }
 
           const claudeSessionId = (rows[0] as any).metadata?.claudeSessionId ?? null;
+          const metadata = ((rows[0] as any).metadata ?? {}) as Record<string, unknown>;
+          const runtime = typeof metadata.runtime === 'string' ? metadata.runtime : '';
+          const agentType = (rows[0] as any).agent_type as string;
+          const shouldRecordStarted =
+            agentType === 'codex'
+            || runtime === 'codex-resume'
+            || runtime === 'opencode';
+          if (shouldRecordStarted) {
+            recordAgentCommandStarted(sql, sessionId, deviceId!, agentType, String(data)).catch((err) => {
+              console.error('command_started insert error:', err);
+            });
+          }
+
           pc.socket.send(JSON.stringify({
             type: 'command',
             payload: { sessionId, action, data, claudeSessionId },

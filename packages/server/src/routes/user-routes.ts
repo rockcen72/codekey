@@ -58,6 +58,45 @@ async function applyCodexDerivedTitles(sql: postgres.Sql, rows: any[]): Promise<
   });
 }
 
+async function recordAgentCommandStarted(
+  sql: postgres.Sql,
+  sessionId: string,
+  deviceId: string,
+  agentType: string,
+  command: string,
+): Promise<void> {
+  const [event] = await sql`
+    INSERT INTO events (session_id, type, data, pending, created_at)
+    VALUES (${sessionId}, 'command_started',
+            ${sql.json({
+              type: 'command_started',
+              command,
+              clientEventId: `server-started:${sessionId}:${Date.now()}`,
+            })},
+            false, now())
+    RETURNING id
+  `;
+  await sql`UPDATE sessions SET last_active_at = now() WHERE id = ${sessionId}`.catch(() => {});
+
+  const clients = clientClients.get(deviceId);
+  if (!clients) return;
+  for (const client of clients) {
+    if (client.socket.readyState === client.socket.OPEN) {
+      client.socket.send(JSON.stringify({
+        type: 'event_push',
+        payload: {
+          sessionId,
+          eventId: event.id,
+          eventType: 'command_started',
+          summary: command,
+          summaryShort: command.slice(0, 200),
+          agent: agentType,
+        },
+      }));
+    }
+  }
+}
+
 /**
  * User-scoped routes — authenticated via user_token (JWT).
  *
@@ -249,7 +288,7 @@ export function userRoutes(sql: postgres.Sql) {
 
       // Verify session belongs to this user
       const [session] = await sql`
-        SELECT s.id, s.device_id, s.metadata, s.status
+        SELECT s.id, s.device_id, s.agent_type, s.metadata, s.status
         FROM sessions s
         JOIN device_bindings db ON s.device_id = db.device_id
         WHERE s.id = ${sessionId}
@@ -266,6 +305,18 @@ export function userRoutes(sql: postgres.Sql) {
       }
 
       const claudeSessionId = (session as any).metadata?.claudeSessionId ?? null;
+      const metadata = ((session as any).metadata ?? {}) as Record<string, unknown>;
+      const runtime = typeof metadata.runtime === 'string' ? metadata.runtime : '';
+      const agentType = (session as any).agent_type as string;
+      const shouldRecordStarted =
+        agentType === 'codex'
+        || runtime === 'codex-resume'
+        || runtime === 'opencode';
+
+      if (shouldRecordStarted) {
+        await recordAgentCommandStarted(sql, sessionId, deviceId, agentType, text.trim());
+      }
+
       pc.socket.send(JSON.stringify({
         type: 'command',
         payload: { sessionId, action: 'write_stdin', data: text.trim(), claudeSessionId },

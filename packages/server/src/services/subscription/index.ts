@@ -95,6 +95,29 @@ export async function getEntitlement(
 	return value;
 }
 
+export async function getDeviceEntitlement(
+	sql: postgres.Sql,
+	deviceId: string,
+	product: string = MVP_PRODUCT,
+	now: Date = new Date(),
+): Promise<Entitlement> {
+	if (!isValidProduct(product)) {
+		throw new Error(`unknown product: ${product}`);
+	}
+
+	const [paid] = await sql<{ expires_at: Date; plan: string | null }[]>`
+    SELECT expires_at, plan FROM device_subscriptions
+    WHERE device_id = ${deviceId} AND product = ${product}
+  `;
+
+	return resolveTier(
+		paid?.expires_at ?? null,
+		paid?.plan ?? null,
+		null,
+		now,
+	);
+}
+
 // ── redeemCode ─────────────────────────────────────────────
 
 export type RedeemErrorKind =
@@ -131,6 +154,7 @@ export async function redeemCode(
 	userId: number,
 	product: string,
 	plaintext: string,
+	options: { deviceId?: string } = {},
 ): Promise<RedeemResult> {
 	if (!isValidProduct(product)) {
 		return { ok: false, error: "product_mismatch" };
@@ -187,7 +211,21 @@ export async function redeemCode(
       WHERE user_id = ${userId} AND product = ${product}
       FOR UPDATE
     `;
-			const beforeExpiresAt = sub?.expires_at ?? null;
+			let beforeExpiresAt = sub?.expires_at ?? null;
+			if (options.deviceId) {
+				const [deviceSub] = await tx<{ expires_at: Date | null }[]>`
+          SELECT expires_at FROM device_subscriptions
+          WHERE device_id = ${options.deviceId} AND product = ${product}
+          FOR UPDATE
+        `;
+				const deviceExpiresAt = deviceSub?.expires_at ?? null;
+				if (
+					deviceExpiresAt
+					&& (!beforeExpiresAt || deviceExpiresAt > beforeExpiresAt)
+				) {
+					beforeExpiresAt = deviceExpiresAt;
+				}
+			}
 			const newExpiresAt = await tx<{ expires_at: Date }[]>`
       SELECT GREATEST(
         COALESCE(${beforeExpiresAt}::timestamptz, now()),
@@ -206,6 +244,17 @@ export async function redeemCode(
           source = 'redeem_code',
           updated_at = now()
     `;
+			if (options.deviceId) {
+				await tx`
+          INSERT INTO device_subscriptions (device_id, product, plan, expires_at, source)
+          VALUES (${options.deviceId}, ${product}, ${claimed.plan}, ${afterExpiresAt}, 'redeem_code')
+          ON CONFLICT (device_id, product) DO UPDATE
+          SET expires_at = EXCLUDED.expires_at,
+              plan = EXCLUDED.plan,
+              source = 'redeem_code',
+              updated_at = now()
+        `;
+			}
 
 			// 4. Audit log.
 			await tx`

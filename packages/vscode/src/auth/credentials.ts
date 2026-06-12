@@ -12,8 +12,16 @@ export interface Credentials {
   platform?: 'wechat' | 'feishu' | 'telegram';
 }
 
+export interface DesktopInstallIdentity {
+  desktopInstallId: string;
+}
+
 function credentialsPath(): string {
   return path.join(os.homedir(), CREDENTIALS_PATH);
+}
+
+function installIdentityPath(): string {
+  return path.join(os.homedir(), '.codekey', 'install.json');
 }
 
 export function loadCredentials(): Credentials | null {
@@ -43,6 +51,34 @@ export function clearCredentials(): void {
   try {
     fs.unlinkSync(credentialsPath());
   } catch {}
+}
+
+export function loadDesktopInstallId(): string {
+  const filePath = installIdentityPath();
+  try {
+    const parsed = JSON.parse(fs.readFileSync(filePath, 'utf-8')) as Partial<DesktopInstallIdentity>;
+    if (typeof parsed.desktopInstallId === 'string' && parsed.desktopInstallId) {
+      return parsed.desktopInstallId;
+    }
+  } catch {
+    // Create below when the identity file is missing or malformed.
+  }
+
+  const identity: DesktopInstallIdentity = { desktopInstallId: crypto.randomUUID() };
+  const dir = path.dirname(filePath);
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(filePath, JSON.stringify(identity, null, 2), {
+    mode: 0o600,
+    encoding: 'utf-8',
+  });
+  if (process.platform !== 'win32') {
+    try {
+      fs.chmodSync(filePath, 0o600);
+    } catch {
+      // Best-effort only.
+    }
+  }
+  return identity.desktopInstallId;
 }
 
 export function saveCredentials(creds: Credentials): void {

@@ -676,10 +676,11 @@ describeDb('User-scoped routes', () => {
     expect(JSON.parse(afterReclaim.payload).some((d: any) => d.id === deviceId)).toBe(true);
   });
 
-  it('claim-device: other user cannot claim device bound to another user (even after unbind by different user)', async () => {
+  it('claim-device: other user can take over a validly paired device', async () => {
     const { userId: user1Id, token: token1 } = await createTelegramUser();
-    const { token: token2 } = await createTelegramUser();
+    const { userId: user2Id, token: token2 } = await createTelegramUser();
     cleanupUserIds.push(user1Id);
+    cleanupUserIds.push(user2Id);
 
     const { deviceId, clientToken } = await createDeviceAndClient('other-owned');
 
@@ -691,14 +692,20 @@ describeDb('User-scoped routes', () => {
       payload: { clientToken },
     });
 
-    // user2 tries to claim — should get 403
+    // user2 has a valid clientToken from the same desktop pairing, so
+    // claim-device merges ownership into user2 instead of losing access.
     const res = await app.inject({
       method: 'POST',
       url: '/api/v1/auth/claim-device',
       headers: { authorization: `Bearer ${token2}` },
       payload: { clientToken },
     });
-    expect(res.statusCode).toBe(403);
+    expect(res.statusCode).toBe(200);
+
+    const [binding] = await sql<{ user_id: number }[]>`
+      SELECT user_id FROM device_bindings WHERE device_id = ${deviceId}
+    `;
+    expect(Number(binding.user_id)).toBe(user2Id);
   });
 
   it('user/devices/:id DELETE: 401 without user JWT', async () => {
@@ -829,7 +836,7 @@ describeDb('User-scoped routes', () => {
     expect(deviceIds).not.toContain(deviceA.deviceId);
   });
 
-  it('rolls back unbind when another user tries to claim device', async () => {
+  it('moves device ownership when another user claims a paired device', async () => {
     const { userId, token } = await createTelegramUser();
     cleanupUserIds.push(userId);
 
@@ -843,31 +850,40 @@ describeDb('User-scoped routes', () => {
     });
     expect(claimA.statusCode).toBe(200);
 
-    // Act: another user tries to claim device A → should fail with 403
-    const { token: token2 } = await createTelegramUser();
+    // Act: another user claims device A with a valid clientToken.
+    const { userId: user2Id, token: token2 } = await createTelegramUser();
+    cleanupUserIds.push(user2Id);
     const claimOther = await app.inject({
       method: 'POST',
       url: '/api/v1/auth/claim-device',
       headers: { authorization: `Bearer ${token2}` },
       payload: { clientToken: deviceA.clientToken },
     });
-    expect(claimOther.statusCode).toBe(403);
+    expect(claimOther.statusCode).toBe(200);
 
-    // Assert: device A is still active (unbound_at IS NULL)
+    // Assert: device A is still active, now under the new user.
     const aBinding = await sql`
-      SELECT unbound_at FROM device_bindings WHERE device_id = ${deviceA.deviceId}
+      SELECT user_id, unbound_at FROM device_bindings WHERE device_id = ${deviceA.deviceId}
     `;
     expect(aBinding.length).toBe(1);
+    expect(Number(aBinding[0].user_id)).toBe(user2Id);
     expect(aBinding[0].unbound_at).toBeNull();
 
-    // Device A still appears in user's device listing
-    const devices = await app.inject({
+    const oldUserDevices = await app.inject({
       method: 'GET',
       url: '/api/v1/user/devices',
       headers: { authorization: `Bearer ${token}` },
     });
-    const deviceIds = (JSON.parse(devices.payload) as Array<{ id: string }>).map((d) => d.id);
-    expect(deviceIds).toContain(deviceA.deviceId);
+    const oldDeviceIds = (JSON.parse(oldUserDevices.payload) as Array<{ id: string }>).map((d) => d.id);
+    expect(oldDeviceIds).not.toContain(deviceA.deviceId);
+
+    const newUserDevices = await app.inject({
+      method: 'GET',
+      url: '/api/v1/user/devices',
+      headers: { authorization: `Bearer ${token2}` },
+    });
+    const newDeviceIds = (JSON.parse(newUserDevices.payload) as Array<{ id: string }>).map((d) => d.id);
+    expect(newDeviceIds).toContain(deviceA.deviceId);
   });
 
   it('claim-device: fresh bind (no prior row) returns 200 without alreadyBound', async () => {

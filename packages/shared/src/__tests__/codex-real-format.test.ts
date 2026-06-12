@@ -390,6 +390,46 @@ describe('Codex real transcript format', () => {
       expect(messages).toHaveLength(1);
       expect(messages[0].content).toBe('Split across two writes.');
     });
+
+    it('CodexResumeManager emits command_started for phone-originated prompts', async () => {
+      const sent: Record<string, any>[] = [];
+      const relay = Object.assign(new EventEmitter(), {
+        sendRaw(value: string) {
+          sent.push(JSON.parse(value));
+        },
+      });
+      const manager = new CodexResumeManager(relay as any, new Set());
+
+      (manager as any).sessions.set('server-codex', {
+        localSession: {
+          sessionId: 'local-codex',
+          cwd: tmpHome,
+          title: 'Codex test',
+          transcriptPath: path.join(tmpHome, 'dummy.jsonl'),
+          source: 'vscode',
+          updatedAt: '2026-06-01T08:00:00.000Z',
+          createdAt: '2026-06-01T07:00:00.000Z',
+        },
+        runtime: {
+          resumeOnce: async () => ({ success: true, exitCode: 0, timedOut: false, stderr: '', events: [] }),
+        },
+        watcher: null,
+        forwardedTextKeys: new Set(),
+      });
+
+      await manager.handleCommand('server-codex', '继续排查这个 bug');
+
+      const userPrompt = sent.find((m) => m.type === 'event' && m.payload?.eventType === 'user_prompt');
+      const started = sent.find((m) => m.type === 'event' && m.payload?.eventType === 'command_started');
+
+      expect(userPrompt).toBeDefined();
+      expect(started).toBeDefined();
+      expect(started?.payload?.sessionId).toBe('server-codex');
+      expect(started?.payload?.data).toEqual({
+        type: 'command_started',
+        command: '继续排查这个 bug',
+      });
+    });
   });
 
   describe('loadCodexConversation', () => {

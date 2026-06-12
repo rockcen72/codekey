@@ -3,7 +3,7 @@ import * as path from 'node:path';
 import * as crypto from 'node:crypto';
 import * as os from 'node:os';
 import WebSocket from 'ws';
-import { loadCredentials, clearCredentials } from '../auth/credentials.js';
+import { loadCredentials, clearCredentials, loadDesktopInstallId } from '../auth/credentials.js';
 import { createApi, ApiError, type SessionResponse, type SubscriptionResponse } from '../api/client.js';
 import { getAgents } from '../agents/registry.js';
 import { BridgeStatusService } from '../services/bridge-status.js';
@@ -1324,23 +1324,36 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
   }
 
   private async _handlePairingGenerate(): Promise<void> {
-    // Clear old credentials first — the pairing code flow generates fresh ones.
-    // Without this, renderPairingContent sees deviceId+deviceSecret and shows
-    // the "paired" card instead of the pairing code.
-    clearCredentials();
-
     const relayUrl = 'https://codekey.tinymoney.cn';
-    const deviceSecret = crypto.randomUUID();
-    const deviceSecretHash = crypto.createHash('sha256').update(deviceSecret).digest('hex');
-    try {
-      const resp = await secureFetch(`${relayUrl}/api/v1/devices/pair`, {
+    const existingCreds = loadCredentials();
+    const desktopInstallId = loadDesktopInstallId();
+    let deviceSecret = existingCreds?.deviceSecret || crypto.randomUUID();
+    const requestPair = (deviceId?: string) => {
+      const deviceSecretHash = crypto.createHash('sha256').update(deviceSecret).digest('hex');
+      return secureFetch(`${relayUrl}/api/v1/devices/pair`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ deviceSecretHash, deviceName: `VS Code (${os.hostname()})` }),
+        body: JSON.stringify({
+          ...(deviceId ? { deviceId } : {}),
+          desktopInstallId,
+          deviceSecretHash,
+          deviceName: `VS Code (${os.hostname()})`,
+        }),
         signal: AbortSignal.timeout(10000),
       });
+    };
+    try {
+      let resp = await requestPair(existingCreds?.deviceId);
+      if ((resp.status === 403 || resp.status === 404) && existingCreds?.deviceId) {
+        log(`pairing existing device rejected (${resp.status}); creating a fresh device`);
+        clearCredentials();
+        deviceSecret = crypto.randomUUID();
+        resp = await requestPair();
+      }
       if (!resp.ok) {
-        this._pairingState = { code: '', method: (this._pairingState?.platform || this._selectedPairingPlatform) === 'telegram' ? 'qr' : 'code', platform: this._pairingState?.platform || this._selectedPairingPlatform, status: 'error', statusText: 'Pairing failed', expiresAt: 0 };
+        const detail = await resp.text().catch(() => '');
+        const statusText = resp.status === 429 ? 'Pairing rate limited. Try again later.' : `Pairing failed${detail ? `: ${detail}` : ''}`;
+        this._pairingState = { code: '', method: (this._pairingState?.platform || this._selectedPairingPlatform) === 'telegram' ? 'qr' : 'code', platform: this._pairingState?.platform || this._selectedPairingPlatform, status: 'error', statusText, expiresAt: 0 };
         this._pushState();
         return;
       }

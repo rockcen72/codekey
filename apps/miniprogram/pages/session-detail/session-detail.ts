@@ -162,6 +162,7 @@ interface ChatMessage {
   displayTime: string;
   typeLabel: string;
   isTaskComplete: boolean;
+  isCommandStarted?: boolean;
   command: string;
   summary: string;
   risk_level: string;
@@ -499,6 +500,13 @@ Page({
     });
     const messages: ChatMessage[] = [];
     let lastUserPrompt = '';
+    let lastCommandStarted = false;
+    let pendingCommandStarted: ChatMessage | null = null;
+    const flushPendingCommandStarted = () => {
+      if (!pendingCommandStarted) return;
+      messages.push(pendingCommandStarted);
+      pendingCommandStarted = null;
+    };
 
     for (const e of sorted) {
       const time = this.formatTime(e.created_at);
@@ -512,12 +520,15 @@ Page({
 
       // Dedup consecutive user_prompt events with identical content
       if (e.type === 'user_prompt') {
+        lastCommandStarted = false;
         const prompt = e.data?.prompt || e.data?.summary || '';
         if (prompt === lastUserPrompt) continue;
         lastUserPrompt = prompt;
       }
 
       if (e.type === 'error') {
+        flushPendingCommandStarted();
+        lastCommandStarted = false;
         messages.push({
           id: e.id + '-err',
           type: 'ai',
@@ -542,6 +553,8 @@ Page({
       }
 
       if (e.type === 'session_idle') {
+        flushPendingCommandStarted();
+        lastCommandStarted = false;
         messages.push({
           id: e.id + '-sys',
           type: 'system',
@@ -568,16 +581,19 @@ Page({
       }
 
       if (e.type === 'command_started') {
-        messages.push({
+        if (lastCommandStarted) continue;
+        lastCommandStarted = true;
+        const startedMessage: ChatMessage = {
           id: e.id,
           type: 'ai',
           side: 'left',
-          content: '电脑端已接收，正在交给 Agent 处理...',
+          content: 'Agent 正在处理...',
           displayTime: time,
-          typeLabel: '正在处理',
+          typeLabel: '',
           isTaskComplete: false,
+          isCommandStarted: true,
           command: '',
-          summary: '电脑端已接收，正在交给 Agent 处理...',
+          summary: 'Agent 正在处理...',
           risk_level: '',
           riskText: '',
           pending: false,
@@ -585,15 +601,22 @@ Page({
           decisionText: '',
           canApprove: false,
           eventId: e.id,
-          accent: 'pending',
+          accent: 'neutral',
           agentClass,
-          kindBadge: 'RUNNING',
+          kindBadge: '',
           senderName: agentName,
-        });
+        };
+        if (messages[messages.length - 1]?.eventId && messages[messages.length - 1]?.type === 'user') {
+          messages.push(startedMessage);
+        } else {
+          pendingCommandStarted = startedMessage;
+        }
         continue;
       }
 
       if (e.type === 'task_complete') {
+        flushPendingCommandStarted();
+        lastCommandStarted = false;
         const taskText = output || summary || summaryShort;
         messages.push({
           id: e.id,
@@ -622,6 +645,7 @@ Page({
       }
 
       if (e.type === 'approval_required') {
+        flushPendingCommandStarted();
         const canApprove = ['low', 'medium'].includes(e.risk_level || '');
         const riskText = RISK_LABELS[e.risk_level as string] || '未知';
         const accent: ChatMessage['accent'] = e.pending
@@ -685,6 +709,7 @@ Page({
       }
 
       if (e.type === 'input_required') {
+        flushPendingCommandStarted();
         const questions = Array.isArray(e.data?.questions) ? e.data.questions : [];
         const inputOptions = this.extractInputOptions(questions);
         const accent: ChatMessage['accent'] = e.pending ? 'pending' : 'neutral';
@@ -769,10 +794,12 @@ Page({
           kindBadge: '',
           senderName: eventAgentType ? agentName : '你',
         });
+        flushPendingCommandStarted();
         continue;
       }
     }
 
+    flushPendingCommandStarted();
     if (messages.length > 0) {
       const pushedIdx = scrollToEventId
         ? messages.findIndex((m: ChatMessage) => m.eventId === scrollToEventId && m.type === 'ai')
@@ -1174,7 +1201,13 @@ Page({
       commandText: '',
       canSendCommand: false,
       chatMessages: messages,
-      scrollToId: 'msg-' + localStatusId,
+      _userScrolledUp: false,
+      scrollToId: '',
+    }, () => {
+      this.setData({
+        scrollToId: 'msg-' + localStatusId,
+        scrollTop: Date.now(),
+      });
     });
     wx.showToast({ title: '已发送，等待电脑端接收', icon: 'none', duration: 1500 });
   },

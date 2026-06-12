@@ -381,11 +381,15 @@ export function renderSubscribe(state: SidebarState): string {
     }
   }
   const qqHtml = `<div class="qq-group-row"><span class="qq-icon">QQ</span> <a class="qq-link" href="https://qm.qq.com/q/ryWvbgYpNY" target="_blank">827453239</a></div>`;
+  const notPairedHint = state.deviceStatus !== 'paired'
+    ? `<div class="redeem-hint">${i18n(state.lang, 'Pair a device first, then redeem your code here.', '请先配对设备，配对成功后再来此输入兑换码激活。')}</div>`
+    : '';
   const expandedHtml = `<div class="redeem-panel" id="redeemPanel">
     <a class="purchase-link" href="https://pay.ldxp.cn/shop/6T7QKRTE" target="_blank">${i18n(state.lang, 'Purchase →', '购买 →')}</a>
+    ${notPairedHint}
     <div class="redeem-row">
-      <input class="redeem-input" id="redeemInput" placeholder="CK-XXXX-XXXX-XXXX" maxlength="19" spellcheck="false" />
-      <button class="redeem-btn" data-action="redeemCode">${i18n(state.lang, 'Redeem', '兑换')}</button>
+      <input class="redeem-input" id="redeemInput" placeholder="CK-XXXX-XXXX-XXXX" maxlength="19" spellcheck="false" ${state.deviceStatus !== 'paired' ? 'disabled' : ''} />
+      <button class="redeem-btn" data-action="redeemCode" ${state.deviceStatus !== 'paired' ? 'disabled' : ''}>${i18n(state.lang, 'Redeem', '兑换')}</button>
     </div>
     <div class="redeem-status" id="redeemStatus"></div>
   </div>`;
@@ -441,7 +445,7 @@ export function renderPairingContent(state: SidebarState): string {
   const p = state.pairing;
   const isWaiting = p?.status === 'waiting';
   const hasLocalCreds = !!state.deviceId && !!state.deviceSecret;
-  const isPaired = (state.deviceStatus === 'paired' || hasLocalCreds) && !isWaiting;
+  const isPaired = state.deviceStatus === 'paired' && !isWaiting;
   const codeDigits = p?.code || '--------';
   const codeExpires = p?.expiresAt || 0;
   const platform = p?.platform || state.pairingPlatform || 'telegram';
@@ -836,6 +840,12 @@ ${renderSubscribe(state)}
 
   // Apply saved platform preference on the current DOM
   function applySavedPlatform(syncToProvider) {
+    var codeDigits = document.getElementById('codeDigits');
+    var hasGeneratedCode = !!codeDigits && codeDigits.textContent !== '--------';
+    if (!hasGeneratedCode) {
+      document.querySelectorAll('.plat-opt').forEach(function(t) { t.classList.remove('active'); });
+      return;
+    }
     var saved;
     try { saved = sessionStorage.getItem('pairingPlatform'); } catch(e) {}
     if (!saved) return; // no saved preference, keep all neutral
@@ -1396,6 +1406,9 @@ body{
 .redeem-status{font-size:10px;margin-top:4px;min-height:1.2em}
 .redeem-status.ok{color:var(--vscode-terminal-ansiGreen,#2ecc71)}
 .redeem-status.err{color:var(--vscode-terminal-ansiRed,#e74c3c)}
+.redeem-hint{text-align:center;font-size:10px;color:var(--vscode-descriptionForeground,#888);margin-bottom:6px;line-height:1.4}
+.redeem-input:disabled{opacity:0.4;cursor:not-allowed}
+.redeem-btn:disabled{opacity:0.4;cursor:not-allowed}
 .qq-group-row{display:flex;align-items:center;justify-content:center;gap:4px;font-size:10px;margin-bottom:3px;color:var(--vscode-descriptionForeground,#888)}
 .qq-icon{font-size:9px;font-weight:600;background:var(--vscode-badge-background,#333);color:var(--vscode-badge-foreground,#fff);padding:0 3px;border-radius:2px;line-height:1.4}
 .qq-number{color:var(--vscode-descriptionForeground,#888)}

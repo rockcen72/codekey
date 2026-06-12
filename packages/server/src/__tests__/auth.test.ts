@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { buildApp } from '../app.js';
 import { signUserJwt } from '../auth/jwt.js';
+import { createHash } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
 import type postgres from 'postgres';
 
@@ -33,6 +34,11 @@ describeDb('Auth API (Phase 1)', () => {
 
   afterAll(async () => {
     for (const uid of cleanupUserIds) {
+      try { await sql`DELETE FROM redeem_logs WHERE user_id = ${uid}`; } catch { /* ignore */ }
+      try { await sql`DELETE FROM user_subscriptions WHERE user_id = ${uid}`; } catch { /* ignore */ }
+      try { await sql`DELETE FROM trial_claims WHERE user_id = ${uid}`; } catch { /* ignore */ }
+      try { await sql`DELETE FROM approval_events_dedup WHERE user_id = ${uid}`; } catch { /* ignore */ }
+      try { await sql`DELETE FROM approval_usage WHERE user_id = ${uid}`; } catch { /* ignore */ }
       try { await sql`DELETE FROM auth_identities WHERE user_id = ${uid}`; } catch { /* ignore */ }
       try { await sql`DELETE FROM device_bindings WHERE user_id = ${uid}`; } catch { /* ignore */ }
       try { await sql`DELETE FROM users WHERE id = ${uid}`; } catch { /* ignore */ }
@@ -284,7 +290,7 @@ describeDb('Auth API (Phase 1)', () => {
     expect(JSON.parse(claim2.payload).alreadyBound).toBe(true);
   });
 
-  it('claim-device: 403 when device is bound to a different user', async () => {
+  it('claim-device: merges an existing device owner into the current user and preserves paid subscription', async () => {
     // Device + client token
     const pair = await app.inject({
       method: 'POST',
@@ -319,7 +325,12 @@ describeDb('Auth API (Phase 1)', () => {
     });
     expect(claim1.statusCode).toBe(200);
 
-    // A different user tries to claim the same device
+    await sql`
+      INSERT INTO user_subscriptions (user_id, product, plan, expires_at, source)
+      VALUES (${userId1}, 'codekey', 'yearly', now() + interval '365 days', 'test')
+    `;
+
+    // A different mobile login claims the same desktop device.
     const openid2 = `second-user-${Date.now()}-${Math.random()}`;
     const login2 = await app.inject({
       method: 'POST',
@@ -335,8 +346,34 @@ describeDb('Auth API (Phase 1)', () => {
       headers: { authorization: `Bearer ${token2}` },
       payload: { clientToken },
     });
-    expect(claim2.statusCode).toBe(403);
-    expect(JSON.parse(claim2.payload).error).toBe('device bound to another user');
+    expect(claim2.statusCode).toBe(200);
+    expect(JSON.parse(claim2.payload).mergedAccount).toBe(true);
+
+    const mobileSub = await app.inject({
+      method: 'GET',
+      url: '/api/v1/subscription',
+      headers: { authorization: `Bearer ${token2}` },
+    });
+    expect(mobileSub.statusCode).toBe(200);
+    const mobileSubBody = JSON.parse(mobileSub.payload);
+    expect(mobileSubBody.tier).toBe('paid');
+    expect(mobileSubBody.plan).toBe('yearly');
+
+    const deviceToken = `dev-${Date.now()}-${Math.random()}`;
+    const deviceTokenHash = createHash('sha256').update(deviceToken).digest('hex');
+    await sql`
+      INSERT INTO device_tokens (device_id, token_type, token_hash, label, expires_at)
+      VALUES (${deviceId}, 'device', ${deviceTokenHash}, 'test-device-token', now() + interval '30 days')
+    `;
+    const deviceSub = await app.inject({
+      method: 'GET',
+      url: '/api/v1/device-subscription',
+      headers: { authorization: `Bearer ${deviceToken}` },
+    });
+    expect(deviceSub.statusCode).toBe(200);
+    const deviceSubBody = JSON.parse(deviceSub.payload);
+    expect(deviceSubBody.tier).toBe('paid');
+    expect(deviceSubBody.plan).toBe('yearly');
   });
 
   it('wx-login: concurrent same openid yields exactly one new user', async () => {

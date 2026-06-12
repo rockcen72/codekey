@@ -13,6 +13,7 @@ export async function initDb(url: string) {
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
       device_name TEXT NOT NULL,
       device_secret TEXT,
+      desktop_install_id VARCHAR(64),
       public_key TEXT,
       code TEXT UNIQUE,
       code_expires_at TIMESTAMPTZ,
@@ -79,6 +80,8 @@ export async function initDb(url: string) {
 
   // Backfill: add columns for databases created with older schema
   await sql`ALTER TABLE devices ADD COLUMN IF NOT EXISTS device_secret TEXT`;
+  await sql`ALTER TABLE devices ADD COLUMN IF NOT EXISTS desktop_install_id VARCHAR(64)`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_devices_desktop_install_id ON devices(desktop_install_id)`;
   await sql`ALTER TABLE sessions ADD COLUMN IF NOT EXISTS metadata JSONB DEFAULT '{}'`;
   await sql`ALTER TABLE events ADD COLUMN IF NOT EXISTS pending BOOLEAN DEFAULT true`;
   await sql`CREATE UNIQUE INDEX IF NOT EXISTS idx_approvals_event_id ON approvals(event_id)`;
@@ -235,6 +238,21 @@ export async function initDb(url: string) {
       source      VARCHAR(24),
       updated_at  TIMESTAMPTZ  NOT NULL DEFAULT now(),
       PRIMARY KEY (user_id, product)
+    )
+  `;
+
+  // device_subscriptions: desktop-owned subscriptions. Codes redeemed
+  // from VS Code are anchored to the desktop device identity so changing
+  // mobile providers does not make the desktop lose paid status.
+  await sql`
+    CREATE TABLE IF NOT EXISTS device_subscriptions (
+      device_id   UUID         NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+      product     VARCHAR(32)  NOT NULL,
+      plan        VARCHAR(16),
+      expires_at  TIMESTAMPTZ  NOT NULL,
+      source      VARCHAR(24),
+      updated_at  TIMESTAMPTZ  NOT NULL DEFAULT now(),
+      PRIMARY KEY (device_id, product)
     )
   `;
 

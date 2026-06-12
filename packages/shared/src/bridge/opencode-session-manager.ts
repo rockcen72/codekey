@@ -882,6 +882,14 @@ export class OpenCodeSessionManager {
       data: { type: 'user_prompt', prompt: text, summary: text.slice(0, 200) },
       ts: new Date().toISOString(),
     });
+    this.bridge.sendEventToRelay(sessionId, {
+      clientEventId: `oc-started:${Date.now()}:${Math.random()}`,
+      sessionId,
+      agent: 'opencode',
+      eventType: 'command_started',
+      data: { type: 'command_started', command: text },
+      ts: new Date().toISOString(),
+    });
 
     try {
       const url = `${this.opencodeBaseUrl}/session/${encodeURIComponent(opencodeSessionId)}/prompt_async`;

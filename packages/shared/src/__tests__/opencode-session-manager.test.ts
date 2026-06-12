@@ -798,6 +798,32 @@ describe('OpenCodeSessionManager event handling', () => {
     });
   });
 
+  describe('handleCommand', () => {
+    it('emits command_started for phone-originated prompts before posting to OpenCode', async () => {
+      vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true } as Response)));
+      (manager as any).opencodeSessionToRelayId.set('oc-session-command', 'server-oc-session-command');
+      (manager as any).opencodeSessions.add('server-oc-session-command');
+
+      await manager.handleCommand('server-oc-session-command', '继续分析这个问题', 'oc-session-command');
+
+      const events = relay.sentEvents as any[];
+      const userPrompt = events.find((e: any) => e.payload?.eventType === 'user_prompt');
+      const started = events.find((e: any) => e.payload?.eventType === 'command_started');
+
+      expect(userPrompt).toBeDefined();
+      expect(started).toBeDefined();
+      expect(started.payload.sessionId).toBe('server-oc-session-command');
+      expect(started.payload.data).toEqual({
+        type: 'command_started',
+        command: '继续分析这个问题',
+      });
+      expect((globalThis.fetch as any)).toHaveBeenCalledWith(
+        'http://127.0.0.1:4096/session/oc-session-command/prompt_async',
+        expect.objectContaining({ method: 'POST' }),
+      );
+    });
+  });
+
   describe('message.part.updated — streaming agent response', () => {
     // Regression guard: the agent's actual text response was being
     // dropped because the partID was added to the dedup set on the

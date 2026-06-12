@@ -16,6 +16,7 @@ import type { DeviceAuth } from "../auth/middleware.js";
 import { rateLimit } from "../middleware/rate-limit.js";
 import {
 	MVP_PRODUCT,
+	getDeviceEntitlement,
 	getEntitlement,
 	mintCodes,
 	redeemCode,
@@ -124,8 +125,18 @@ export function subscriptionRoutes(sql: postgres.Sql) {
 			{ preHandler: [deviceTokenAuth(sql)] },
 			async (req, reply) => {
 				const { deviceId } = (req as unknown as { deviceAuth: DeviceAuth }).deviceAuth;
+				const deviceEnt = await getDeviceEntitlement(sql, deviceId, MVP_PRODUCT);
+				if (deviceEnt.tier !== "free") {
+					return {
+						tier: deviceEnt.tier,
+						plan: deviceEnt.plan,
+						expiresAt: deviceEnt.expiresAt,
+						product: MVP_PRODUCT,
+						usage: null,
+					};
+				}
 				const [binding] = await sql`
-					SELECT user_id FROM device_bindings WHERE device_id = ${deviceId} LIMIT 1
+					SELECT user_id FROM device_bindings WHERE device_id = ${deviceId} AND unbound_at IS NULL LIMIT 1
 				`;
 				if (!binding) {
 					return reply.code(200).send({
@@ -183,6 +194,7 @@ export function subscriptionRoutes(sql: postgres.Sql) {
 					binding.user_id,
 					prod,
 					code.trim().toUpperCase(),
+					{ deviceId },
 				);
 				if (!result.ok) {
 					const status =

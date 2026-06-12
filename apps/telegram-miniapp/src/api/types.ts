@@ -54,6 +54,7 @@ export interface TelegramLoginResult {
 export interface ConfirmResult {
   clientToken: string;
   deviceId: string;
+  desktopNotified?: boolean;
 }
 
 export interface ClaimResult {

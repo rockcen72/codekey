@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import * as crypto from 'node:crypto';
 import * as os from 'node:os';
-import { loadCredentials, saveCredentials } from '../auth/credentials.js';
+import { loadCredentials, saveCredentials, loadDesktopInstallId } from '../auth/credentials.js';
 import { BridgeStatusService } from '../services/bridge-status.js';
 import type { StatusBar } from '../status/bar.js';
 import { log } from '../log.js';
@@ -25,18 +25,33 @@ export async function pairDevice(_context: vscode.ExtensionContext, statusBar: S
     }
 
     const relayUrl = creds.relayUrl;
-    const deviceSecretHash = crypto.createHash('sha256').update(creds.deviceSecret).digest('hex');
+    const desktopInstallId = loadDesktopInstallId();
+    let deviceSecretHash = crypto.createHash('sha256').update(creds.deviceSecret).digest('hex');
     const hostname = os.hostname();
 
     // 2. Request pairing code from relay
-    const body: Record<string, unknown> = { deviceSecretHash, deviceName: hostname };
+    const body: Record<string, unknown> = { desktopInstallId, deviceSecretHash, deviceName: hostname };
     if (!isNew) body.deviceId = creds.deviceId;
 
-    const response = await secureFetch(`${relayUrl}/api/v1/devices/pair`, {
+    let response = await secureFetch(`${relayUrl}/api/v1/devices/pair`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     });
+    if ((response.status === 403 || response.status === 404) && !isNew) {
+      creds = {
+        deviceId: crypto.randomUUID(),
+        deviceSecret: crypto.randomBytes(32).toString('base64'),
+        relayUrl,
+      };
+      saveCredentials(creds);
+      deviceSecretHash = crypto.createHash('sha256').update(creds.deviceSecret).digest('hex');
+      response = await secureFetch(`${relayUrl}/api/v1/devices/pair`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ desktopInstallId, deviceSecretHash, deviceName: hostname }),
+      });
+    }
 
     if (!response.ok) {
       throw new Error(`Pairing request failed: ${await response.text()}`);
@@ -44,8 +59,8 @@ export async function pairDevice(_context: vscode.ExtensionContext, statusBar: S
 
     const pairResult = await response.json() as { code: string; deviceId?: string };
 
-    // Save server-assigned deviceId on first pairing
-    if (isNew && pairResult.deviceId) {
+    // Save server-assigned deviceId when the relay created a fresh device.
+    if (pairResult.deviceId && (isNew || pairResult.deviceId !== creds.deviceId)) {
       creds.deviceId = pairResult.deviceId;
       saveCredentials(creds);
     }

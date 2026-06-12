@@ -142,6 +142,13 @@ function decisionLabel(decision?: string | null): string {
 function buildChatMessages(events: UserEvent[], session: UserSession | null, resolvedMap: Map<string, string>): ChatMessage[] {
   const messages: ChatMessage[] = [];
   let lastUserPrompt = '';
+  let lastCommandStarted = false;
+  let pendingCommandStarted: ChatMessage | null = null;
+  const flushPendingCommandStarted = () => {
+    if (!pendingCommandStarted) return;
+    messages.push(pendingCommandStarted);
+    pendingCommandStarted = null;
+  };
 
   for (const event of events) {
     if (!ALLOWED_EVENT_TYPES.has(event.type)) continue;
@@ -158,6 +165,8 @@ function buildChatMessages(events: UserEvent[], session: UserSession | null, res
     const effectiveDecision = resolvedDecision || event.decision;
 
     if (event.type === 'session_idle') {
+      flushPendingCommandStarted();
+      lastCommandStarted = false;
       messages.push({
         id: event.id,
         eventId: event.id,
@@ -180,6 +189,7 @@ function buildChatMessages(events: UserEvent[], session: UserSession | null, res
     }
 
     if (event.type === 'user_prompt') {
+      lastCommandStarted = false;
       const prompt = String(data.prompt || data.summary || '');
       if (!prompt || prompt === lastUserPrompt) continue;
       lastUserPrompt = prompt;
@@ -202,10 +212,18 @@ function buildChatMessages(events: UserEvent[], session: UserSession | null, res
         agentClass: isAgentContext ? agentClass : 'unknown',
         inputOptions: [],
       });
+      flushPendingCommandStarted();
       continue;
     }
 
     const inputOptions = event.type === 'input_required' ? extractInputOptions(data) : [];
+    if (event.type === 'command_started') {
+      if (lastCommandStarted) continue;
+      lastCommandStarted = true;
+    } else {
+      flushPendingCommandStarted();
+      lastCommandStarted = false;
+    }
     const accent = effectivePending
       ? 'pending'
       : effectiveDecision === 'approve'
@@ -216,20 +234,22 @@ function buildChatMessages(events: UserEvent[], session: UserSession | null, res
             ? 'complete'
             : 'neutral';
 
-    messages.push({
+    const message: ChatMessage = {
       id: event.id,
       eventId: event.id,
       type: 'agent',
       eventType: event.type,
       senderName: agentChatName(eventAgentType),
-      content: event.type === 'command_started' ? 'Sent to desktop, processing by Agent...' : summary,
+      content: event.type === 'command_started' ? 'Agent is processing...' : summary,
       contentHtml: event.type === 'task_complete' && summary ? markdownToHtml(summary) : undefined,
       command,
-      typeLabel: EVENT_LABEL[event.type] || event.type,
+      typeLabel: event.type === 'command_started' ? '' : EVENT_LABEL[event.type] || event.type,
       kindBadge: effectivePending
         ? event.type === 'input_required'
           ? 'INPUT'
           : 'PENDING'
+        : event.type === 'command_started'
+          ? ''
         : event.type === 'task_complete'
           ? 'DONE'
           : decisionLabel(effectiveDecision) || 'DONE',
@@ -240,7 +260,18 @@ function buildChatMessages(events: UserEvent[], session: UserSession | null, res
       accent,
       agentClass,
       inputOptions,
-    });
+    };
+
+    if (event.type === 'command_started') {
+      if (messages[messages.length - 1]?.eventType === 'user_prompt') {
+        messages.push(message);
+      } else {
+        pendingCommandStarted = message;
+      }
+      continue;
+    }
+
+    messages.push(message);
 
     if (!effectivePending && effectiveDecision && ['approve', 'deny', 'pause', 'reply'].includes(effectiveDecision)) {
       messages.push({
@@ -264,6 +295,7 @@ function buildChatMessages(events: UserEvent[], session: UserSession | null, res
     }
   }
 
+  flushPendingCommandStarted();
   return messages;
 }
 
@@ -298,6 +330,20 @@ function MessageRow({ message, resolvedDecision, onDecision }: MessageRowProps) 
         <div className="chat-stack user-stack">
           <span className="sender-name">{message.senderName}</span>
           <div className="msg-bubble user">
+            <span className="msg-text">{message.content}</span>
+            <span className="msg-time">{formatTime(message.createdAt)}</span>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (message.eventType === 'command_started') {
+    return (
+      <div className="msg-row left">
+        <div className="chat-stack agent-stack">
+          <span className="sender-name">{message.senderName}</span>
+          <div className={`msg-bubble agent agent-${message.agentClass}`}>
             <span className="msg-text">{message.content}</span>
             <span className="msg-time">{formatTime(message.createdAt)}</span>
           </div>
@@ -668,6 +714,7 @@ export function SessionDetailPage({ auth }: Props) {
       });
       setPromptText('');
       showToast('Sent to desktop');
+      userScrolledRef.current = false;
       await load();
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Send failed';

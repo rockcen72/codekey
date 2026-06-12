@@ -1302,6 +1302,23 @@ a {
   border-color: #86d95e;
 }
 
+.msg-bubble.agent {
+  background: var(--ck-surface);
+  border-color: var(--ck-border);
+}
+
+.msg-bubble.agent-claude {
+  border-color: rgba(234, 88, 12, 0.2);
+}
+
+.msg-bubble.agent-codex {
+  border-color: rgba(34, 197, 94, 0.22);
+}
+
+.msg-bubble.agent-opencode {
+  border-color: rgba(92, 156, 245, 0.22);
+}
+
 .msg-text {
   display: block;
   color: var(--ck-text);

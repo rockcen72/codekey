@@ -6,6 +6,7 @@ import { signUserJwt } from '../auth/jwt.js';
 import { rateLimit } from '../middleware/rate-limit.js';
 import { MVP_PRODUCT, invalidateEntitlement } from '../services/subscription/index.js';
 import { replaceActiveDeviceBinding, DeviceBoundToOtherUser } from '../db/device-binding.js';
+import { mergeUserAccount } from '../db/account-merge.js';
 import { clientClients, pcClients } from '../ws/connection-registry.js';
 
 /**
@@ -232,11 +233,20 @@ export function authRoutes(sql: postgres.Sql) {
       const userId = req.userAuth!.userId;
 
       let replaced: string[] = [];
+      let mergedFromUserId: number | null = null;
+      let alreadyBound = false;
       try {
         const result = await sql.begin(async (tx) => {
           // 1. 原子替换旧设备绑定
-          const bindingResult = await replaceActiveDeviceBinding(tx, userId, deviceId);
+          const bindingResult = await replaceActiveDeviceBinding(tx, userId, deviceId, {
+            allowDifferentUser: true,
+          });
           replaced = bindingResult.replaced;
+          alreadyBound = bindingResult.alreadyBound;
+          if (bindingResult.previousUserId !== null && bindingResult.previousUserId !== userId) {
+            await mergeUserAccount(tx, bindingResult.previousUserId, userId);
+            mergedFromUserId = bindingResult.previousUserId;
+          }
 
           // 2. INSERT 新设备绑定（或 upsert 现有行确保 active）
           //    用 RETURNING 验证 user_id 归属，防并发竞争导致"假成功"
@@ -262,6 +272,41 @@ export function authRoutes(sql: postgres.Sql) {
             RETURNING user_id
           `;
 
+          await tx`
+            INSERT INTO device_subscriptions (device_id, product, plan, expires_at, source)
+            SELECT ${deviceId}, product, plan, expires_at, source
+            FROM user_subscriptions
+            WHERE user_id = ${userId}
+            ON CONFLICT (device_id, product) DO UPDATE SET
+              plan = CASE
+                WHEN EXCLUDED.expires_at > device_subscriptions.expires_at THEN EXCLUDED.plan
+                ELSE device_subscriptions.plan
+              END,
+              expires_at = GREATEST(device_subscriptions.expires_at, EXCLUDED.expires_at),
+              source = CASE
+                WHEN EXCLUDED.expires_at > device_subscriptions.expires_at THEN EXCLUDED.source
+                ELSE device_subscriptions.source
+              END,
+              updated_at = now()
+          `;
+          await tx`
+            INSERT INTO user_subscriptions (user_id, product, plan, expires_at, source)
+            SELECT ${userId}, product, plan, expires_at, source
+            FROM device_subscriptions
+            WHERE device_id = ${deviceId}
+            ON CONFLICT (user_id, product) DO UPDATE SET
+              plan = CASE
+                WHEN EXCLUDED.expires_at > user_subscriptions.expires_at THEN EXCLUDED.plan
+                ELSE user_subscriptions.plan
+              END,
+              expires_at = GREATEST(user_subscriptions.expires_at, EXCLUDED.expires_at),
+              source = CASE
+                WHEN EXCLUDED.expires_at > user_subscriptions.expires_at THEN EXCLUDED.source
+                ELSE user_subscriptions.source
+              END,
+              updated_at = now()
+          `;
+
           return { trialInserted: trialInserted.length > 0 };
         });
 
@@ -270,13 +315,17 @@ export function authRoutes(sql: postgres.Sql) {
           notifyDeviceReplaced(oldId);
         }
 
-        if (result.trialInserted) {
+        invalidateEntitlement(userId, MVP_PRODUCT);
+        if (mergedFromUserId !== null) {
+          invalidateEntitlement(mergedFromUserId, MVP_PRODUCT);
           invalidateEntitlement(userId, MVP_PRODUCT);
         }
 
         return {
           success: true,
           deviceId,
+          ...(alreadyBound ? { alreadyBound: true } : {}),
+          ...(mergedFromUserId !== null ? { mergedAccount: true } : {}),
           ...(replaced.length > 0 ? { replaced: true } : {}),
         };
       } catch (err) {

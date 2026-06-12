@@ -184,6 +184,17 @@ export class CodexResumeManager {
         ts: new Date().toISOString(),
       },
     });
+    this._forwardEvent(serverSessionId, {
+      type: 'event',
+      payload: {
+        clientEventId: `phone-started:${serverSessionId}:${Date.now()}`,
+        sessionId: serverSessionId,
+        agent: 'codex',
+        eventType: 'command_started',
+        data: { type: 'command_started', command: prompt },
+        ts: new Date().toISOString(),
+      },
+    });
 
     // Execute resume
     const result = await state.runtime.resumeOnce(state.localSession.sessionId, prompt);
