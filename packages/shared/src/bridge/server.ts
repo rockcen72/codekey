@@ -98,7 +98,7 @@ export function startBridgeServer(bridge: ApprovalBridge, port = 3001, source = 
   let mpPlatform = 'wechat';
   bridge.relay.on('mp_online', (platform?: string) => { mpOnline = true; mpPlatform = platform || 'wechat'; });
   bridge.relay.on('mp_offline', (platform?: string) => { mpOnline = false; });
-  const codexRelay = new CodexRelay(bridge.relay);
+  const codexRelay = new CodexRelay(bridge.relay, bridge.auditSink);
   const pendingCodexHookRequests = new Map<string, Promise<CodexHookResponse>>();
   const server = createServer((req, res) => handleRequest(req, res, bridge, source, onShutdown, startedAt, bridgeConfig, codexRelay, codexResumeManager, opencodeManager, pendingCodexHookRequests, () => mpOnline));
 

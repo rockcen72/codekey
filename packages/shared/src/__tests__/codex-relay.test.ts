@@ -4,10 +4,13 @@ import { CodexRelay } from '../bridge/codex-relay.js';
 interface MockRelayClient {
   on: ReturnType<typeof vi.fn>;
   sendRaw: ReturnType<typeof vi.fn>;
+  sendCheckedPayload: ReturnType<typeof vi.fn>;
 }
 
 function createMockRelay(): MockRelayClient {
-  return { on: vi.fn(), sendRaw: vi.fn(), sendCheckedPayload: vi.fn((p: any) => { /*no-op*/ }) };
+  const sendRaw = vi.fn();
+  const sendCheckedPayload = vi.fn((p: any) => { if (p?.raw) sendRaw(p.raw); });
+  return { on: vi.fn(), sendRaw, sendCheckedPayload };
 }
 
 function sentMessages(relay: MockRelayClient, type?: string): Record<string, unknown>[] {
@@ -166,5 +169,60 @@ describe('CodexRelay', () => {
     h({ sessionId: 'server-sess-123', action: 'write_stdin', data: 'twice' });
     expect(codexRelay.pollPrompts().length).toBe(1);
     expect(codexRelay.pollPrompts().length).toBe(0);
+  });
+
+  // ── Privacy pipeline integration ──
+
+  it('sends events through sendCheckedPayload not sendRaw', () => {
+    codexRelay.ensureSession();
+    simulateSessionRegistered(relay);
+    relay.sendRaw.mockClear();
+    relay.sendCheckedPayload.mockClear();
+    codexRelay.pushEvent('task_complete', { summary: 'done' });
+    expect(relay.sendCheckedPayload).toHaveBeenCalled();
+    expect(relay.sendCheckedPayload.mock.calls[0][0].__privacyChecked).toBe(true);
+  });
+
+  it('approval events go through sendCheckedPayload', () => {
+    codexRelay.ensureSession();
+    simulateSessionRegistered(relay);
+    relay.sendRaw.mockClear();
+    relay.sendCheckedPayload.mockClear();
+    codexRelay.registerApproval('sec-req-1', 'npm install', 'medium');
+    expect(relay.sendCheckedPayload).toHaveBeenCalled();
+    expect(relay.sendCheckedPayload.mock.calls[0][0].__privacyChecked).toBe(true);
+  });
+
+  it('registration messages still use sendRaw, not privacy pipeline', () => {
+    codexRelay.ensureSession();
+    expect(relay.sendRaw).toHaveBeenCalled();
+    const reg = sentMessages(relay, 'register_session');
+    expect(reg.length).toBe(1);
+    expect(relay.sendCheckedPayload).not.toHaveBeenCalled();
+  });
+
+  it('forwards auditSink to pipeline for approval events', () => {
+    const auditSink = vi.fn();
+    codexRelay = new CodexRelay(relay as any, auditSink);
+    codexRelay.ensureSession();
+    simulateSessionRegistered(relay);
+    auditSink.mockClear();
+    codexRelay.registerApproval('audit-req-1', 'cat ~/.ssh/id_rsa', 'high');
+    expect(auditSink).toHaveBeenCalledTimes(1);
+    const entry = auditSink.mock.calls[0][0];
+    expect(entry.source).toBe('approval');
+    expect(entry.action).toBe('forwarded');
+  });
+
+  it('forwards auditSink to pipeline for task_complete events', () => {
+    const auditSink = vi.fn();
+    codexRelay = new CodexRelay(relay as any, auditSink);
+    codexRelay.ensureSession();
+    simulateSessionRegistered(relay);
+    auditSink.mockClear();
+    codexRelay.pushEvent('task_complete', { summary: 'refactored module' });
+    expect(auditSink).toHaveBeenCalledTimes(1);
+    const entry = auditSink.mock.calls[0][0];
+    expect(entry.source).toBe('transcript');
   });
 });

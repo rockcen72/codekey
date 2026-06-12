@@ -1,4 +1,6 @@
 import type { RelayClient } from './relay-client.js';
+import { runPrivacyPipeline, toCheckedPayload } from './privacy-pipeline.js';
+import type { AuditSink } from './privacy-pipeline.js';
 
 export class CodexRelay {
   private pendingQueue: { correlationId: string; command: string; risk: string }[] = [];
@@ -27,9 +29,11 @@ export class CodexRelay {
   private codexSessionUid: string | null = null;
   private sessionMetadata: Record<string, string> = {};
   private relay: RelayClient;
+  private _auditSink?: AuditSink;
 
-  constructor(relay: RelayClient) {
+  constructor(relay: RelayClient, auditSink?: AuditSink) {
     this.relay = relay;
+    this._auditSink = auditSink;
 
     relay.on('approval_forward', (payload: unknown) => {
       const fwd = payload as { eventId: string; decision: string; message?: string; clientEventId?: string | null };
@@ -146,8 +150,7 @@ export class CodexRelay {
 
   private _pushApproval(correlationId: string, command: string, risk: string): void {
     if (!this.sessionId) return;
-    this.pendingByCorrelationId.set(correlationId, { type: 'approval', command, risk, createdAt: Date.now() });
-    this.relay.sendRaw(JSON.stringify({
+    const rawPayload = JSON.stringify({
       type: 'event',
       payload: {
         sessionId: this.sessionId,
@@ -156,7 +159,12 @@ export class CodexRelay {
         risk,
         clientEventId: correlationId,
       },
-    }));
+    });
+    const decision = runPrivacyPipeline({ source: 'approval', rawPayload }, undefined, this._auditSink);
+    if (decision.action === 'block') return;
+    this.pendingByCorrelationId.set(correlationId, { type: 'approval', command, risk, createdAt: Date.now() });
+    const checked = toCheckedPayload(decision);
+    if (checked) this.relay.sendCheckedPayload(checked);
   }
 
   private _sendEvent(eventType: string, data: Record<string, unknown>): void {
@@ -164,13 +172,18 @@ export class CodexRelay {
     const requestId = eventType === 'input_required' && typeof data.requestId === 'string'
       ? data.requestId
       : undefined;
+    const source: 'approval' | 'transcript' = eventType === 'input_required' ? 'approval' : 'transcript';
+    const rawPayload = JSON.stringify({
+      type: 'event',
+      payload: { sessionId: this.sessionId, eventType, data, ...(requestId ? { clientEventId: requestId } : {}) },
+    });
+    const decision = runPrivacyPipeline({ source, rawPayload }, undefined, this._auditSink);
+    if (decision.action === 'block') return;
     if (eventType === 'input_required' && requestId) {
       const text = typeof data.body === 'string' ? data.body.slice(0, 200) : '';
       this.pendingByCorrelationId.set(requestId, { type: 'input', command: text, risk: 'medium', createdAt: Date.now() });
     }
-    this.relay.sendRaw(JSON.stringify({
-      type: 'event',
-      payload: { sessionId: this.sessionId, eventType, data, ...(requestId ? { clientEventId: requestId } : {}) },
-    }));
+    const checked = toCheckedPayload(decision);
+    if (checked) this.relay.sendCheckedPayload(checked);
   }
 }

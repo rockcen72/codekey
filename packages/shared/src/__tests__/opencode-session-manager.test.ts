@@ -20,9 +20,17 @@ class FakeRelay extends EventEmitter {
         });
       });
     }
+    // Mirror real sendEvent semantics: event-type messages also land in sentEvents
+    // so tests can find events without parsing raw strings.
+    if (msg.type === 'event') {
+      this.sentEvents.push(msg);
+    }
   }
   sendEvent(_sessionId: string, msg: unknown): void {
     this.sentEvents.push(msg);
+  }
+  sendCheckedPayload(payload: { raw: string }): void {
+    this.sendRaw(payload.raw);
   }
 }
 

@@ -68,7 +68,7 @@ export interface PrivacyCheckedPayload {
  * ensuring the brand type is meaningful at runtime entry points.
  */
 export function toCheckedPayload(decision: PrivacyDecision): PrivacyCheckedPayload | null {
-  if (decision.action !== 'send') return null;
+  if (decision.action !== 'send' && decision.action !== 'require_confirmation') return null;
   return {
     raw: decision.sanitizedPayload,
     __privacyChecked: true as const,

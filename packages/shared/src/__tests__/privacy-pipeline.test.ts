@@ -96,7 +96,7 @@ describe('privacy-pipeline', () => {
       expect(checked!.checkedAt).toBeGreaterThan(0);
     });
 
-    it('returns null for non-send decisions', () => {
+    it('returns null for "block" decisions', () => {
       const decision = runPrivacyPipeline({
         source: 'transcript',
         rawPayload: 'cat .env',
@@ -104,6 +104,37 @@ describe('privacy-pipeline', () => {
       });
       const checked = toCheckedPayload(decision);
       expect(checked).toBeNull();
+    });
+
+    it('produces a checked payload for "require_confirmation" decisions', () => {
+      const decision = runPrivacyPipeline({
+        source: 'approval',
+        rawPayload: 'cat /project/.env',
+        extraPaths: ['/project/.env'],
+      });
+      expect(decision.action).toBe('require_confirmation');
+      const checked = toCheckedPayload(decision);
+      expect(checked).not.toBeNull();
+      expect(checked!.__privacyChecked).toBe(true);
+      expect(checked!.checkedAt).toBeGreaterThan(0);
+    });
+
+    // Regression: approval payload with both blocked path AND secret
+    // must produce a checked payload whose raw is the SANITIZED version,
+    // not the original rawPayload (privacy bypass CVE prevention).
+    it('sanitizes secrets even when approval requires confirmation (.env + token)', () => {
+      const raw = `I need to read /project/.env to get the key\nAPI_KEY=sk-ant-ABCDEFGHIJKLMNOPQRST`;
+      const decision = runPrivacyPipeline({
+        source: 'approval',
+        rawPayload: raw,
+        extraPaths: ['/project/.env'],
+      });
+      expect(decision.action).toBe('require_confirmation');
+      const checked = toCheckedPayload(decision);
+      expect(checked).not.toBeNull();
+      // The checked payload must have the secret redacted
+      expect(checked!.raw).toContain('sk-ant-***');
+      expect(checked!.raw).not.toContain('sk-ant-ABCDEFGHIJKLMNOPQRST');
     });
   });
 });

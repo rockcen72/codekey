@@ -351,6 +351,8 @@ export class ApprovalBridge {
   private _relayConnected = false;
   private _auditSink?: AuditSink;
 
+  get auditSink(): AuditSink | undefined { return this._auditSink; }
+
   /**
    * Run the privacy pipeline on a payload and send via sendCheckedPayload if allowed.
    * Returns the decision (caller can check .action for 'block' / 'require_confirmation').
@@ -363,10 +365,10 @@ export class ApprovalBridge {
     );
     // 'send' and 'require_confirmation' both transmit — in the current
     // UX model, the phone approval IS the user's confirmation.
+    // Both actions produce a branded PrivacyCheckedPayload (toCheckedPayload
+    // accepts both), guaranteeing that every outbound payload ran the pipeline.
     if (decision.action === 'send' || decision.action === 'require_confirmation') {
-      const checked = toCheckedPayload(decision);
-      if (checked) this.relay.sendCheckedPayload(checked);
-      else this.relay.sendRaw(rawPayload); // fallback if pipeline didn't modify
+      this.relay.sendCheckedPayload(toCheckedPayload(decision)!);
     }
     return decision;
   }
