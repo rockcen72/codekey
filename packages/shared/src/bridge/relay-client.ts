@@ -1,5 +1,6 @@
 import { EventEmitter } from 'node:events';
 import WebSocket from 'ws';
+import type { PrivacyCheckedPayload } from './privacy-pipeline.js';
 import {
   type WsMessage,
   type DeviceInfo,
@@ -18,12 +19,7 @@ interface PendingEntry<T> {
 }
 
 /** A payload that has passed through the privacy pipeline. */
-export interface PrivacyCheckedPayload {
-  raw: string;
-  /** Brand tag — only runPrivacyPipeline can produce this. */
-  readonly __privacyChecked: true;
-  checkedAt: number;
-}
+export type { PrivacyCheckedPayload } from './privacy-pipeline.js';
 
 export class RelayClient extends EventEmitter {
   private ws: WebSocket | null = null;

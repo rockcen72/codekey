@@ -54,6 +54,28 @@ export interface PrivacyDecision {
   blockedByDefault: boolean;
 }
 
+/** Branded payload for sendCheckedPayload — only produced by toCheckedPayload(). */
+export interface PrivacyCheckedPayload {
+  readonly raw: string;
+  /** Brand — runtime-checkable and type-level discriminant. */
+  readonly __privacyChecked: true;
+  readonly checkedAt: number;
+}
+
+/**
+ * Produce a PrivacyCheckedPayload from a pipeline decision.
+ * This is the ONLY way to create a valid PrivacyCheckedPayload,
+ * ensuring the brand type is meaningful at runtime entry points.
+ */
+export function toCheckedPayload(decision: PrivacyDecision): PrivacyCheckedPayload | null {
+  if (decision.action !== 'send') return null;
+  return {
+    raw: decision.sanitizedPayload,
+    __privacyChecked: true as const,
+    checkedAt: Date.now(),
+  };
+}
+
 export interface AuditEntry {
   timestamp: string;
   source: SourceType;
@@ -91,6 +113,7 @@ const EMPTY_DECISION: PrivacyDecision = {
 /**
  * Extract file paths from a structured payload and/or raw string.
  * Priority: structuredPayload > extraPaths > heuristic from raw.
+ * Handles Unix, Windows, and relative paths.
  */
 function extractPaths(
   structured?: Record<string, unknown>,
@@ -117,10 +140,24 @@ function extractPaths(
     }
   }
 
-  // Heuristic: extract plausible paths from command string
+  // Heuristic: extract file-like tokens from command string.
+  // Catches: "cat .env", "rm -rf /repo/.env", "type F:\file.env"
   if (raw) {
-    const matches = raw.match(/(?:\/[\w.-]+)+/g);
-    if (matches) for (const m of matches) set.add(m);
+    // Unix absolute paths: /etc/passwd, /repo/.env
+    const unix = raw.match(/(?:\/[\w.-]+)+/g);
+    if (unix) for (const m of unix) set.add(m);
+
+    // Windows absolute paths: C:\foo, F:\repo\.env
+    const win = raw.match(/[A-Za-z]:\\[^\s"'`|<>]+/g);
+    if (win) for (const m of win) set.add(m);
+
+    // Relative paths starting with ./ or ..
+    const relative = raw.match(/(?:\.{1,2}\/)[^\s"'`|<>]+/g);
+    if (relative) for (const m of relative) set.add(m);
+
+    // Bare file-like tokens ("cat .env", "rm node_modules/foo")
+    const bare = raw.match(/(?:^|\s+)([\w.-]+(?:\/[\w.-]+)*)/g);
+    if (bare) for (const m of bare) set.add(m.trim());
   }
 
   return [...set];

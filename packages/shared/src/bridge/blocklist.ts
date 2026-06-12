@@ -61,57 +61,70 @@ export const DEFAULT_BLOCKED_PATTERNS: string[] = [
 
 /**
  * Check if a file path matches any pattern in a given list.
- * Uses simple glob matching (supports * and **).
+ * Uses .gitignore-compatible matching:
+ *   - Patterns without `/` match against the basename
+ *   - Patterns with `/` match against the full relative path
+ *   - `*` matches any chars except `/`
+ *   - `**` matches any chars including `/`
+ *   - `?` matches any single char except `/`
+ *
+ * Examples:
+ *   `.env`        → matches `.env`, `repo/.env`, `F:/repo/.env`
+ *   `*.pem`       → matches `key.pem`, `secret/key.pem`
+ *   `node_modules/**` → matches `a/node_modules/b/file.js`
+ *   `secret/**`   → matches `secret/foo`, `a/secret/foo`
  */
 export function matchesAny(filePath: string, patterns: string[]): boolean {
+  const normalized = filePath.replace(/\\/g, '/');
   for (const pattern of patterns) {
-    if (matchGlob(filePath, pattern)) return true;
+    // .gitignore convention: pattern without / matches basename only
+    if (!pattern.includes('/')) {
+      const basename = normalized.split('/').pop() ?? normalized;
+      if (globMatch(basename, pattern)) return true;
+      // Also try **/ prepended for paths like secret/*.key
+      if (globMatch(normalized, `**/${pattern}`)) return true;
+    } else {
+      // Pattern contains / — match against full path
+      if (globMatch(normalized, pattern)) return true;
+      // Also try **/ prepended so nested paths match
+      if (!pattern.startsWith('**/')) {
+        if (globMatch(normalized, `**/${pattern}`)) return true;
+      }
+    }
   }
   return false;
 }
 
-/**
- * Simple glob matcher. Supports:
- *   *    — matches any characters except /
- *   **   — matches any characters including /
- *   ?    — matches any single character except /
- *   {a,b}— alternation (comma-separated)
- */
-function matchGlob(filePath: string, pattern: string): boolean {
-  const p = filePath.replace(/\\/g, '/');
-  let pat = pattern.replace(/\\/g, '/');
-
-  // Convert .gitignore-style glob to regex
-  let regexStr = '';
+/** Lightweight glob matcher — converts a glob to a regex. */
+function globMatch(filePath: string, pattern: string): boolean {
+  if (filePath === pattern) return true;
+  let regex = '';
   let i = 0;
-  while (i < pat.length) {
-    const ch = pat[i];
-    if (ch === '*' && pat[i + 1] === '*') {
-      // ** matches everything
-      while (i < pat.length && pat[i] === '*') i++;
-      if (pat[i] === '/') i++; // consume trailing /
-      regexStr += '.*';
+  while (i < pattern.length) {
+    const ch = pattern[i];
+    if (ch === '*' && pattern[i + 1] === '*') {
+      while (i < pattern.length && pattern[i] === '*') i++;
+      if (pattern[i] === '/') i++;
+      regex += '[\\s\\S]*';
       continue;
     }
     if (ch === '*') {
-      regexStr += '[^/]*';
+      regex += '[^/]*';
       i++;
       continue;
     }
     if (ch === '?') {
-      regexStr += '[^/]';
+      regex += '[^/]';
       i++;
       continue;
     }
-    if (/[.+^${}()|[\]\\]/.test(ch)) {
-      regexStr += '\\' + ch;
-      i++;
-      continue;
-    }
-    regexStr += ch;
+    regex += ch.replace(/[.+^${}()|[\]\\]/g, '\\$&');
     i++;
   }
-
-  const re = new RegExp('^' + regexStr + '$');
-  return re.test(p);
+  try {
+    return new RegExp('^' + regex + '$').test(filePath);
+  } catch {
+    return false;
+  }
 }
+

@@ -64,7 +64,7 @@ const BUILT_IN_RULES: Rule[] = [
     name: 'AWS Secret Access Key',
     severity: 'high',
     replacement: 'aws-secret-***',
-    pattern: /(?:(?i)AWS_SECRET_ACCESS_KEY\s*[=:]\s*['"]?)[A-Za-z0-9\/+]{40}['"]?/g,
+    pattern: /AWS_SECRET_ACCESS_KEY\s*[=:]\s*['"]?[A-Za-z0-9\/+]{40}['"]?/gi,
   },
   {
     name: 'Google API Key',
