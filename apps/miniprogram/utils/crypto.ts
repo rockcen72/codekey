@@ -66,39 +66,23 @@ export interface KeyPair {
 }
 
 /**
- * Secure random bytes. In production (WeChat runtime) this uses wx.getRandomValues.
- * There is NO fallback to Math.random() — if the secure RNG is unavailable we fail
- * closed to prevent accidental key/IV weakness from leaking into production code.
- *
- * For local POC testing without the WeChat runtime, inject a mock via a test-only
- * bypass (e.g. `if (typeof wx === 'undefined') throw new Error(...)`) rather than
- * silently degrading the RNG.
+ * Secure random bytes using wx.getRandomValues.
+ * API returns { errMsg, randomValues: ArrayBuffer } — extract the ArrayBuffer.
  */
 function secureRandomBytes(length: number): Uint8Array {
-  if (typeof wx !== 'undefined' && wx.getRandomValues) {
-    const result = new Uint8Array(length);
-    const raw = wx.getRandomValues({ length }) as Record<string, unknown>;
-    // wx spec: returns { errMsg, data?: number[] } — extract the array.
-    const data = Array.isArray(raw.data) ? raw.data : null;
-    if (data && data.length >= length) {
-      for (let i = 0; i < length; i++) {
-        const v = data[i];
-        if (typeof v !== 'number' || !Number.isInteger(v) || v < 0 || v > 255) {
-          throw new Error('wx.getRandomValues returned non-byte value at index ' + i + ': ' + String(v));
-        }
-        result[i] = v;
-      }
-      return result;
-    }
+  if (typeof wx === 'undefined' || typeof wx.getRandomValues !== 'function') {
+    throw new Error('secureRandomBytes: wx.getRandomValues not available');
+  }
+  const raw = wx.getRandomValues({ length }) as Record<string, unknown>;
+  // WeChat returns { errMsg: "getRandomValues:ok", randomValues: ArrayBuffer }
+  const buffer = raw.randomValues || raw.data;
+  if (!buffer || typeof (buffer as ArrayBuffer).byteLength !== 'number') {
     throw new Error(
-      'wx.getRandomValues returned unrecognised structure: ' +
-      JSON.stringify(Object.keys(raw)).slice(0, 100),
+      'wx.getRandomValues returned unrecognised structure: keys=' +
+      Object.keys(raw).join(','),
     );
   }
-  throw new Error(
-    'secureRandomBytes: wx.getRandomValues not available. ' +
-    'This function cannot be used outside the WeChat runtime without an explicit test mock.',
-  );
+  return new Uint8Array(buffer as ArrayBuffer, 0, length);
 }
 
 export function generateContentKey(): KeyPair {
