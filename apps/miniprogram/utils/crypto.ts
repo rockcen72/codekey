@@ -29,18 +29,28 @@ export interface KeyPair {
   keyId: string;
 }
 
+/**
+ * Secure random bytes. In production (WeChat runtime) this uses wx.getRandomValues.
+ * There is NO fallback to Math.random() — if the secure RNG is unavailable we fail
+ * closed to prevent accidental key/IV weakness from leaking into production code.
+ *
+ * For local POC testing without the WeChat runtime, inject a mock via a test-only
+ * bypass (e.g. `if (typeof wx === 'undefined') throw new Error(...)`) rather than
+ * silently degrading the RNG.
+ */
 function secureRandomBytes(length: number): Uint8Array {
-  const bytes = new Uint8Array(length);
-  // WeChat mini program: try wx.getRandomValues first (secure RNG),
-  // fall back to Math.random for POC environments without the WeChat runtime.
   if (typeof wx !== 'undefined' && wx.getRandomValues) {
-    wx.getRandomValues({ length }).data.forEach((v: number, i: number) => { bytes[i] = v; });
-  } else {
+    const result = new Uint8Array(length);
+    const data = wx.getRandomValues({ length });
     for (let i = 0; i < length; i++) {
-      bytes[i] = (Math.random() * 256) | 0;
+      result[i] = data[i] ?? data.data?.[i] ?? 0;
     }
+    return result;
   }
-  return bytes;
+  throw new Error(
+    'secureRandomBytes: wx.getRandomValues not available. ' +
+    'This function cannot be used outside the WeChat runtime without an explicit test mock.',
+  );
 }
 
 export function generateContentKey(): KeyPair {
@@ -53,8 +63,8 @@ export function generateContentKey(): KeyPair {
 }
 
 export function keyFromHex(hex: string): Uint8Array {
-  if (hex.length !== KEY_LENGTH * 2) {
-    throw new Error('Invalid key length: expected ' + (KEY_LENGTH * 2) + ' hex chars, got ' + hex.length);
+  if (!/^[0-9a-fA-F]{64}$/.test(hex)) {
+    throw new Error('Invalid key hex: expected 64 hex chars (0-9, a-f, A-F)');
   }
   return hexToBytes(hex);
 }
@@ -140,16 +150,25 @@ function hexToBytes(hex: string): Uint8Array {
 }
 
 function bytesToBase64(bytes: Uint8Array): string {
-  // WeChat mini program supports btoa natively
+  // Prefer wx API in production (proven to work in WeChat mini program runtime).
+  // btoa fallback is for local POC testing only — real WeChat compatibility
+  // must be verified via WeChat Developer Tool "Build npm" + device test.
+  if (typeof wx !== 'undefined' && wx.arrayBufferToBase64) {
+    return wx.arrayBufferToBase64(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength));
+  }
+  // POC fallback: binary string + btoa
   let binary = '';
   for (let i = 0; i < bytes.length; i++) {
     binary += String.fromCharCode(bytes[i]);
   }
-  // wx.arrayBufferToBase64 可能可用，但 btoa 更跨平台
   return btoa(binary);
 }
 
 function base64ToBytes(b64: string): Uint8Array {
+  if (typeof wx !== 'undefined' && wx.base64ToArrayBuffer) {
+    const buffer = wx.base64ToArrayBuffer(b64);
+    return new Uint8Array(buffer);
+  }
   const binary = atob(b64);
   const bytes = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i++) {

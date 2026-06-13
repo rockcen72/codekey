@@ -17,6 +17,7 @@ import {
   keyFromHex,
   buildAad,
   encrypt,
+  encryptWithIv,
   decrypt,
   KEY_LENGTH,
   IV_LENGTH,
@@ -64,6 +65,14 @@ describe('encrypt/decrypt roundtrip (Node crypto)', () => {
   it('keyFromHex reconstructs the same key', () => {
     const restored = keyFromHex(keyHex);
     expect(restored.equals(key)).toBe(true);
+  });
+
+  it('keyFromHex rejects non-hex characters', () => {
+    expect(() => keyFromHex('zz'.repeat(32))).toThrow();
+  });
+
+  it('keyFromHex rejects wrong length', () => {
+    expect(() => keyFromHex('ab'.repeat(16))).toThrow(); // 32 chars = 16 bytes
   });
 
   it('encrypts and decrypts a short string', () => {
@@ -127,10 +136,10 @@ describe('performance benchmarks', () => {
       console.log(
         `[bench] ${label}: ${rounds} rounds in ${elapsed.toFixed(1)}ms (${perRound.toFixed(2)}ms/round)`,
       );
-      // Soft expectation: 100KB roundtrip should be well under 500ms/round
-      // This is a POC measurement, not a CI gate.
+      // Soft expectation: 100KB roundtrip < 50ms
+      // This matches the benchmark report target. 实测 ~0.33ms/round.
       if (label === '100KB') {
-        expect(perRound).toBeLessThan(500);
+        expect(perRound).toBeLessThan(50);
       }
     });
   }
@@ -204,14 +213,17 @@ describe('negative tests', () => {
 
 // ── 4. Cross-Platform Test Vectors ─────────────────────────
 //
-// These are deterministic test vectors that can be copied into
-// Telegram and WeChat mini app tests to verify cross-platform
-// compatibility. Use a fixed key and IV to get repeatable output.
+// These are DETERMINISTIC test vectors using a fixed key AND a fixed IV.
+// They produce identical sealed_payload bytes on every run and can be
+// copied into Telegram and WeChat mini app tests for exact byte-level
+// cross-platform verification.
 
 describe('cross-platform test vectors (CANONICAL)', () => {
   // Fixed key: 32 bytes of 0xAB
   const fixedKey = Buffer.alloc(KEY_LENGTH, 0xAB);
   const fixedKeyHex = fixedKey.toString('hex');
+  // Fixed IV: 12 bytes of 0x01
+  const fixedIv = Buffer.alloc(IV_LENGTH, 0x01);
   const aad = buildAad({
     v: 1,
     keyId: '00000000-0000-0000-0000-000000000001',
@@ -222,48 +234,51 @@ describe('cross-platform test vectors (CANONICAL)', () => {
   });
 
   it('produces canonical AAD bytes (for cross-platform verification)', () => {
-    // This is the AAD that other platform implementations must match.
     const aadHex = aad.toString('hex');
     expect(aad.length).toBeGreaterThan(0);
-    // Log for manual cross-platform comparison
     console.log('[vector] canonical AAD hex:', aadHex);
     console.log('[vector] canonical AAD raw:', aad.toString('utf8'));
   });
 
   it('key hex roundtrip matches expected format', () => {
     expect(fixedKeyHex).toHaveLength(64);
-    // Every byte is 0xAB = 'ab'
     expect(fixedKeyHex).toBe('ab'.repeat(32));
   });
 
-  // Simple roundtrip with the canonical key to verify it works
-  it('roundtrip with canonical key', () => {
+  it('IV is exactly 12 bytes of 0x01', () => {
+    expect(fixedIv.length).toBe(IV_LENGTH);
+    expect(fixedIv.toString('hex')).toBe('01'.repeat(IV_LENGTH));
+  });
+
+  // Deterministic roundtrip with fixed key + fixed IV
+  it('produces deterministic sealed_payload (same input → same output)', () => {
     const plaintext = 'canonical test payload';
-    const sealed = encrypt(plaintext, fixedKey, aad);
-    const decrypted = decrypt(sealed, fixedKey, aad);
+    const a = encryptWithIv(plaintext, fixedKey, fixedIv, aad);
+    const b = encryptWithIv(plaintext, fixedKey, fixedIv, aad);
+    expect(a).toBe(b); // MUST be identical — same key, same IV, same input
+    const decrypted = decrypt(a, fixedKey, aad);
     expect(decrypted).toBe(plaintext);
   });
 
   // Export format description for cross-platform implementors
-  it('documents the wire format invariants', () => {
+  it('documents the wire format invariants with a repeatable vector', () => {
     const plaintext = 'Hello, cross-platform E2E! 🌍';
-    const sealed = encrypt(plaintext, fixedKey, aad);
+    const sealed = encryptWithIv(plaintext, fixedKey, fixedIv, aad);
     const buf = Buffer.from(sealed, 'base64');
 
-    // Verification: buf = iv[12] + ciphertext[N] + tag[16]
     const iv = buf.subarray(0, IV_LENGTH);
     const tag = buf.subarray(buf.length - TAG_LENGTH);
     const ct = buf.subarray(IV_LENGTH, buf.length - TAG_LENGTH);
 
-    console.log('[vector] IV length:', iv.length);
-    console.log('[vector] TAG length:', tag.length);
+    console.log('[vector] IV hex:', iv.toString('hex'));
+    console.log('[vector] TAG hex:', tag.toString('hex'));
     console.log('[vector] ciphertext length:', ct.length);
     console.log('[vector] total sealed_payload bytes:', buf.length);
     console.log('[vector] sealed_payload base64:', sealed);
     console.log('[vector] plaintext length:', plaintext.length);
     console.log('[vector] plaintext bytes (UTF-8):', Buffer.from(plaintext, 'utf8').length);
 
-    expect(iv.length).toBe(IV_LENGTH);
+    expect(iv.toString('hex')).toBe('01'.repeat(IV_LENGTH)); // our fixed IV
     expect(tag.length).toBe(TAG_LENGTH);
     expect(ct.length).toBeGreaterThanOrEqual(Buffer.from(plaintext, 'utf8').length);
   });

@@ -49,11 +49,10 @@ export function generateContentKey(): KeyPair {
 }
 
 export function keyFromHex(hex: string): Buffer {
-  const buf = Buffer.from(hex, 'hex');
-  if (buf.length !== KEY_LENGTH) {
-    throw new Error(`Invalid key length: expected ${KEY_LENGTH} bytes, got ${buf.length}`);
+  if (!/^[0-9a-fA-F]{64}$/.test(hex)) {
+    throw new Error(`Invalid key hex: expected 64 hex chars, got "${hex.slice(0, 16)}..."`);
   }
-  return buf;
+  return Buffer.from(hex, 'hex');
 }
 
 // ── AAD ────────────────────────────────────────────────────
@@ -83,6 +82,32 @@ export function buildAad(fields: AadFields): Buffer {
 }
 
 // ── Encrypt / Decrypt ──────────────────────────────────────
+
+/**
+ * Encrypt with a caller-supplied IV. For CROSS-PLATFORM TEST VECTORS ONLY.
+ * Production code MUST use encrypt() which generates a random IV internally.
+ */
+export function encryptWithIv(
+  plaintext: string,
+  key: Buffer,
+  iv: Buffer,
+  aad: Buffer,
+): string {
+  if (iv.length !== IV_LENGTH) {
+    throw new Error(`IV must be ${IV_LENGTH} bytes, got ${iv.length}`);
+  }
+  const cipher = crypto.createCipheriv(ALGORITHM, key, iv, { authTagLength: TAG_LENGTH });
+  if (aad.length > 0) {
+    cipher.setAAD(aad, { plaintextLength: Buffer.byteLength(plaintext, 'utf8') });
+  }
+  const encrypted = Buffer.concat([
+    cipher.update(plaintext, 'utf8'),
+    cipher.final(),
+  ]);
+  const tag = cipher.getAuthTag();
+  const combined = Buffer.concat([iv, encrypted, tag]);
+  return combined.toString('base64');
+}
 
 export function encrypt(
   plaintext: string,

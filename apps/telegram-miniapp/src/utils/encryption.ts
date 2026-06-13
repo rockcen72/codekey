@@ -30,8 +30,8 @@ export function generateContentKey(): { keyHex: string; keyId: string } {
 }
 
 export function keyFromHex(hex: string): Uint8Array {
-  if (hex.length !== KEY_LENGTH * 2) {
-    throw new Error(`Invalid key length: expected ${KEY_LENGTH * 2} hex chars, got ${hex.length}`);
+  if (!/^[0-9a-fA-F]{64}$/.test(hex)) {
+    throw new Error('Invalid key hex: expected 64 hex chars (0-9, a-f, A-F)');
   }
   return hex2buf(hex);
 }
