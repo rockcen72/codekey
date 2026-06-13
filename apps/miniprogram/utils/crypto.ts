@@ -1,19 +1,55 @@
 /**
  * crypto.ts — AES-256-GCM symmetric encryption for WeChat mini program.
  *
- * Uses @noble/ciphers (pure JS, ~5KB gzip), which is the only audited
- * AEAD library that reliably works in the WeChat mini program JS runtime
- * (JavaScriptCore on iOS, V8 on Android).
+ * Uses @noble/ciphers (pure JS, ~5KB gzip), loaded from vendor/ copies
+ * because WeChat's npm build only outputs the main index.js (which throws).
  *
  * Wire format must match packages/shared/src/bridge/encryption.ts EXACTLY:
  *   sealed_payload = base64(iv[12] ++ ciphertext ++ tag[16])
  *
  * AAD format (identical across platforms):
  *   utf8(JSON.stringify({ v, keyId, deviceId, sessionId, eventId, eventType }))
+ *
+ * NOTE: WeChat mini program runtime lacks TextEncoder/TextDecoder.
+ * This module installs them globally on first load so @noble/ciphers/utils
+ * can use them internally. The polyfill is UTF-8 only (~1KB).
  */
 
-import { gcm } from '@noble/ciphers/aes';
-import { utf8ToBytes, bytesToUtf8 } from '@noble/ciphers/utils';
+// ── Polyfill TextEncoder/TextDecoder (UTF-8 only) ─────────
+if (typeof TextEncoder === 'undefined') {
+  (globalThis as any).TextEncoder = class {
+    encode(str: string): Uint8Array {
+      const escaped = unescape(encodeURIComponent(str));
+      const len = escaped.length;
+      const arr = new Uint8Array(len);
+      for (let i = 0; i < len; i++) arr[i] = escaped.charCodeAt(i);
+      return arr;
+    }
+  };
+}
+if (typeof TextDecoder === 'undefined') {
+  (globalThis as any).TextDecoder = class {
+    decode(buf: ArrayBuffer | Uint8Array): string {
+      const bytes = buf instanceof Uint8Array ? buf : new Uint8Array(buf);
+      try {
+        return decodeURIComponent(escape(String.fromCharCode(...bytes)));
+      } catch {
+        // Not valid UTF-8; return raw Latin-1 string for error messages.
+        return String.fromCharCode(...bytes);
+      }
+    }
+  };
+}
+
+// Load @noble/ciphers submodules from vendor/ (bypasses npm build limitation)
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const gcmImpl: typeof import('@noble/ciphers/aes').gcm = require('../vendor/aes.js').gcm;
+// utf8ToBytes/bytesToUtf8 from @noble/ciphers/utils; after our global polyfill
+// they will use the TextEncoder/TextDecoder we installed above.
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const nobleUtils = require('../vendor/utils.js');
+const utf8ToBytes: (s: string) => Uint8Array = nobleUtils.utf8ToBytes;
+const bytesToUtf8: (b: Uint8Array) => string = nobleUtils.bytesToUtf8;
 
 // ── Constants (must match Node side) ───────────────────────
 
