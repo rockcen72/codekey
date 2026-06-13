@@ -7,6 +7,7 @@
     "build:npm": "echo 'Run \"构建 npm\" in WeChat Developer Tool'"
   },
   "dependencies": {
+    "@noble/ciphers": "^2.2.0",
     "mp-html": "^2.1.1"
   },
   "miniprogram": "miniprogram_npm"
