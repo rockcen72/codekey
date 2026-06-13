@@ -62,8 +62,13 @@ export function buildAad(fields: AadFields): Uint8Array {
 // ── Type helper (TS 5.7 strict ArrayBuffer typing workaround) ──
 
 function asBuf(v: Uint8Array): Uint8Array<ArrayBuffer> {
-  // Reconstruct with explicit ArrayBuffer to satisfy TS strict typing
-  return new Uint8Array(v.buffer.slice(0) as ArrayBuffer);
+  // Slice from the view's actual byteOffset, not from 0.
+  // A Uint8Array created via .subarray() or new Uint8Array(buffer, offset, len)
+  // shares the underlying ArrayBuffer; passing the whole buffer to Web Crypto API
+  // would include bytes outside the intended range (e.g. IV mixed into ciphertext).
+  return new Uint8Array(
+    v.buffer.slice(v.byteOffset, v.byteOffset + v.byteLength) as ArrayBuffer,
+  );
 }
 
 // ── Encrypt / Decrypt (async — Web Crypto API) ─────────────

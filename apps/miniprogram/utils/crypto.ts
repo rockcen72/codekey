@@ -41,11 +41,23 @@ export interface KeyPair {
 function secureRandomBytes(length: number): Uint8Array {
   if (typeof wx !== 'undefined' && wx.getRandomValues) {
     const result = new Uint8Array(length);
-    const data = wx.getRandomValues({ length });
-    for (let i = 0; i < length; i++) {
-      result[i] = data[i] ?? data.data?.[i] ?? 0;
+    const raw = wx.getRandomValues({ length }) as Record<string, unknown>;
+    // wx spec: returns { errMsg, data?: number[] } — extract the array.
+    const data = Array.isArray(raw.data) ? raw.data : null;
+    if (data && data.length >= length) {
+      for (let i = 0; i < length; i++) {
+        const v = data[i];
+        if (typeof v !== 'number' || !Number.isInteger(v) || v < 0 || v > 255) {
+          throw new Error('wx.getRandomValues returned non-byte value at index ' + i + ': ' + String(v));
+        }
+        result[i] = v;
+      }
+      return result;
     }
-    return result;
+    throw new Error(
+      'wx.getRandomValues returned unrecognised structure: ' +
+      JSON.stringify(Object.keys(raw)).slice(0, 100),
+    );
   }
   throw new Error(
     'secureRandomBytes: wx.getRandomValues not available. ' +
