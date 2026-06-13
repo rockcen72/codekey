@@ -89,6 +89,7 @@ a {
 
 .login-panel,
 .tool-panel,
+.howto-panel,
 .detail-panel,
 .empty-state,
 .notice {
@@ -97,6 +98,25 @@ a {
   background: var(--panel);
   border: 1px solid var(--line);
   border-radius: 8px;
+}
+
+.howto-panel h2 {
+  margin: 0 0 10px;
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--accent);
+}
+
+.howto-panel ol {
+  margin: 0;
+  padding: 0 0 0 18px;
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--muted);
+}
+
+.howto-panel li {
+  margin-bottom: 4px;
 }
 
 .primary-button,

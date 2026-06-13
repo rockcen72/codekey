@@ -74,6 +74,16 @@ export function BindPage({ auth }: Props) {
         <button className="primary-button" type="button" onClick={() => void bindWithCode(code)} disabled={busy || code.length < 8}>
           {busy ? 'Binding...' : 'Confirm'}
         </button>
+        <section className="howto-panel">
+          <h2>How to use CodeKey</h2>
+          <ol>
+            <li>Install the <strong>CodeKey</strong> extension from the VS Code marketplace.</li>
+            <li>Open the extension sidebar and tap <strong>&ldquo;Start Pairing&rdquo;</strong> to generate a code.</li>
+            <li>Enter the 8-character code above and tap <strong>&ldquo;Confirm&rdquo;</strong>.</li>
+            <li>Start any AI agent on your desktop (Claude Code, Codex, or OpenCode).</li>
+            <li>Your sessions will appear here in real time — tap any session to view details, approve actions, or reply.</li>
+          </ol>
+        </section>
       </section>
     </main>
   );
