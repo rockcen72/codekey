@@ -1,6 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import type { RelayClient } from './relay-client.js';
 import type { ApprovalBridge } from './handler.js';
+import { runPrivacyPipeline, toCheckedPayload, projectHistoryEventForPolicy } from './privacy-pipeline.js';
+import type { AuditSink, ContentPolicy } from './privacy-pipeline.js';
+import { checkHistoryPolicy, DEFAULT_RECENT_COUNT } from './history-policy.js';
 import { cleanCodexDisplayText, discoverLocalSessions, findMostRecentSession, type CodexLocalSession } from './codex-local-session-resolver.js';
 import { CodexResumeRuntime, type ResumeResult } from './codex-resume-runtime.js';
 import { resolveCodexBinary } from './codex-binary.js';
@@ -30,11 +33,13 @@ export class CodexResumeManager {
   private _listening = false;
 
   private approvalBridge: ApprovalBridge | null = null;
+  private _auditSink?: AuditSink;
 
-  constructor(relay: RelayClient, resumedServerSessionIds: Set<string>, approvalBridge?: ApprovalBridge, storagePath?: string) {
+  constructor(relay: RelayClient, resumedServerSessionIds: Set<string>, approvalBridge?: ApprovalBridge, storagePath?: string, auditSink?: AuditSink) {
     this.relay = relay;
     this.resumedServerSessionIds = resumedServerSessionIds;
     this.approvalBridge = approvalBridge ?? null;
+    this._auditSink = auditSink;
     void storagePath;
 
     // Listen for session_registered to resolve pending registrations
@@ -154,8 +159,8 @@ export class CodexResumeManager {
     // Register with ApprovalBridge so getAttachedSessionIds() includes this session (like CC)
     this.approvalBridge?.addCodexAttachedSession(localSession.sessionId, serverSessionId);
 
-    // Push last 3 transcript messages to relay so phone has minimal context
-    this._forwardRecentHistory(serverSessionId, localSession.transcriptPath).catch(() => {});
+    // Push last N transcript messages to relay so phone has minimal context (gated by policy)
+    this._forwardRecentHistory(serverSessionId, localSession.sessionId, localSession.transcriptPath).catch(() => {});
     this._startTranscriptWatcher(serverSessionId, state);
 
     console.error('[codex-resume] started: local=%s server=%s cwd=%s', localSession.sessionId, serverSessionId, localSession.cwd);
@@ -172,7 +177,9 @@ export class CodexResumeManager {
       return;
     }
 
-    // Forward user_prompt to relay so mini-program shows it
+    // Forward user_prompt to relay so mini-program shows it.
+    // Phone-originated events skip allowedFields projection — the user
+    // explicitly chose to send this command, so it must be visible.
     this._forwardEvent(serverSessionId, {
       type: 'event',
       payload: {
@@ -183,7 +190,7 @@ export class CodexResumeManager {
         data: { type: 'user_prompt', prompt, summary: prompt.slice(0, 200) },
         ts: new Date().toISOString(),
       },
-    });
+    }, 'phone-originated');
     this._forwardEvent(serverSessionId, {
       type: 'event',
       payload: {
@@ -194,7 +201,7 @@ export class CodexResumeManager {
         data: { type: 'command_started', command: prompt },
         ts: new Date().toISOString(),
       },
-    });
+    }, 'phone-originated');
 
     // Execute resume
     const result = await state.runtime.resumeOnce(state.localSession.sessionId, prompt);
@@ -336,8 +343,10 @@ export class CodexResumeManager {
     console.error('[codex-resume] stopped: local=%s server=%s', localSessionId, serverSessionId);
   }
 
-  /** Push last 10 transcript messages to relay so phone shows same history as sidebar. */
-  private async _forwardRecentHistory(serverSessionId: string, transcriptPath: string): Promise<void> {
+  /** Push last N transcript messages to relay so phone shows same history as sidebar (gated by policy). */
+  private async _forwardRecentHistory(serverSessionId: string, localSessionId: string, transcriptPath: string): Promise<void> {
+    const policy = checkHistoryPolicy(localSessionId, 'codex');
+    if (!policy.allowed) return;
     try {
       const state = this.sessions.get(serverSessionId);
       const { existsSync, readFileSync } = await import('node:fs');
@@ -347,7 +356,8 @@ export class CodexResumeManager {
 
       const messages: { type: string; text: string; ts: string }[] = [];
       // Scan newest-first for user/assistant messages (same as loadCodexConversation)
-      for (let i = lines.length - 1; i >= 0 && messages.length < 10; i--) {
+      const maxCount = policy.maxCount ?? DEFAULT_RECENT_COUNT;
+      for (let i = lines.length - 1; i >= 0 && messages.length < maxCount; i--) {
         try {
           const obj = JSON.parse(lines[i]);
           let role = '';
@@ -399,6 +409,13 @@ export class CodexResumeManager {
     } catch { /* best-effort */ }
   }
 
+  /** Re-trigger history replay for all active Codex sessions — called when policy changes. */
+  replayActiveHistory(): void {
+    for (const [serverSessionId, state] of this.sessions) {
+      this._forwardRecentHistory(serverSessionId, state.localSession.sessionId, state.localSession.transcriptPath).catch(() => {});
+    }
+  }
+
   private _startTranscriptWatcher(serverSessionId: string, state: ResumeSessionState): void {
     if (state.watcher) return;
     const watcher = new CodexTranscriptWatcher({
@@ -417,6 +434,8 @@ export class CodexResumeManager {
   }
 
   private _forwardTranscriptEvent(serverSessionId: string, state: ResumeSessionState, event: TranscriptEvent): void {
+    const policy = checkHistoryPolicy(state.localSession.sessionId, 'codex');
+    if (!policy.allowed) return;
     if (event.type !== 'message') return;
     const text = cleanCodexDisplayText(event.content || '');
     if (!text) return;
@@ -520,8 +539,22 @@ export class CodexResumeManager {
    * Send an event to relay for a session.
    * Uses RelayClient.sendEvent which sends pre-serialized.
    */
-  private _forwardEvent(serverSessionId: string, msg: Record<string, unknown>): void {
-    this.relay.sendRaw(JSON.stringify(msg));
+  private _forwardEvent(serverSessionId: string, msg: Record<string, unknown>, contentPolicy: ContentPolicy = 'enforce'): void {
+    const raw = JSON.stringify(msg);
+    const state = this.sessions.get(serverSessionId);
+    const localSessionId = state?.localSession.sessionId ?? '';
+    const policy = localSessionId ? checkHistoryPolicy(localSessionId, 'codex') : { allowed: false, allowedFields: undefined };
+    const projected = projectHistoryEventForPolicy(raw, policy, contentPolicy);
+    if (projected === null) return;
+    const decision = runPrivacyPipeline(
+      { source: 'transcript', rawPayload: projected, agent: 'codex' },
+      undefined,
+      this._auditSink,
+    );
+    if (decision.action === 'block') return;
+    const checked = toCheckedPayload(decision);
+    if (checked) this.relay.sendCheckedPayload(checked);
+    else this.relay.sendRaw(projected);
   }
 }
 

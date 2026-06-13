@@ -12,6 +12,7 @@ import { subscriptionRoutes } from './routes/subscription.js';
 import { wsHandler } from './ws/handler.js';
 import { initDb } from './db/init.js';
 import { rateLimit } from './middleware/rate-limit.js';
+import { runRetentionCleanup } from './services/cleanup.js';
 import type postgres from 'postgres';
 
 const CLEANUP_INTERVAL_MS = 60_000; // check every 60s
@@ -56,6 +57,10 @@ async function runCleanup(sql: postgres.Sql): Promise<void> {
   })();
   await sql`DELETE FROM approval_usage WHERE period < ${cutoffPeriod}`;
   await sql`DELETE FROM approval_events_dedup WHERE period < ${cutoffPeriod}`;
+
+  // Retention: delete finished sessions and their events.
+  // Active/paused sessions are never touched.
+  await runRetentionCleanup(sql);
 }
 
 function startAutoCleanup(sql: postgres.Sql): () => void {

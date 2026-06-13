@@ -9,6 +9,16 @@ import { CodexResumeManager } from './codex-resume-manager.js';
 import { discoverLocalSessions, normalizeCodexSessionTitle } from './codex-local-session-resolver.js';
 import { type OpenCodeSessionManager } from './opencode-session-manager.js';
 import { listRecentClaudeTranscripts, loadConversation } from './claude-transcripts.js';
+import {
+  HistorySharePolicy,
+  type PolicyKey,
+  type HistoryPolicyConfig,
+  getConfig,
+  getAllConfigs,
+  setConfig,
+  deleteConfig,
+  DEFAULT_RECENT_COUNT,
+} from './history-policy.js';
 
 export interface BridgeConfig {
   deviceId: string;
@@ -98,7 +108,7 @@ export function startBridgeServer(bridge: ApprovalBridge, port = 3001, source = 
   let mpPlatform = 'wechat';
   bridge.relay.on('mp_online', (platform?: string) => { mpOnline = true; mpPlatform = platform || 'wechat'; });
   bridge.relay.on('mp_offline', (platform?: string) => { mpOnline = false; });
-  const codexRelay = new CodexRelay(bridge.relay);
+  const codexRelay = new CodexRelay(bridge.relay, bridge.auditSink);
   const pendingCodexHookRequests = new Map<string, Promise<CodexHookResponse>>();
   const server = createServer((req, res) => handleRequest(req, res, bridge, source, onShutdown, startedAt, bridgeConfig, codexRelay, codexResumeManager, opencodeManager, pendingCodexHookRequests, () => mpOnline));
 
@@ -604,7 +614,7 @@ function handleRequest(req: IncomingMessage, res: ServerResponse, bridge: Approv
           toolName,
           risk: 'medium',
         });
-        bridge.relay.sendRaw(JSON.stringify({
+        const codexPayload = JSON.stringify({
           type: 'event',
           payload: {
             clientEventId,
@@ -620,7 +630,8 @@ function handleRequest(req: IncomingMessage, res: ServerResponse, bridge: Approv
             },
             ts: new Date().toISOString(),
           },
-        }));
+        });
+        bridge.privacyCheckAndSend('approval', codexPayload);
 
       } catch (err) {
         console.error('[codex-hooks] error:', err);
@@ -723,7 +734,7 @@ function handleRequest(req: IncomingMessage, res: ServerResponse, bridge: Approv
         res.end(JSON.stringify({ ok: true }));
 
         const fetchMessages = (sid: string) => {
-          const ocUrl = new URL(`/session/${encodeURIComponent(sid)}/message?limit=5`, bridgeConfig?.openCodeUrl || 'http://127.0.0.1:4096');
+          const ocUrl = new URL(`/session/${encodeURIComponent(sid)}/message?limit=${DEFAULT_RECENT_COUNT}`, bridgeConfig?.openCodeUrl || 'http://127.0.0.1:4096');
           return new Promise<any[]>((resolve) => {
             httpGet({ hostname: ocUrl.hostname, port: ocUrl.port, path: ocUrl.pathname + ocUrl.search, timeout: 5000 }, (ocRes) => {
               let body = '';
@@ -799,7 +810,7 @@ function handleRequest(req: IncomingMessage, res: ServerResponse, bridge: Approv
   if (req.method === 'GET' && url.pathname === '/v1/opencode-sessions/preview') {
     const sid = url.searchParams.get('id') || '';
     if (!sid) { res.writeHead(400); res.end('{}'); return; }
-    const ocUrl = new URL(`/session/${encodeURIComponent(sid)}/message?limit=5`, bridgeConfig?.openCodeUrl || 'http://127.0.0.1:4096');
+    const ocUrl = new URL(`/session/${encodeURIComponent(sid)}/message?limit=${DEFAULT_RECENT_COUNT}`, bridgeConfig?.openCodeUrl || 'http://127.0.0.1:4096');
     console.error('[bridge] opencode-preview: proxying to %s', ocUrl.href);
     const proxy = httpGet(
       { hostname: ocUrl.hostname, port: ocUrl.port, path: ocUrl.pathname + ocUrl.search, timeout: 5000 },
@@ -1280,8 +1291,102 @@ function handleRequest(req: IncomingMessage, res: ServerResponse, bridge: Approv
     return;
   }
 
+  // ── History Share Policy (Phase 2) ──────────────────────
+  // GET /v1/history-policy?key=sessionId
+  // Returns the current history policy config for a given key.
+  if (req.method === 'GET' && url.pathname === '/v1/history-policy') {
+    const key = (url.searchParams.get('key') || '*') as PolicyKey;
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(getConfig(key)));
+    return;
+  }
+
+  // GET /v1/history-policies
+  // Returns ALL configured history policy configs.
+  if (req.method === 'GET' && url.pathname === '/v1/history-policies') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(getAllConfigs()));
+    return;
+  }
+
+  // PUT /v1/history-policy
+  // Sets history policy config for a given key.
+  if (req.method === 'PUT' && url.pathname === '/v1/history-policy') {
+    readJsonBody(req, res).then((rawBody) => {
+      const body = rawBody as any;
+      try {
+        const { key, config } = body;
+        if (!key || !config || typeof config.policy !== 'string') {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: false, error: 'key and config.policy required' }));
+          return;
+        }
+        if (!Object.values(HistorySharePolicy).includes(config.policy)) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: false, error: 'invalid policy value' }));
+          return;
+        }
+        setConfig(key as PolicyKey, config as HistoryPolicyConfig);
+        const normalizedConfig = getConfig(key as PolicyKey);
+        bridge.relay.sendRaw(JSON.stringify({
+          type: 'sync_history_policy',
+          payload: { action: 'set', key, config: { ...normalizedConfig, updatedAt: normalizedConfig.updatedAt || Date.now() } },
+        }));
+        bridge.reevaluateClaudeSync();
+        if (opencodeManager) {
+          for (const localId of bridge.opencodeAttachedIds) {
+            opencodeManager.replayAttachedHistory(localId);
+          }
+        }
+        if (codexResumeManager) {
+          codexResumeManager.replayActiveHistory();
+        }
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: true }));
+      } catch {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: false, error: 'invalid payload' }));
+      }
+    }).catch((err: Error) => {
+      if (err?.message === 'payload too large') return;
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: false, error: 'invalid payload' }));
+    });
+    return;
+  }
+
+  // DELETE /v1/history-policy
+  // Deletes history policy config for a given key.
+  if (req.method === 'DELETE' && url.pathname === '/v1/history-policy') {
+    const key = (url.searchParams.get('key') || '*') as PolicyKey;
+    deleteConfig(key);
+    bridge.relay.sendRaw(JSON.stringify({
+      type: 'sync_history_policy',
+      payload: { action: 'delete', key },
+    }));
+    bridge.reevaluateClaudeSync();
+    if (opencodeManager) {
+      for (const localId of bridge.opencodeAttachedIds) {
+        opencodeManager.replayAttachedHistory(localId);
+      }
+    }
+    if (codexResumeManager) {
+      codexResumeManager.replayActiveHistory();
+    }
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ ok: true }));
+    return;
+  }
+
+  if (req.method === 'GET' && url.pathname === '/v1/privacy-stats') {
+    const stats = bridge.auditCollector.stats();
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(stats));
+    return;
+  }
+
   if (url.pathname === '/v1/health') {
-    const supports = ['mp-status', 'register-window', 'window-id', 'session-label', 'approval_forward', 'activate-session', 'deactivate-session', 'claude-sessions/recent', 'claude-sessions/attach', 'detach-session', 'attached-sessions', 'relay-reconnect', 'admin-config', 'pending-approvals', 'approval-response', 'codex-hooks/permission-request', 'session-error'];
+    const supports = ['mp-status', 'register-window', 'window-id', 'session-label', 'approval_forward', 'activate-session', 'deactivate-session', 'claude-sessions/recent', 'claude-sessions/attach', 'detach-session', 'attached-sessions', 'relay-reconnect', 'admin-config', 'pending-approvals', 'approval-response', 'codex-hooks/permission-request', 'session-error', 'privacy-stats'];
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({
       ok: true,

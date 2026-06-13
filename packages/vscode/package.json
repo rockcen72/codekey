@@ -1,6 +1,6 @@
 {
   "name": "codekey-vscode",
-  "version": "1.0.6",
+  "version": "1.1.1",
   "displayName": "CodeKey",
   "icon": "media/codekey-icon.png",
   "description": "Remote control for AI coding agents — approve, deny, reply from your phone",
@@ -111,13 +111,20 @@
         "codekey.codexResumeSandbox": {
           "type": "string",
           "default": "workspace-write",
-          "enum": ["workspace-write", "read-only", "none"],
+          "enum": [
+            "workspace-write",
+            "read-only",
+            "none"
+          ],
           "description": "Codex resume 的 sandbox 模式。workspace-write 可正常读写项目文件；read-only 仅查看；none 不限制（高风险）。"
         },
         "codekey.codexResumeApprovalPolicy": {
           "type": "string",
           "default": "on-request",
-          "enum": ["on-request", "never"],
+          "enum": [
+            "on-request",
+            "never"
+          ],
           "description": "Codex resume 的审批策略。on-request 需要审批的命令会暂停等待；never 拒绝所有审批请求（安全模式）。"
         }
       }

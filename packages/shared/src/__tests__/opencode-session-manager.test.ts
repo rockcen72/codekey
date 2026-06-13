@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { ApprovalBridge } from '../bridge/handler.js';
 import { discoverLocalOpenCodeSessions, OpenCodeSessionManager } from '../bridge/opencode-session-manager.js';
+import { HistorySharePolicy, setConfig } from '../bridge/history-policy.js';
 
 class FakeRelay extends EventEmitter {
   sent: string[] = [];
@@ -20,9 +21,17 @@ class FakeRelay extends EventEmitter {
         });
       });
     }
+    // Mirror real sendEvent semantics: event-type messages also land in sentEvents
+    // so tests can find events without parsing raw strings.
+    if (msg.type === 'event') {
+      this.sentEvents.push(msg);
+    }
   }
   sendEvent(_sessionId: string, msg: unknown): void {
     this.sentEvents.push(msg);
+  }
+  sendCheckedPayload(payload: { raw: string }): void {
+    this.sendRaw(payload.raw);
   }
 }
 
@@ -40,6 +49,8 @@ describe('OpenCodeSessionManager event handling', () => {
     relay = new FakeRelay();
     bridge = new ApprovalBridge(relay as any);
     bridge.listenRelayCommands();
+    // Default to Recent so streaming/text/task tests can send events
+    setConfig('*', { policy: HistorySharePolicy.Recent, updatedAt: Date.now() });
     manager = new OpenCodeSessionManager('http://127.0.0.1:4096', bridge);
     // Register handlers without starting SSE
     bridge.registerExternalApprovalResponder({
@@ -475,6 +486,30 @@ describe('OpenCodeSessionManager event handling', () => {
       ]);
       await expect(manager.listSessions()).resolves.toMatchObject([
         { id: 'ses_local', title: 'Local OpenCode title', directory: 'F:/Work/Codekey' },
+      ]);
+    });
+
+    it('falls back to local storage when the OpenCode HTTP session endpoint is unavailable', async () => {
+      const sessionDir = join(opencodeDataDir, 'storage', 'session', 'global');
+      mkdirSync(sessionDir, { recursive: true });
+      writeFileSync(join(sessionDir, 'ses_local_offline.json'), JSON.stringify({
+        id: 'ses_local_offline',
+        directory: 'F:/Work/Codekey',
+        title: 'Offline OpenCode title',
+        time: { created: 1, updated: 30 },
+      }), 'utf-8');
+      writeFileSync(join(sessionDir, 'ses_subagent.json'), JSON.stringify({
+        id: 'ses_subagent',
+        title: '@explore',
+        time: { created: 1, updated: 40 },
+      }), 'utf-8');
+      vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+        if (url.endsWith('/session')) return { ok: false, json: async () => [] } as unknown as Response;
+        return { ok: true, body: null } as Response;
+      }));
+
+      await expect(manager.listSessions()).resolves.toMatchObject([
+        { id: 'ses_local_offline', title: 'Offline OpenCode title', directory: 'F:/Work/Codekey' },
       ]);
     });
   });

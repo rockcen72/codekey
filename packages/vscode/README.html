@@ -1,0 +1,597 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>CodeKey - AI Coding Remote</title>
+    <style>
+      :root {
+        --bg: #0e1113;
+        --panel: #151a1e;
+        --panel-2: #101417;
+        --text: #eef4f2;
+        --muted: #9cabaa;
+        --line: #273037;
+        --cyan: #38d5e8;
+        --green: #36df8f;
+        --amber: #ffb84c;
+        --violet: #9b6cff;
+        --radius: 8px;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        background:
+          linear-gradient(180deg, rgba(56, 213, 232, 0.08), transparent 340px),
+          linear-gradient(90deg, rgba(54, 223, 143, 0.06), transparent 55%),
+          var(--bg);
+        color: var(--text);
+        font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+        line-height: 1.65;
+      }
+
+      body[data-lang="en"] .lang-zh,
+      body[data-lang="zh"] .lang-en {
+        display: none;
+      }
+
+      a {
+        color: var(--cyan);
+      }
+
+      .page {
+        width: min(1120px, calc(100% - 40px));
+        margin: 0 auto;
+      }
+
+      .topbar {
+        position: sticky;
+        top: 0;
+        z-index: 2;
+        display: flex;
+        justify-content: flex-end;
+        padding: 18px 0 0;
+      }
+
+      .language-switch {
+        display: inline-flex;
+        gap: 4px;
+        padding: 4px;
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        background: rgba(14, 17, 19, 0.82);
+        backdrop-filter: blur(16px);
+      }
+
+      .language-switch button {
+        min-width: 58px;
+        height: 32px;
+        border: 0;
+        border-radius: 999px;
+        background: transparent;
+        color: var(--muted);
+        font-weight: 700;
+        cursor: pointer;
+      }
+
+      body[data-lang="en"] [data-set-lang="en"],
+      body[data-lang="zh"] [data-set-lang="zh"] {
+        background: #18323a;
+        color: var(--text);
+      }
+
+      .hero {
+        min-height: 620px;
+        display: grid;
+        grid-template-columns: minmax(0, 1.1fr) minmax(320px, 0.9fr);
+        gap: 48px;
+        align-items: center;
+        padding: 34px 0 52px;
+      }
+
+      .kicker {
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+        color: var(--green);
+        font-size: 13px;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      .kicker::before {
+        content: "";
+        width: 9px;
+        height: 9px;
+        border-radius: 99px;
+        background: var(--green);
+        box-shadow: 0 0 18px rgba(54, 223, 143, 0.8);
+      }
+
+      h1 {
+        margin: 18px 0 20px;
+        font-size: clamp(46px, 8vw, 92px);
+        line-height: 0.92;
+        letter-spacing: 0;
+      }
+
+      h1 span {
+        color: var(--cyan);
+        font-style: italic;
+      }
+
+      .lead {
+        max-width: 660px;
+        color: #d7e1df;
+        font-size: 21px;
+      }
+
+      .hero-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+        margin-top: 28px;
+      }
+
+      .button {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 44px;
+        padding: 0 18px;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        background: #182027;
+        color: var(--text);
+        text-decoration: none;
+        font-weight: 700;
+      }
+
+      .button.primary {
+        border-color: rgba(56, 213, 232, 0.5);
+        background: #12323a;
+        color: #eaffff;
+      }
+
+      .proof {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 12px;
+        margin-top: 34px;
+      }
+
+      .proof div {
+        border-left: 2px solid var(--cyan);
+        padding-left: 14px;
+      }
+
+      .proof strong {
+        display: block;
+        font-size: 22px;
+      }
+
+      .proof span {
+        color: var(--muted);
+        font-size: 13px;
+      }
+
+      .device-stack {
+        display: grid;
+        grid-template-columns: 0.75fr 1fr;
+        gap: 18px;
+        align-items: end;
+      }
+
+      .shot {
+        display: block;
+        width: 100%;
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        background: var(--panel);
+        box-shadow: 0 22px 70px rgba(0, 0, 0, 0.35);
+      }
+
+      .shot.sidebar {
+        align-self: center;
+      }
+
+      .section {
+        padding: 52px 0;
+        border-top: 1px solid var(--line);
+      }
+
+      .section-head {
+        display: grid;
+        grid-template-columns: 0.8fr 1.2fr;
+        gap: 30px;
+        align-items: start;
+        margin-bottom: 28px;
+      }
+
+      h2 {
+        margin: 0;
+        font-size: clamp(30px, 4vw, 48px);
+        line-height: 1.08;
+      }
+
+      .section-head p {
+        margin: 0;
+        color: var(--muted);
+        font-size: 18px;
+      }
+
+      .feature-grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 14px;
+      }
+
+      .feature {
+        min-height: 190px;
+        padding: 22px;
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        background: linear-gradient(180deg, rgba(255, 255, 255, 0.035), rgba(255, 255, 255, 0.01));
+      }
+
+      .feature b {
+        display: block;
+        margin-bottom: 8px;
+        font-size: 19px;
+      }
+
+      .feature p {
+        margin: 0;
+        color: var(--muted);
+      }
+
+      .accent-cyan {
+        border-top: 3px solid var(--cyan);
+      }
+
+      .accent-green {
+        border-top: 3px solid var(--green);
+      }
+
+      .accent-amber {
+        border-top: 3px solid var(--amber);
+      }
+
+      .accent-violet {
+        border-top: 3px solid var(--violet);
+      }
+
+      .privacy {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 18px;
+      }
+
+      .policy-table,
+      .steps {
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        overflow: hidden;
+        background: var(--panel-2);
+      }
+
+      table {
+        width: 100%;
+        border-collapse: collapse;
+      }
+
+      th,
+      td {
+        padding: 15px 16px;
+        border-bottom: 1px solid var(--line);
+        text-align: left;
+        vertical-align: top;
+      }
+
+      th {
+        color: #dfe9e6;
+        background: rgba(255, 255, 255, 0.04);
+      }
+
+      td {
+        color: var(--muted);
+      }
+
+      td strong {
+        color: var(--text);
+      }
+
+      .steps {
+        padding: 22px;
+      }
+
+      .steps ol,
+      .steps ul {
+        margin: 0;
+        padding-left: 24px;
+      }
+
+      .steps li {
+        margin: 10px 0;
+        color: #d5dfdc;
+      }
+
+      .gallery {
+        display: grid;
+        grid-template-columns: 0.8fr 1fr 1fr;
+        gap: 18px;
+        align-items: start;
+      }
+
+      figure {
+        margin: 0;
+      }
+
+      figcaption {
+        margin-top: 10px;
+        color: var(--muted);
+        font-size: 14px;
+      }
+
+      .footer {
+        padding: 34px 0 56px;
+        color: var(--muted);
+        border-top: 1px solid var(--line);
+      }
+
+      @media (max-width: 860px) {
+        .hero,
+        .section-head,
+        .privacy,
+        .gallery {
+          grid-template-columns: 1fr;
+        }
+
+        .hero {
+          min-height: auto;
+          padding-top: 34px;
+        }
+
+        .device-stack,
+        .feature-grid,
+        .proof {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body data-lang="en">
+    <main class="page">
+      <div class="topbar" aria-label="Language selector">
+        <div class="language-switch">
+          <button type="button" data-set-lang="en">EN</button>
+          <button type="button" data-set-lang="zh">中文</button>
+        </div>
+      </div>
+
+      <section class="hero">
+        <div>
+          <div class="kicker">AI Coding Remote</div>
+          <h1>Code<span>Key</span></h1>
+          <p class="lead lang-en">
+            Approve, monitor, and continue Claude Code, Codex, and OpenCode from your phone.
+            Your desktop agent keeps working, while history sharing and privacy rules stay under your control.
+          </p>
+          <p class="lead lang-zh">
+            在手机上审批、查看和接续 Claude Code、Codex、OpenCode。
+            桌面端继续执行，历史同步和隐私策略都由你控制。
+          </p>
+          <div class="hero-actions">
+            <a class="button primary lang-en" href="#quick-start">Get started</a>
+            <a class="button primary lang-zh" href="#quick-start">开始使用</a>
+            <a class="button lang-en" href="#privacy">Privacy design</a>
+            <a class="button lang-zh" href="#privacy">查看隐私设计</a>
+          </div>
+          <div class="proof">
+            <div><strong>3</strong><span>agent integrations</span></div>
+            <div><strong>Off / Summary / Full</strong><span>history policies</span></div>
+            <div><strong>Local first</strong><span>privacy pipeline</span></div>
+          </div>
+        </div>
+        <div class="device-stack">
+          <img class="shot sidebar" src="media/readme-sidebar.png" alt="CodeKey VS Code sidebar" />
+          <img class="shot" src="media/readme-mobile-session.jpg" alt="CodeKey mobile session detail" />
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="section-head">
+          <h2 class="lang-en">Keep your agent moving, even away from your desk</h2>
+          <h2 class="lang-zh">离开电脑，也不用让 agent 停在那里等你</h2>
+          <p class="lang-en">
+            CodeKey moves AI coding approvals and follow-up prompts to your phone:
+            approve commands, answer questions, watch progress, and send the next prompt remotely.
+          </p>
+          <p class="lang-zh">
+            CodeKey 把 AI coding agent 的等待点搬到手机上：
+            你可以审批命令、回复问题、查看任务进度，也可以主动发送下一条 prompt。
+          </p>
+        </div>
+        <div class="feature-grid">
+          <div class="feature accent-cyan">
+            <b class="lang-en">Mobile approvals</b>
+            <b class="lang-zh">手机审批</b>
+            <p class="lang-en">Permission requests appear on mobile with approve, deny, and reply actions.</p>
+            <p class="lang-zh">权限请求实时推送到手机端，支持批准、拒绝和文字回复。</p>
+          </div>
+          <div class="feature accent-green">
+            <b class="lang-en">Remote prompts</b>
+            <b class="lang-zh">远程 prompt</b>
+            <p class="lang-en">Type from mobile and your local VS Code agent continues the task.</p>
+            <p class="lang-zh">在手机上输入新指令，VS Code 里的本地 agent 会继续执行当前工作流。</p>
+          </div>
+          <div class="feature accent-amber">
+            <b class="lang-en">Session sync</b>
+            <b class="lang-zh">会话同步</b>
+            <p class="lang-en">Track local sessions by Claude Code, Codex, and OpenCode.</p>
+            <p class="lang-zh">按 Claude Code、Codex、OpenCode 分类查看本地会话和任务状态。</p>
+          </div>
+          <div class="feature accent-violet">
+            <b class="lang-en">VS Code control panel</b>
+            <b class="lang-zh">VS Code 侧栏</b>
+            <p class="lang-en">Pair devices, inspect status, manage sync, and handle approval cards in one place.</p>
+            <p class="lang-zh">配对、连接状态、同步开关、本地会话和审批卡集中在一个控制台里。</p>
+          </div>
+          <div class="feature accent-cyan">
+            <b class="lang-en">Mobile apps</b>
+            <b class="lang-zh">多端入口</b>
+            <p class="lang-en">Works with WeChat Mini Program and Telegram Mini App.</p>
+            <p class="lang-zh">支持微信小程序和 Telegram Mini App，适合国内外不同使用环境。</p>
+          </div>
+          <div class="feature accent-green">
+            <b class="lang-en">Instant policy changes</b>
+            <b class="lang-zh">即时生效</b>
+            <p class="lang-en">History policies and agent state updates apply without restarting the workspace.</p>
+            <p class="lang-zh">历史同步策略和 agent 状态变化即时应用，不需要重启工作区。</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="section" id="privacy">
+        <div class="section-head">
+          <h2 class="lang-en">Privacy is a product feature, not a slogan</h2>
+          <h2 class="lang-zh">隐私保护是产品能力，不是标语</h2>
+          <p class="lang-en">
+            Remote control requires relay forwarding, but CodeKey projects, sanitizes, and blocks events locally first.
+            You can turn history off entirely or share safe summaries only.
+          </p>
+          <p class="lang-zh">
+            远程控制需要 relay 转发消息，但 CodeKey 在本机先做策略判断、脱敏和拦截。
+            你可以关闭历史同步，也可以只同步安全摘要。
+          </p>
+        </div>
+        <div class="privacy">
+          <div class="policy-table">
+            <table>
+              <thead>
+                <tr>
+                  <th class="lang-en">Policy</th>
+                  <th class="lang-zh">策略</th>
+                  <th class="lang-en">What mobile can see</th>
+                  <th class="lang-zh">手机端看到什么</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><strong>Off</strong></td>
+                  <td class="lang-en">Approval cards only. No session history.</td>
+                  <td class="lang-zh">只同步审批卡，不同步会话历史。</td>
+                </tr>
+                <tr>
+                  <td><strong>Summary</strong></td>
+                  <td class="lang-en">Safe status summaries without raw prompt or output text.</td>
+                  <td class="lang-zh">同步安全摘要和状态，不带原始 prompt 或 agent 输出。</td>
+                </tr>
+                <tr>
+                  <td><strong>Full</strong></td>
+                  <td class="lang-en">Full session history, still filtered by local secret scanning and blocklists.</td>
+                  <td class="lang-zh">同步完整会话内容，但仍经过本机 secret scanning 和 blocklist。</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="steps">
+            <ul class="lang-en">
+              <li>Secret scanning redacts API keys, tokens, passwords, and similar values locally.</li>
+              <li>Blocklist / .codekeyignore prevents selected files and paths from being forwarded.</li>
+              <li>Field projection keeps Summary mode limited to safe event type, state, and summary fields.</li>
+              <li>Audit panel shows forwarded, blocked, and sanitized event counts in the sidebar.</li>
+              <li>Per-agent policy lets Claude Code, Codex, and OpenCode use different history modes.</li>
+            </ul>
+            <ul class="lang-zh">
+              <li>Secret scanning：API key、token、password 等敏感字段先脱敏。</li>
+              <li>Blocklist / .codekeyignore：指定路径和文件不会被转发。</li>
+              <li>Field projection：Summary 模式只保留类型、状态和安全摘要。</li>
+              <li>Audit panel：侧栏展示 forwarded、blocked、sanitized 的统计和原因。</li>
+              <li>Per-agent policy：每个 agent 可独立设置历史同步模式。</li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="section-head">
+          <h2 class="lang-en">Screenshots</h2>
+          <h2 class="lang-zh">截图说明</h2>
+          <p class="lang-en">The core workflow lives in three places: the VS Code sidebar, the mobile session list, and the mobile session detail view.</p>
+          <p class="lang-zh">安装后你主要会接触三个界面：VS Code 侧栏、手机会话列表、手机会话详情。</p>
+        </div>
+        <div class="gallery">
+          <figure>
+            <img class="shot" src="media/readme-sidebar.png" alt="CodeKey sidebar" />
+            <figcaption class="lang-en">VS Code sidebar: pairing, sync, agent status, and approval cards.</figcaption>
+            <figcaption class="lang-zh">VS Code 侧栏：配对、同步、agent 状态和审批卡。</figcaption>
+          </figure>
+          <figure>
+            <img class="shot" src="media/readme-mobile-history.jpg" alt="CodeKey mobile history" />
+            <figcaption class="lang-en">Mobile history: jump back into active work quickly.</figcaption>
+            <figcaption class="lang-zh">手机会话列表：快速查看当前活跃任务。</figcaption>
+          </figure>
+          <figure>
+            <img class="shot" src="media/readme-mobile-session.jpg" alt="CodeKey mobile session" />
+            <figcaption class="lang-en">Mobile session: inspect output and send the next prompt.</figcaption>
+            <figcaption class="lang-zh">手机会话详情：查看输出并继续发送指令。</figcaption>
+          </figure>
+        </div>
+      </section>
+
+      <section class="section" id="quick-start">
+        <div class="section-head">
+          <h2 class="lang-en">Start in 5 steps</h2>
+          <h2 class="lang-zh">5 步开始</h2>
+          <p class="lang-en">Keep your existing agent workflow. CodeKey only moves approvals and monitoring to your phone.</p>
+          <p class="lang-zh">安装扩展后，不需要改变原来的 agent 使用方式，只是把审批和查看搬到手机上。</p>
+        </div>
+        <div class="steps">
+          <ol class="lang-en">
+            <li>Install the CodeKey VS Code extension.</li>
+            <li>Open the CodeKey view from the Activity Bar.</li>
+            <li>Click Pair Device and scan the QR code with WeChat or Telegram.</li>
+            <li>Start Claude Code, Codex, or OpenCode.</li>
+            <li>Approve, monitor, and send prompts from your phone.</li>
+          </ol>
+          <ol class="lang-zh">
+            <li>安装 CodeKey VS Code 扩展。</li>
+            <li>打开 Activity Bar 中的 CodeKey 侧栏。</li>
+            <li>点击 Pair Device，用微信或 Telegram 扫码配对。</li>
+            <li>启动 Claude Code、Codex 或 OpenCode。</li>
+            <li>在手机上审批、查看进度、继续发送 prompt。</li>
+          </ol>
+        </div>
+      </section>
+
+      <footer class="footer">
+        <strong>CodeKey</strong> · AI Coding Remote · Apache 2.0
+      </footer>
+    </main>
+    <script>
+      (() => {
+        const browserLanguage = (navigator.language || "").toLowerCase();
+        const savedLanguage = localStorage.getItem("codekey-readme-language");
+        const initialLanguage = savedLanguage || (browserLanguage.startsWith("zh") ? "zh" : "en");
+
+        function setLanguage(language) {
+          document.documentElement.lang = language === "zh" ? "zh-CN" : "en";
+          document.body.dataset.lang = language;
+          localStorage.setItem("codekey-readme-language", language);
+        }
+
+        document.querySelectorAll("[data-set-lang]").forEach((button) => {
+          button.addEventListener("click", () => setLanguage(button.dataset.setLang));
+        });
+
+        setLanguage(initialLanguage);
+      })();
+    </script>
+  </body>
+</html>

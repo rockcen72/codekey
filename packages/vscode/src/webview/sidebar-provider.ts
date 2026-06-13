@@ -4,7 +4,7 @@ import * as crypto from 'node:crypto';
 import * as os from 'node:os';
 import WebSocket from 'ws';
 import { loadCredentials, clearCredentials, loadDesktopInstallId } from '../auth/credentials.js';
-import { createApi, ApiError, type SessionResponse, type SubscriptionResponse } from '../api/client.js';
+import { createApi, ApiError, type SessionResponse, type EventResponse, type SubscriptionResponse } from '../api/client.js';
 import { getAgents } from '../agents/registry.js';
 import { BridgeStatusService } from '../services/bridge-status.js';
 import { SessionStore } from '../services/session-store.js';
@@ -18,6 +18,10 @@ import {
   renderAgentsContent,
   renderApprovalsContent,
   renderSessionsContent,
+  renderSessionDetailContent,
+  renderPrivacyContent,
+  renderPrivacyDetailContent,
+  renderHistoryPolicyContent,
   renderSubscribe,
   type SidebarState,
   type PendingApprovalItem,
@@ -36,6 +40,7 @@ const AGENT_DISPLAY_NAMES: Record<string, string> = {
 
 const POLL_MS = 5000;
 const APPROVAL_POLL_MS = 1000;
+const PRIVACY_POLL_MS = 5000;
 const BRIDGE_FETCH_TIMEOUT_MS = 2000;
 
 interface BridgePendingApproval {
@@ -127,13 +132,21 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
    *  fall back to a 30s retry interval instead of 1s polling. */
   private _approvalPoll404Count = 0;
   private _approvalPollRetryTimer?: ReturnType<typeof setTimeout>;
+  private _privacyPollTimer?: ReturnType<typeof setInterval>;
+  private _lastPrivacySig = '';
+  private _privacyStats: any = null;
   private _lastSubscription?: SubscriptionResponse;
+  private _lastEvents: Record<string, EventResponse[]> = {};
+  private _lastRelaySessions: SessionResponse[] = [];
+  private _lastClaudeSessions: SidebarState['claudeSessions'] = [];
+  private _lastAgents: SidebarState['agents'] = [];
 
   /** Window during which a recent user-driven detach/attach overrides
    *  the lagging `remote` list. Long enough to absorb the WS round-trip
    *  + DB write + next sidebar poll, short enough that a real out-of-band
    *  re-attach (mp re-syncs from phone) still wins after the window. */
   private static readonly RECENT_ACTION_WINDOW_MS = 15_000;
+  private static readonly MIN_SYNC_SPINNER_MS = 600;
 
   private _isRecentlyDetached(sessionId: string): boolean {
     const at = this._recentDetachedAt.get(sessionId);
@@ -155,6 +168,27 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     return true;
   }
 
+  private _syncStatus(sessionId: string): SidebarState['claudeSessions'][number]['syncStatus'] | undefined {
+    if (this._syncInFlight.has(sessionId)) return 'syncing';
+    return undefined;
+  }
+
+  private _decorateSyncStatus(sessions: SidebarState['claudeSessions']): SidebarState['claudeSessions'] {
+    return sessions.map((session) => {
+      const { syncStatus: _syncStatus, ...rest } = session;
+      const syncStatus = this._syncStatus(session.sessionId);
+      return syncStatus ? { ...rest, syncStatus } : rest;
+    });
+  }
+
+  private _finishSyncSpinner(sessionId: string, startedAt: number): void {
+    const waitMs = Math.max(0, SidebarProvider.MIN_SYNC_SPINNER_MS - (Date.now() - startedAt));
+    setTimeout(() => {
+      this._syncInFlight.delete(sessionId);
+      this._pushSessionsOnly();
+    }, waitMs);
+  }
+
   constructor(private _context: vscode.ExtensionContext) {}
 
   resolveWebviewView(webviewView: vscode.WebviewView): void {
@@ -169,10 +203,23 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
 
     this._bridgeDisposable = this._bridgeService.onDidChange(() => this._pushState());
 
+    webviewView.onDidDispose(() => {
+      this._view = undefined;
+      this._lastPrivacySig = '';
+      this._stopPolling();
+      this._stopApprovalPolling();
+      this._stopPrivacyPolling();
+      if (this._bridgeDisposable) {
+        this._bridgeDisposable.dispose();
+        this._bridgeDisposable = undefined;
+      }
+    });
+
     this._bridgeService.ensureStarted();
     this._pushState().catch(err => log(`_pushState (initial) failed: ${err?.stack || err}`));
     this._startPolling();
     this._startApprovalPolling();
+    this._startPrivacyPolling();
   }
 
   /** Fast (1s) poll of bridge's in-memory pending approvals.
@@ -243,6 +290,33 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       // bridge unreachable, leave previous state
     } finally {
       this._approvalPollInFlight = false;
+    }
+  }
+
+  private async _pollPrivacy(): Promise<void> {
+    if (!this._view) return;
+    try {
+      const resp = await this._bridgeFetch(`${this._bridgeService.getBridgeUrl()}/v1/privacy-stats`);
+      if (!resp.ok) return;
+      const stats = await resp.json() as { summary: { forwarded: number; blocked: number; sanitized: number; totalFindings: number }; recentEntries: any[] };
+      this._privacyStats = stats;
+      const sig = stats.summary.forwarded + '|' + stats.summary.blocked + '|' + stats.summary.sanitized + '|' + stats.recentEntries.length;
+      if (sig === this._lastPrivacySig) return;
+      this._lastPrivacySig = sig;
+      const state: SidebarState = {
+        deviceStatus: 'paired',
+        phoneName: '',
+        bridge: this._bridgeService.state,
+        agents: [],
+        pendingApprovals: [],
+        sessions: [],
+        events: {},
+        claudeSessions: [],
+        privacy: stats,
+      };
+      this._view.webview.postMessage({ type: 'stateUpdate', privacyHtml: renderPrivacyContent(state) });
+    } catch {
+      // bridge unreachable — leave previous state
     }
   }
 
@@ -381,11 +455,11 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     }
   }
 
-  private async attachClaudeSession(sessionId: string): Promise<void> {
-    if (!sessionId) return;
+  private async attachClaudeSession(sessionId: string): Promise<boolean> {
+    if (!sessionId) return false;
     if (this._claudeAttachInFlight.has(sessionId)) {
       log(`Claude attach already in flight for ${sessionId.slice(0, 8)}`);
-      return;
+      return false;
     }
     this._claudeAttachInFlight.add(sessionId);
     try {
@@ -402,12 +476,15 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
           await SessionStore.add(this._context, creds.deviceId, sessionId);
         }
         vscode.window.showInformationMessage(`Session ${sessionId.slice(0, 8)} pushed to remote`);
+        return true;
       } else {
         const body = await res.json().catch(() => ({} as Record<string, unknown>));
         vscode.window.showErrorMessage(`Attach failed: ${(body as Record<string, unknown>).error || res.statusText}`);
+        return false;
       }
     } catch {
       vscode.window.showErrorMessage('Attach failed: bridge not available');
+      return false;
     } finally {
       this._claudeAttachInFlight.delete(sessionId);
     }
@@ -479,23 +556,21 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
    *  Skips relay API calls for speed; uses in-memory session + syncInFlight data. */
   private _pushSessionsOnly(): void {
     if (!this._view) return;
+    const claudeSessions = this._decorateSyncStatus(this._lastClaudeSessions);
     // Build a minimal state with current _syncInFlight markers. The webview
     // swaps only sessionsContent, leaving other sections unchanged.
     const creds = loadCredentials();
     const state: SidebarState = {
+      lang: vscode.env.language,
       deviceStatus: creds?.deviceToken ? 'paired' : 'unpaired',
       phoneName: '',
       bridge: this._bridgeService.state,
-      agents: [],
+      agents: this._lastAgents,
       pendingApprovals: [],
       sessions: [],
       events: {},
-      claudeSessions: (this as any)._lastSessions ?? [],
+      claudeSessions,
     };
-    // Mark in-flight sessions so buttons show spinner
-    for (const s of state.claudeSessions) {
-      if (this._syncInFlight.has(s.sessionId)) (s as any).syncing = true;
-    }
     this._view.webview.postMessage({
       type: 'stateUpdate',
       sessionsHtml: renderSessionsContent(state),
@@ -568,6 +643,8 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
           events[s.id] = await api.getSessionEvents(s.id).catch(() => []);
         }));
         deviceStatus = 'paired';
+        this._lastEvents = events;
+        this._lastRelaySessions = sessions;
         subscription = await api.getDeviceSubscription().catch(() => this._lastSubscription);
         if (subscription) this._lastSubscription = subscription;
       } catch (err) {
@@ -576,6 +653,17 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       }
     }
     if (allDeviceSessions.length === 0) allDeviceSessions = sessions;
+
+    // ── History policies ──────────────────────────────
+    type HistoryPolicyEntry = { key: string; policy: string; updatedAt: number };
+    let historyPolicies: HistoryPolicyEntry[] = [];
+    try {
+      const hpResp = await this._bridgeFetch(`${this._bridgeService.getBridgeUrl()}/v1/history-policies`);
+      if (hpResp.ok) {
+        const raw = (await hpResp.json()) as Array<{ key: string; config: { policy: string; updatedAt: number } }>;
+        historyPolicies = raw.map(r => ({ key: r.key, ...r.config }));
+      }
+    } catch { /* bridge unreachable */ }
 
     // Pending approvals: prefer bridge's in-memory list (real-time, ~1s lag),
     // fall back to relay events scrape for older bridges that lack the endpoint.
@@ -890,6 +978,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
               canDetach: isAttached,
               isCodexSession: true,
               resumed: isAttached,
+              serverSessionId: remote?.serverSessionId,
             });
           }
         }
@@ -930,11 +1019,6 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       }
     } catch { /* bridge unreachable */ }
 
-    // Mark in-flight sync operations so UI shows a spinner
-    for (const s of mergedClaudeSessions) {
-      if (this._syncInFlight.has(s.sessionId)) (s as any).syncing = true;
-    }
-
     // Dedup by sessionId — multiple sources (ocStored, listSessions HTTP+disk,
     // allDeviceSessions) can produce duplicates if session IDs diverge or the
     // same session appears from different discovery paths. Keep the last entry
@@ -951,7 +1035,9 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     }
 
     // Save for _pushSessionsOnly (lightweight spinner update without API calls)
-    (this as any)._lastSessions = mergedClaudeSessions;
+    this._lastClaudeSessions = mergedClaudeSessions;
+    this._lastAgents = agents;
+    const visibleClaudeSessions = this._decorateSyncStatus(mergedClaudeSessions);
 
     const state: SidebarState = {
       lang: vscode.env.language,
@@ -962,7 +1048,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       pendingApprovals,
       sessions,
       events,
-      claudeSessions: mergedClaudeSessions,
+      claudeSessions: visibleClaudeSessions,
       relayUrl: creds?.relayUrl,
       deviceId: creds?.deviceId,
       deviceSecret: creds?.deviceSecret,
@@ -970,6 +1056,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       pairingPlatform: this._pairingState?.platform || creds?.platform || this._selectedPairingPlatform,
       pairing: this._pairingState,
       subscription,
+      historyPolicies,
     };
 
     if (this._firstPush) {
@@ -984,6 +1071,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       approvalsHtml: renderApprovalsContent(state),
       sessionsHtml: renderSessionsContent(state),
       subscriptionHtml: renderSubscribe(state),
+      historyPolicyHtml: renderHistoryPolicyContent(state),
       deviceStatus,
       paired: deviceStatus === 'paired',
       agentCount: state.agents.filter(a => a.runtimeStatus === 'active').length,
@@ -1014,9 +1102,25 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
   }
 
   private _stopApprovalPolling(): void {
+    if (this._approvalPollRetryTimer) {
+      clearTimeout(this._approvalPollRetryTimer);
+      this._approvalPollRetryTimer = undefined;
+    }
     if (this._approvalPollTimer) {
       clearInterval(this._approvalPollTimer);
       this._approvalPollTimer = undefined;
+    }
+  }
+
+  private _startPrivacyPolling(): void {
+    this._stopPrivacyPolling();
+    this._privacyPollTimer = setInterval(() => this._pollPrivacy(), PRIVACY_POLL_MS);
+  }
+
+  private _stopPrivacyPolling(): void {
+    if (this._privacyPollTimer) {
+      clearInterval(this._privacyPollTimer);
+      this._privacyPollTimer = undefined;
     }
   }
 
@@ -1063,12 +1167,39 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         }
         this._handleSessionPreview(msg.sessionId, msg.iscodex === true);
         break;
+      case 'showSessionDetail':
+        this._handleShowSessionDetail(msg.serverSessionId, msg.sessionId);
+        break;
+      case 'hideSessionDetail':
+        break;
+      case 'showPrivacyDetail':
+        this._handleShowPrivacyDetail(msg.filter);
+        break;
+      case 'hidePrivacyDetail':
+        if (this._privacyStats) {
+          const state: SidebarState = {
+            lang: vscode.env.language,
+            deviceStatus: 'paired',
+            phoneName: '',
+            bridge: this._bridgeService.state,
+            agents: [],
+            pendingApprovals: [],
+            sessions: [],
+            events: {},
+            claudeSessions: [],
+            historyPolicies: [],
+            privacy: this._privacyStats,
+          };
+          this._view?.webview.postMessage({ type: 'stateUpdate', privacyHtml: renderPrivacyContent(state) });
+        }
+        break;
       case 'toggleAttachClaudeSession':
         // Debounce: ignore actions within 1s of the last toggle to prevent
         // relay race conditions (deactivate_session vs register_session).
         if (Date.now() - this._lastToggleTime < 1000) { log('toggle debounced'); break; }
         this._lastToggleTime = Date.now();
         const toggleSid = String(msg.sessionId || '');
+        const syncStartedAt = Date.now();
         if (toggleSid) this._syncInFlight.add(toggleSid);
         this._pushSessionsOnly();
         if (msg.isopencode) {
@@ -1076,6 +1207,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
           const attached = msg.attached === true;
           if (!sessionId) {
             vscode.window.showErrorMessage('OpenCode attach failed: missing session id');
+            this._finishSyncSpinner(toggleSid, syncStartedAt);
             break;
           }
 
@@ -1086,7 +1218,6 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
             break;
           }
           this._opencodeAttachInFlight.add(inFlightKey);
-
           const ocUrl = attached
             ? `${this._bridgeService.getBridgeUrl()}/v1/opencode-sessions/detach`
             : `${this._bridgeService.getBridgeUrl()}/v1/opencode-sessions/attach`;
@@ -1118,8 +1249,8 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
           }).catch(() => {
             vscode.window.showErrorMessage(`${attached ? 'Detach' : 'Attach'} failed: bridge not available`);
           }).finally(() => {
-            this._syncInFlight.delete(toggleSid);
             this._opencodeAttachInFlight.delete(inFlightKey);
+            this._finishSyncSpinner(toggleSid, syncStartedAt);
             this._pushState();
           });
           break;
@@ -1153,11 +1284,11 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
                   this._recentDetachedAt.set(codexSid, Date.now());
                   this._recentAttachedAt.delete(codexSid);
                 }
-                this._syncInFlight.delete(toggleSid);
+                this._finishSyncSpinner(toggleSid, syncStartedAt);
                 this._pushState();
               })
               .catch(() => {
-                this._syncInFlight.delete(toggleSid);
+                this._finishSyncSpinner(toggleSid, syncStartedAt);
                 vscode.window.showErrorMessage('Stop failed: bridge not available');
               });
           } else {
@@ -1173,10 +1304,10 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
                 this._recentAttachedAt.set(codexSid, Date.now());
                 this._recentDetachedAt.delete(codexSid);
               }
-              this._syncInFlight.delete(toggleSid);
+              this._finishSyncSpinner(toggleSid, syncStartedAt);
               this._pushState();
             }).catch(() => {
-              this._syncInFlight.delete(toggleSid);
+              this._finishSyncSpinner(toggleSid, syncStartedAt);
               vscode.window.showErrorMessage('Resume failed: bridge not available');
             });
           }
@@ -1197,14 +1328,17 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
                 await SessionStore.remove(this._context, creds.deviceId, msg.sessionId);
               }
             }
-            this._syncInFlight.delete(toggleSid);
+            this._finishSyncSpinner(toggleSid, syncStartedAt);
             this._pushState();
           }).catch(() => {
-            this._syncInFlight.delete(toggleSid);
+            this._finishSyncSpinner(toggleSid, syncStartedAt);
             this._pushState();
           });
         } else {
-          this.attachClaudeSession(msg.sessionId).then(() => { this._syncInFlight.delete(toggleSid); this._pushState(); });
+          this.attachClaudeSession(msg.sessionId).then((succeeded) => {
+            this._finishSyncSpinner(toggleSid, syncStartedAt);
+            this._pushState();
+          });
         }
         break;
       case 'detachSession':
@@ -1251,6 +1385,12 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         break;
       case 'unpairDevice':
         this._handleUnpair();
+        break;
+      case 'setHistoryPolicy':
+        this._handleSetHistoryPolicy(msg.key, msg.policy);
+        break;
+      case 'deleteHistoryPolicy':
+        this._handleDeleteHistoryPolicy(msg.key);
         break;
     }
   }
@@ -1549,5 +1689,67 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         agentLabel: 'OpenCode',
       });
     }
+  }
+
+  private _handleShowSessionDetail(serverSessionId: string, _sessionId: string): void {
+    const lang = vscode.env.language;
+    const claudeSessions: any[] = this._lastClaudeSessions;
+    const events = this._lastEvents[serverSessionId] || [];
+    const sessions = this._lastRelaySessions;
+
+    // Build a minimal state-like object for the render function
+    const miniState: SidebarState = {
+      lang,
+      deviceStatus: 'paired',
+      phoneName: '',
+      bridge: {} as any,
+      agents: [],
+      pendingApprovals: [],
+      sessions,
+      events: { [serverSessionId]: events },
+      claudeSessions,
+      historyPolicies: [],
+    };
+
+    const html = renderSessionDetailContent(miniState, serverSessionId);
+    this._view?.webview.postMessage({ type: 'sessionDetail', serverSessionId, html });
+  }
+
+  private _handleShowPrivacyDetail(filter: string): void {
+    if (!this._privacyStats) return;
+    const lang = vscode.env.language;
+    const state: SidebarState = {
+      lang,
+      deviceStatus: 'paired',
+      phoneName: '',
+      bridge: this._bridgeService.state,
+      agents: [],
+      pendingApprovals: [],
+      sessions: [],
+      events: {},
+      claudeSessions: [],
+      historyPolicies: [],
+      privacy: this._privacyStats,
+    };
+    const html = renderPrivacyDetailContent(state, filter);
+    this._view?.webview.postMessage({ type: 'privacyDetail', html });
+  }
+
+  private _handleSetHistoryPolicy(key: string, policy: string): void {
+    const bridgeUrl = this._bridgeService.getBridgeUrl();
+    if (!bridgeUrl) return;
+    this._bridgeFetch(`${bridgeUrl}/v1/history-policy`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ key, config: { policy, updatedAt: Date.now() } }),
+    }).then(() => this._pushState()).catch((err) => log(`setHistoryPolicy failed: ${err}`));
+  }
+
+  private _handleDeleteHistoryPolicy(key: string): void {
+    const bridgeUrl = this._bridgeService.getBridgeUrl();
+    if (!bridgeUrl) return;
+    this._bridgeFetch(`${bridgeUrl}/v1/history-policy?key=${encodeURIComponent(key)}`, {
+      method: 'DELETE',
+    }).then(() => this._pushState()).catch((err) => log(`deleteHistoryPolicy failed: ${err}`));
   }
 }

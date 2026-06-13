@@ -29,6 +29,10 @@ class FakeHookRelay extends EventEmitter {
     // not used by hook endpoint path
   }
 
+  sendCheckedPayload(payload: { raw: string }): void {
+    this.sendRaw(payload.raw);
+  }
+
   /** Simulate phone's approval decision via relay. */
   simulateApproval(clientEventId: string, decision: string): void {
     this.emit('approval_forward', { clientEventId, eventId: clientEventId, decision });
@@ -519,6 +523,7 @@ describe('CodexHooksBridge', () => {
       // Use a relay that does NOT auto-respond to register_session
       const silentRelay = new EventEmitter() as any;
       silentRelay.sendRaw = vi.fn();
+      silentRelay.sendCheckedPayload = vi.fn((p: { raw: string }) => silentRelay.sendRaw(p.raw));
       silentRelay.status = 'connected';
       const bridge = new ApprovalBridge(silentRelay);
       const { close, port } = await startBridgeServer(bridge, 0);

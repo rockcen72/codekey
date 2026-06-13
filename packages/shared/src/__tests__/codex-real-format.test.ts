@@ -15,6 +15,7 @@ import { EventEmitter } from 'node:events';
 import { discoverLocalSessions, loadCodexConversation, normalizeCodexSessionTitle } from '../bridge/codex-local-session-resolver.js';
 import { CodexResumeManager } from '../bridge/codex-resume-manager.js';
 import { CodexTranscriptWatcher, type TranscriptEvent } from '../bridge/codex-transcript-watcher.js';
+import { HistorySharePolicy, setConfig } from '../bridge/history-policy.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -295,6 +296,7 @@ describe('Codex real transcript format', () => {
     });
 
     it('CodexResumeManager forwards appended assistant transcript output', async () => {
+      setConfig('*', { policy: HistorySharePolicy.Recent, updatedAt: Date.now() });
       const dir = path.join(tmpHome, 'sessions', '2026', '06', '01');
       mkdirSync(dir, { recursive: true });
       const sessionId = '019e8231-a3f7-7c43-8dfb-f2107c803690';
@@ -317,6 +319,7 @@ describe('Codex real transcript format', () => {
             });
           }
         },
+        sendCheckedPayload(p: { raw: string }) { this.sendRaw(p.raw); },
       });
       const manager = new CodexResumeManager(relay as any, new Set());
 
@@ -397,6 +400,7 @@ describe('Codex real transcript format', () => {
         sendRaw(value: string) {
           sent.push(JSON.parse(value));
         },
+        sendCheckedPayload(p: { raw: string }) { this.sendRaw(p.raw); },
       });
       const manager = new CodexResumeManager(relay as any, new Set());
 
@@ -451,6 +455,9 @@ describe('Codex real transcript format', () => {
     });
 
     it('forwards assistant history to relay for phone display', async () => {
+      // Set policy using the session-specific key format: agentType:localSessionId
+      setConfig('codex:dummy-session-id', { policy: HistorySharePolicy.Recent, updatedAt: Date.now() });
+
       const dir = path.join(tmpHome, 'sessions', '2026', '06', '01');
       mkdirSync(dir, { recursive: true });
       const file = path.join(dir, 'rollout-history.jsonl');
@@ -461,10 +468,20 @@ describe('Codex real transcript format', () => {
         sendRaw(value: string) {
           sent.push(JSON.parse(value));
         },
+        sendCheckedPayload(p: { raw: string }) { this.sendRaw(p.raw); },
       });
       const manager = new CodexResumeManager(relay as any, new Set());
 
-      await (manager as any)._forwardRecentHistory('server-session', file);
+      // Mock the session state so _forwardEvent can look up localSessionId
+      const mockState = {
+        localSession: { sessionId: 'dummy-session-id', transcriptPath: file, title: 'test', source: 'vscode' as const },
+        runtime: null as any,
+        forwardedTextKeys: new Set<string>(),
+        watcher: null,
+      };
+      (manager as any).sessions.set('server-session', mockState);
+
+      await (manager as any)._forwardRecentHistory('server-session', 'dummy-session-id', file);
 
       expect(sent).toEqual(expect.arrayContaining([
         expect.objectContaining({

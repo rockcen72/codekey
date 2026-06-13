@@ -6,6 +6,7 @@ import { startBridgeServer } from '../bridge/server.js';
 class FakeRelay extends EventEmitter {
   sendRaw(_value: string): void { /* not used */ }
   sendEvent(_sessionId: string, _msg: unknown): void { /* not used */ }
+  sendCheckedPayload(p: { raw: string }): void { /* not used */ }
 }
 
 function createBridge() {

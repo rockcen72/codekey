@@ -31,7 +31,11 @@ export type { TranscriptEvent, CodexTranscriptWatcherOptions } from './codex-tra
 export { CodexResumeManager } from './codex-resume-manager.js';
 export { OpenCodeSessionManager } from './opencode-session-manager.js';
 
-// Cross-platform utilities
+// Privacy pipeline
+export { runPrivacyPipeline, toCheckedPayload, projectAllowedFields, projectHistoryEventForPolicy, safeSummary, type PrivacyContext, type PrivacyDecision, type PrivacyCheckedPayload, type AuditEntry, type AuditSink, type SourceType, type ContentPolicy } from './privacy-pipeline.js';
+export { scan, replace, scanAndReplace, type Finding, type Rule } from './secret-scanner.js';
+export { CodeKeyIgnore } from './codekeyignore.js';
+export { DEFAULT_BLOCKED_PATTERNS, matchesAny } from './blocklist.js';
 export {
   detectPlatform,
   binaryName,
@@ -43,3 +47,27 @@ export {
   killPort,
 } from './platform.js';
 export type { Platform } from './platform.js';
+
+// History Share Policy (Phase 2)
+export {
+  HistorySharePolicy,
+  checkHistoryPolicy,
+  getConfig,
+  getEffectiveConfig,
+  getAllConfigs,
+  setConfig,
+  deleteConfig,
+  waitForPolicy,
+  sanitizeRecentCount,
+  DEFAULT_HISTORY_SHARE_POLICY,
+  DEFAULT_RECENT_COUNT,
+  MIN_RECENT_COUNT,
+  MAX_RECENT_COUNT,
+  SANITIZED_ALLOWED_FIELDS,
+} from './history-policy.js';
+export type {
+  HistoryPolicyConfig,
+  PolicyKey,
+  PolicyResult,
+  AgentType,
+} from './history-policy.js';
