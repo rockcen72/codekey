@@ -10,6 +10,9 @@ package-lock.json
 # Relay server — maintained in private repo codekey-server
 packages/server/
 
+# Build artifacts
+*.tsbuildinfo
+*.vsix
 # Bundled bridge output (esbuild)
 packages/shared/src/bridge/claude-transcripts.js
 packages/shared/src/bridge/claude-transcripts.js.map
