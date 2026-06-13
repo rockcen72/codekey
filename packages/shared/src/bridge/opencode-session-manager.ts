@@ -77,10 +77,16 @@ export class OpenCodeSessionManager {
   private inFlightSessions: Map<string, Promise<string>> = new Map();
   private permissionMap: Map<string, { requestID: string; serverSessionId: string; localSessionID: string }> = new Map();
   private deliveredMessageParts: Set<string> = new Set();
+  /** Track message IDs that were already sent as user_prompt — onMessagePartUpdated skips them. */
+  private _userMessageIds = new Set<string>();
   /** Track recently sent phone commands to avoid echoing them back. */
   private recentPhoneTexts = new Map<string, { text: string; expiresAt: number }>();
   /** OpenCode subagent sessions (title starts with @) — skip relay registration. */
   private _subagentSessions = new Set<string>();
+  /** Cache message roles from message.updated events for onMessagePartUpdated role detection. */
+  private _messageRoles = new Map<string, 'user' | 'assistant'>();
+  /** Cache part text from onMessagePartUpdated so onMessageUpdated uses actual prompt text, not summary.title. */
+  private _messageTexts = new Map<string, string>();
 
   private _abortController: AbortController | null = null;
   private _stopped = false;
@@ -156,6 +162,8 @@ export class OpenCodeSessionManager {
     this.inFlightSessions.clear();
     this.permissionMap.clear();
     this.deliveredMessageParts.clear();
+    this._messageRoles.clear();
+    this._messageTexts.clear();
   }
 
   async attachSession(localSessionId: string, title?: string, knownServerSessionId?: string): Promise<string> {
@@ -264,11 +272,9 @@ export class OpenCodeSessionManager {
 
       for (const m of msgs) {
         const info = m.info || {};
-        if (info.role === 'user' && Array.isArray(m.parts)) {
-          const text = m.parts
-            .filter((p: any) => p.type === 'text' && p.text)
-            .map((p: any) => p.text)
-            .join('\n');
+        const role = getOpenCodeHistoryMessageRole(m);
+        const text = extractOpenCodeHistoryText(m);
+        if (role === 'user') {
           if (text) {
             const raw = JSON.stringify({ type: 'event', payload: {
               clientEventId: `oc-hist:${localSessionId}:${Date.now()}:${Math.random()}`,
@@ -283,11 +289,7 @@ export class OpenCodeSessionManager {
               this.bridge.privacyCheckAndSend('history', projected, undefined, undefined);
             }
           }
-        } else if (info.role === 'assistant' && m.parts) {
-          const text = m.parts
-            .filter((p: any) => p.type === 'text' && p.text)
-            .map((p: any) => p.text)
-            .join('\n');
+        } else if (role === 'assistant') {
           if (text) {
             const raw = JSON.stringify({ type: 'event', payload: {
               clientEventId: `oc-hist:${localSessionId}:${Date.now()}:${Math.random()}`,
@@ -374,6 +376,27 @@ export class OpenCodeSessionManager {
     this._reconnectDelay = INITIAL_RECONNECT_DELAY;
   }
 
+  /** Fetch all sessions from OpenCode HTTP and pre-populate _subagentSessions.
+   *  This catches subagent sessions that were created before we connected,
+   *  so they get filtered from relay events immediately. */
+  private async _prepopulateSubagentSessions(): Promise<void> {
+    try {
+      const sessions = await this.fetchOpenCodeSessions();
+      if (!sessions) return;
+      for (const s of sessions) {
+        if (s.id && (s.type === 'subagent' || (s as any).subagent)) {
+          this._subagentSessions.add(s.id);
+        }
+      }
+      if (sessions.length > 0) {
+        console.error('[opencode] _prepopulateSubagentSessions: %d sessions, %d subagent',
+          sessions.length, this._subagentSessions.size);
+      }
+    } catch {
+      // Ignore — will catch on next SSE event
+    }
+  }
+
   private connectSSE(): Promise<void> {
     return new Promise((resolve, reject) => {
       const url = `${this.opencodeBaseUrl}/event`;
@@ -436,6 +459,7 @@ export class OpenCodeSessionManager {
     }
     switch (event.type) {
       case 'server.connected':
+        this._prepopulateSubagentSessions().catch(() => {});
         return;
       case 'permission.asked':
       case 'permission.updated':
@@ -553,6 +577,9 @@ export class OpenCodeSessionManager {
 
     // Detect subagent sessions on create so they are skipped everywhere.
     if (type === 'session.created' || type === 'session.updated') {
+      if ((info.type === 'subagent' || (info as any).subagent)) {
+        this._subagentSessions.add(sessionID);
+      }
       const title = extractOpenCodeSessionTitle(info);
       if (title && /^@/.test(title)) {
         this._subagentSessions.add(sessionID);
@@ -581,6 +608,8 @@ export class OpenCodeSessionManager {
   private onSessionIdle(props: Record<string, unknown>): void {
     const sessionID = props.sessionID as string;
     if (!sessionID) return;
+    // Skip subagent sessions — their events belong to the parent session.
+    if (this._subagentSessions.has(sessionID)) return;
     const serverSessionId = this.opencodeSessionToRelayId.get(sessionID);
     if (!serverSessionId) return;
 
@@ -621,6 +650,8 @@ export class OpenCodeSessionManager {
   private onSessionError(props: Record<string, unknown>): void {
     const sessionID = props.sessionID as string;
     if (!sessionID) return;
+    // Skip subagent sessions — their events belong to the parent session.
+    if (this._subagentSessions.has(sessionID)) return;
     const serverSessionId = this.opencodeSessionToRelayId.get(sessionID);
     if (!serverSessionId) return;
 
@@ -656,6 +687,13 @@ export class OpenCodeSessionManager {
 
     const serverSessionId = this.opencodeSessionToRelayId.get(sessionID);
     if (!serverSessionId) return;
+    // Skip subagent sessions — their events belong to the parent session.
+    if (this._subagentSessions.has(sessionID)) return;
+
+    // Cache role for onMessagePartUpdated — OpenCode may not include it in the part event
+    if (info.role === 'user' || info.role === 'assistant') {
+      this._messageRoles.set(messageID, info.role as 'user' | 'assistant');
+    }
 
     const key = `msg:${messageID}`;
     if (this.deliveredMessageParts.has(key)) return;
@@ -682,11 +720,14 @@ export class OpenCodeSessionManager {
     if (info.role === 'user') {
       const policy = checkHistoryPolicy(sessionID, 'opencode');
       if (!policy.allowed) return;
+      // Prefer actual part text cached from onMessagePartUpdated over summary.title
+      // (summary.title is an AI-generated title, not the user's original text)
+      const cachedText = this._messageTexts.get(messageID);
       const summary = info.summary as Record<string, unknown> | undefined;
       const partsText = Array.isArray(info.parts)
         ? (info.parts as any[]).filter((p: any) => p.type === 'text' && p.text).map((p: any) => p.text).join('\n')
         : '';
-      const text = (summary?.body as string) || (summary?.title as string) || partsText || '';
+      const text = cachedText || (summary?.body as string) || (summary?.title as string) || partsText || '';
       if (text && !this._isRecentPhoneCommand(sessionID, text)) {
         const raw = JSON.stringify({ type: 'event', payload: {
           clientEventId: `oc-user:${messageID}:${Date.now()}`,
@@ -699,9 +740,9 @@ export class OpenCodeSessionManager {
         const projected = projectHistoryEventForPolicy(raw, policy);
         if (projected !== null) {
           this.bridge.privacyCheckAndSend('history', projected, undefined, undefined);
+          this._trackPhoneCommand(sessionID, text);
         }
-        // Track so onMessagePartUpdated can dedup the text-part echo
-        this._trackPhoneCommand(sessionID, text);
+        this._userMessageIds.add(messageID);
       }
       return;
     }
@@ -765,6 +806,9 @@ export class OpenCodeSessionManager {
       return;
     }
 
+    // Skip subagent sessions — their events belong to the parent session.
+    if (this._subagentSessions.has(sessionID)) return;
+
     if (this.deliveredMessageParts.has(key)) return;
 
     if (inputCard) {
@@ -788,6 +832,10 @@ export class OpenCodeSessionManager {
       const text = (part.text as string) || (props.delta as string) || '';
       if (!text) return;
 
+      // Cache actual part text so onMessageUpdated uses the real user prompt,
+      // not the AI-generated summary.title (e.g. "Snake game generation request").
+      this._messageTexts.set(messageID, text);
+
       // Dedup key includes the text content, not just the partID, so
       // streaming updates with growing text are not collapsed. The
       // previous key was `part:${partID}` alone, which had two
@@ -806,29 +854,55 @@ export class OpenCodeSessionManager {
       if (this.deliveredMessageParts.has(dedupKey)) return;
       this.deliveredMessageParts.add(dedupKey);
 
-      // Suppress the text-part echo of a phone-sent prompt. OpenCode
-      // surfaces the user input as a text part on the user message
-      // before any assistant reply; without this check, the phone
-      // sees the same string twice — once as its own user_prompt and
-      // once as a task_complete marked as the agent's reply.
-      if (this._isRecentPhoneCommand(sessionID, text)) return;
-
-      const rawText = JSON.stringify({ type: 'event', payload: {
-        clientEventId: `oc-part:${partID}:${Date.now()}`,
-        sessionId: serverSessionId,
-        agent: 'opencode',
-        eventType: 'task_complete',
-        data: {
-          type: 'task_complete',
-          summary: text,
-          summaryShort: text.slice(0, 200),
-          output: text,
-        },
-      }});
-      const projectedText = projectHistoryEventForPolicy(rawText, policy);
-      if (projectedText !== null) {
-        this.bridge.privacyCheckAndSend('transcript', projectedText, undefined, undefined);
+      // User message typed on desktop: OpenCode may surface it first as a
+      // message.part.updated event. Preserve the role so mobile can render it
+      // as the user's right-side bubble instead of an agent reply.
+      // Fallback: check _messageRoles cache (populated by onMessageUpdated)
+      // in case OpenCode didn't include role in the part SSE event.
+      const messageRole = getOpenCodeMessageRole(props, part)
+        || this._messageRoles.get(messageID) as 'user' | 'assistant' | undefined;
+      console.error('[opencode] onMessagePartUpdated: role=%s text=%s', messageRole || 'unknown', text.slice(0, 80).replace(/\n/g, '\\n'));
+      if (messageRole === 'user') {
+        if (this._isRecentPhoneCommand(sessionID, text)) return;
+        const rawUser = JSON.stringify({ type: 'event', payload: {
+          clientEventId: `oc-user-part:${messageID}:${partID || 'unknown'}:${Date.now()}`,
+          sessionId: serverSessionId,
+          agent: 'opencode',
+          eventType: 'user_prompt',
+          data: { type: 'user_prompt', prompt: text, summary: text.slice(0, 200) },
+          ts: new Date().toISOString(),
+        }});
+        const projectedUser = projectHistoryEventForPolicy(rawUser, policy);
+        if (projectedUser !== null) {
+          this.bridge.privacyCheckAndSend('history', projectedUser, undefined, undefined);
+        }
+        this.deliveredMessageParts.add(`msg:${messageID}`);
+        this._trackPhoneCommand(sessionID, text);
+        return;
       }
+
+      // Role not found in SSE event — defer via microtask so onMessageUpdated
+      // can mark this messageID (from the same TCP packet) before we decide.
+      queueMicrotask(() => {
+        if (this._messageRoles.get(messageID) === 'user') return;
+        if (this._isRecentPhoneCommand(sessionID, text)) return;
+        const raw = JSON.stringify({ type: 'event', payload: {
+          clientEventId: `oc-part:${partID}:${Date.now()}`,
+          sessionId: serverSessionId,
+          agent: 'opencode',
+          eventType: 'task_complete',
+          data: {
+            type: 'task_complete',
+            summary: text,
+            summaryShort: text.slice(0, 200),
+            output: text,
+          },
+        }});
+        const projected = projectHistoryEventForPolicy(raw, policy);
+        if (projected !== null) {
+          this.bridge.privacyCheckAndSend('transcript', projected, undefined, undefined);
+        }
+      });
     } else if (partType === 'tool') {
       const state = part.state as Record<string, unknown> | undefined;
       if (state?.status === 'completed') {
@@ -1034,4 +1108,64 @@ function extractOpenCodeSessionTitle(info: Record<string, unknown>): string | un
     if (title) return title;
   }
   return undefined;
+}
+
+function getOpenCodeMessageRole(
+  props: Record<string, unknown>,
+  part: Record<string, unknown>,
+): 'user' | 'assistant' | undefined {
+  const candidates = [
+    props.role,
+    part.role,
+    (part.info as Record<string, unknown> | undefined)?.role,
+    (part.message as Record<string, unknown> | undefined)?.role,
+    (props.message as Record<string, unknown> | undefined)?.role,
+    (props.info as Record<string, unknown> | undefined)?.role,
+  ];
+  for (const candidate of candidates) {
+    if (candidate === 'user' || candidate === 'assistant') return candidate;
+  }
+  return undefined;
+}
+
+function getOpenCodeHistoryMessageRole(message: Record<string, unknown>): 'user' | 'assistant' | undefined {
+  const info = message.info as Record<string, unknown> | undefined;
+  const parts = Array.isArray(message.parts) ? message.parts as Record<string, unknown>[] : [];
+  const candidates = [
+    info?.role,
+    message.role,
+    (message.message as Record<string, unknown> | undefined)?.role,
+    (info?.message as Record<string, unknown> | undefined)?.role,
+    ...parts.flatMap((part) => [
+      part.role,
+      (part.info as Record<string, unknown> | undefined)?.role,
+      (part.message as Record<string, unknown> | undefined)?.role,
+    ]),
+  ];
+  for (const candidate of candidates) {
+    if (candidate === 'user' || candidate === 'assistant') return candidate;
+  }
+  return undefined;
+}
+
+function extractOpenCodeHistoryText(message: Record<string, unknown>): string {
+  const info = message.info as Record<string, unknown> | undefined;
+  const summary = info?.summary as Record<string, unknown> | undefined;
+  const partsText = Array.isArray(message.parts)
+    ? (message.parts as Record<string, unknown>[])
+      .filter((part) => part.type === 'text' && typeof part.text === 'string' && part.text)
+      .map((part) => part.text as string)
+      .join('\n')
+    : '';
+  const candidates = [
+    partsText,
+    message.text,
+    message.content,
+    summary?.body,
+    summary?.title,
+  ];
+  for (const candidate of candidates) {
+    if (typeof candidate === 'string' && candidate.trim()) return candidate;
+  }
+  return '';
 }

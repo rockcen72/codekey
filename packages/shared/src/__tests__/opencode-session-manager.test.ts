@@ -7,6 +7,12 @@ import { ApprovalBridge } from '../bridge/handler.js';
 import { discoverLocalOpenCodeSessions, OpenCodeSessionManager } from '../bridge/opencode-session-manager.js';
 import { HistorySharePolicy, setConfig } from '../bridge/history-policy.js';
 
+vi.mock('../bridge/platform.js', async (importOriginal) => {
+  const mod = await importOriginal();
+  return { ...mod, discoverOpenCodePort: vi.fn(() => 4096) };
+});
+import { discoverOpenCodePort } from '../bridge/platform.js';
+
 class FakeRelay extends EventEmitter {
   sent: string[] = [];
   sentEvents: unknown[] = [];
@@ -225,7 +231,9 @@ describe('OpenCodeSessionManager event handling', () => {
     it('re-discovers OpenCode port before each approval forward (handles restart race)', async () => {
       // Regression: if OpenCode restarts between the permission event and
       // the phone's decision, the SSE may not have reconnected yet but the
-      // fetch still needs the new port. Verify refreshOpenCodeUrl is called.
+      // fetch still needs the new port. Verify refreshOpenCodeUrl is called
+      // and the fetch uses the new port.
+      (discoverOpenCodePort as unknown as vi.Mock).mockReturnValueOnce(20031);
       const refreshSpy = vi.spyOn(manager as any, 'refreshOpenCodeUrl');
       const originalFetch = globalThis.fetch;
       const fetchSpy = vi.fn(async () => ({ ok: true }) as Response);
@@ -245,9 +253,9 @@ describe('OpenCodeSessionManager event handling', () => {
         await manager.handleApprovalForward('oc-perm:perm-rebind', 'approve');
 
         expect(refreshSpy).toHaveBeenCalled();
-        // Happy path: fetch was called with the current port (4096 from test setup)
+        // After refreshOpenCodeUrl discovers the new port, fetch should use it
         expect(fetchSpy).toHaveBeenCalledWith(
-          'http://127.0.0.1:4096/permission/perm-rebind/reply',
+          'http://127.0.0.1:20031/permission/perm-rebind/reply',
           expect.objectContaining({ method: 'POST' }),
         );
       } finally {
@@ -342,6 +350,31 @@ describe('OpenCodeSessionManager event handling', () => {
     });
   });
 
+  describe('permission subagent guardrail', () => {
+    it('does NOT create approval events for subagent session permissions', async () => {
+      const subagentSet = (manager as any)._subagentSessions as Set<string>;
+      subagentSet.add('oc-subagent-perm');
+
+      await (manager as any).handleSSEEvent({
+        type: 'permission.asked',
+        properties: {
+          id: 'perm-subagent',
+          permission: 'Bash',
+          sessionID: 'oc-subagent-perm',
+          messageID: 'msg-subagent-perm',
+          metadata: { command: 'rm -rf /' },
+          time: { created: Date.now() },
+        },
+      });
+
+      // Subagent permission should NOT create pending approvals
+      const pending = bridge.getPendingApprovals();
+      expect(pending.length).toBe(0);
+      // Session should NOT have been registered
+      expect(manager.ownsSession('server-oc-subagent-perm')).toBe(false);
+    });
+  });
+
   describe('session.created/deleted', () => {
     it('extracts sessionID from properties.info', async () => {
       const createEvent = {
@@ -411,6 +444,82 @@ describe('OpenCodeSessionManager event handling', () => {
       });
     });
 
+    it('marks session as subagent when info.type === "subagent"', async () => {
+      await (manager as any).handleSSEEvent({
+        type: 'session.created',
+        properties: {
+          info: {
+            id: 'oc-sub-type',
+            type: 'subagent',
+            title: 'explore',
+          },
+        },
+      });
+
+      const subagentSet = (manager as any)._subagentSessions as Set<string>;
+      expect(subagentSet.has('oc-sub-type')).toBe(true);
+    });
+
+    it('marks session as subagent when info.subagent is true', async () => {
+      await (manager as any).handleSSEEvent({
+        type: 'session.created',
+        properties: {
+          info: {
+            id: 'oc-sub-flag',
+            subagent: true,
+            title: 'general',
+          },
+        },
+      });
+
+      const subagentSet = (manager as any)._subagentSessions as Set<string>;
+      expect(subagentSet.has('oc-sub-flag')).toBe(true);
+    });
+
+    it('marks session as subagent when title starts with @', async () => {
+      await (manager as any).handleSSEEvent({
+        type: 'session.created',
+        properties: {
+          info: {
+            id: 'oc-sub-at',
+            title: '@explore codebase',
+          },
+        },
+      });
+
+      const subagentSet = (manager as any)._subagentSessions as Set<string>;
+      expect(subagentSet.has('oc-sub-at')).toBe(true);
+    });
+
+    it('does not mark normal sessions as subagent', async () => {
+      await (manager as any).handleSSEEvent({
+        type: 'session.created',
+        properties: {
+          info: {
+            id: 'oc-normal',
+            title: 'My real task',
+          },
+        },
+      });
+
+      const subagentSet = (manager as any)._subagentSessions as Set<string>;
+      expect(subagentSet.has('oc-normal')).toBe(false);
+    });
+
+    it('removes subagent tag on session.deleted', async () => {
+      const subagentSet = (manager as any)._subagentSessions as Set<string>;
+      subagentSet.add('oc-sub-cleanup');
+
+      await (manager as any).handleSSEEvent({
+        type: 'session.deleted',
+        properties: {
+          info: { id: 'oc-sub-cleanup' },
+        },
+      });
+
+      expect(subagentSet.has('oc-sub-cleanup')).toBe(false);
+    });
+
     it('syncs renamed OpenCode session title to relay', async () => {
       await manager.attachSession('ses_1790', 'Initial title', 'server-ses_1790');
       relay.sent.length = 0;
@@ -445,6 +554,71 @@ describe('OpenCodeSessionManager event handling', () => {
         .map((raw) => JSON.parse(raw))
         .filter((msg) => msg.type === 'register_session' && msg.payload.claudeSessionId === 'oc-session-remote');
       expect(registrations.length).toBe(0);
+    });
+
+    it('preserves top-level OpenCode history roles during attach replay', async () => {
+      vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+        if (url.includes('/session/oc-history-role/message')) {
+          return {
+            ok: true,
+            json: async () => [
+              {
+                role: 'user',
+                parts: [{ type: 'text', text: 'desktop prompt from reload' }],
+                info: { time: { created: Date.now() } },
+              },
+              {
+                role: 'assistant',
+                parts: [{ type: 'text', text: 'agent reply from reload' }],
+                info: { time: { created: Date.now() } },
+              },
+            ],
+          } as Response;
+        }
+        return { ok: true, body: null } as Response;
+      }));
+
+      await manager.attachSession('oc-history-role', 'History role', 'server-history-role');
+      await new Promise((resolve) => setTimeout(resolve, 20));
+
+      const events = relay.sentEvents as any[];
+      const userPrompt = events.find((e: any) => e.payload?.eventType === 'user_prompt');
+      const taskComplete = events.find((e: any) => e.payload?.eventType === 'task_complete');
+
+      expect(userPrompt?.payload.data.prompt).toBe('desktop prompt from reload');
+      expect(taskComplete?.payload.data.summary).toBe('agent reply from reload');
+    });
+
+    it('preserves nested part roles during explicit OpenCode history replay', async () => {
+      vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+        if (url.includes('/session/oc-history-part-role/message')) {
+          return {
+            ok: true,
+            json: async () => [
+              {
+                parts: [{ type: 'text', text: 'desktop prompt from part role', role: 'user' }],
+                info: { time: { created: Date.now() } },
+              },
+            ],
+          } as Response;
+        }
+        return { ok: true, body: null } as Response;
+      }));
+      (manager as any).opencodeSessionToRelayId.set('oc-history-part-role', 'server-history-part-role');
+      (manager as any).opencodeSessions.add('server-history-part-role');
+
+      await (manager as any).replayHistory('oc-history-part-role', 'server-history-part-role');
+
+      const events = relay.sentEvents as any[];
+      const userPrompt = events.find((e: any) => e.payload?.eventType === 'user_prompt');
+      const promptAsTaskComplete = events.find(
+        (e: any) =>
+          e.payload?.eventType === 'task_complete' &&
+          e.payload?.data?.summary === 'desktop prompt from part role',
+      );
+
+      expect(userPrompt?.payload.data.prompt).toBe('desktop prompt from part role');
+      expect(promptAsTaskComplete).toBeUndefined();
     });
 
     it('does not restore old attached mappings when the current OpenCode API list is empty', async () => {
@@ -553,6 +727,69 @@ describe('OpenCodeSessionManager event handling', () => {
       );
       expect(taskComplete).toBeDefined();
       expect(taskComplete.payload.data.summary).toBe('Hello from OpenCode!');
+    });
+
+    it('forwards desktop user text parts as user_prompt, not agent task_complete', async () => {
+      await (manager as any).handleSSEEvent({
+        type: 'permission.updated',
+        properties: {
+          id: 'perm-user-part',
+          type: 'Bash',
+          sessionID: 'oc-session-user-part',
+          messageID: 'msg-user-part',
+          title: 'Test',
+          metadata: {},
+          time: { created: Date.now() },
+        },
+      });
+
+      relay.sent.length = 0;
+      relay.sentEvents.length = 0;
+
+      await (manager as any).handleSSEEvent({
+        type: 'message.part.updated',
+        properties: {
+          message: { role: 'user' },
+          part: {
+            id: 'part-user-1',
+            sessionID: 'oc-session-user-part',
+            messageID: 'msg-user-part',
+            type: 'text',
+            text: '电脑端输入的 prompt',
+          },
+        },
+      });
+
+      const events = relay.sentEvents as any[];
+      const userPrompt = events.find(
+        (e: any) => e.payload?.eventType === 'user_prompt',
+      );
+      const promptAsTaskComplete = events.find(
+        (e: any) =>
+          e.payload?.eventType === 'task_complete' &&
+          e.payload?.data?.summary === '电脑端输入的 prompt',
+      );
+
+      expect(userPrompt).toBeDefined();
+      expect(userPrompt.payload.data.prompt).toBe('电脑端输入的 prompt');
+      expect(promptAsTaskComplete).toBeUndefined();
+
+      await (manager as any).handleSSEEvent({
+        type: 'message.updated',
+        properties: {
+          info: {
+            id: 'msg-user-part',
+            sessionID: 'oc-session-user-part',
+            role: 'user',
+            summary: { body: '电脑端输入的 prompt' },
+          },
+        },
+      });
+
+      const userPrompts = (relay.sentEvents as any[]).filter(
+        (e: any) => e.payload?.eventType === 'user_prompt',
+      );
+      expect(userPrompts.length).toBe(1);
     });
 
     it('deduplicates same part ID', async () => {
@@ -673,6 +910,54 @@ describe('OpenCodeSessionManager event handling', () => {
         (e: any) => e.payload?.eventType === 'task_complete',
       );
       expect(taskComplete).toBeDefined();
+    });
+
+    it('does NOT forward session.idle events for subagent sessions', async () => {
+      const subagentSet = (manager as any)._subagentSessions as Set<string>;
+      // Simulate a registered subagent session with a relay mapping
+      subagentSet.add('oc-subagent-idle');
+      (manager as any).opencodeSessionToRelayId.set('oc-subagent-idle', 'server-oc-subagent-idle');
+      (manager as any).opencodeSessions.add('server-oc-subagent-idle');
+
+      relay.sent.length = 0;
+      relay.sentEvents.length = 0;
+
+      await (manager as any).handleSSEEvent({
+        type: 'session.idle',
+        properties: {
+          sessionID: 'oc-subagent-idle',
+        },
+      });
+
+      const events = relay.sentEvents as any[];
+      const taskComplete = events.find(
+        (e: any) => e.payload?.eventType === 'task_complete',
+      );
+      expect(taskComplete).toBeUndefined();
+    });
+
+    it('does NOT forward session.error events for subagent sessions', async () => {
+      const subagentSet = (manager as any)._subagentSessions as Set<string>;
+      subagentSet.add('oc-subagent-error');
+      (manager as any).opencodeSessionToRelayId.set('oc-subagent-error', 'server-oc-subagent-error');
+      (manager as any).opencodeSessions.add('server-oc-subagent-error');
+
+      relay.sent.length = 0;
+      relay.sentEvents.length = 0;
+
+      await (manager as any).handleSSEEvent({
+        type: 'session.error',
+        properties: {
+          sessionID: 'oc-subagent-error',
+          error: { message: 'Subagent failed' },
+        },
+      });
+
+      const events = relay.sentEvents as any[];
+      const errorEvent = events.find(
+        (e: any) => e.payload?.eventType === 'error',
+      );
+      expect(errorEvent).toBeUndefined();
     });
   });
 
@@ -830,6 +1115,64 @@ describe('OpenCodeSessionManager event handling', () => {
         (e: any) => e.payload?.eventType === 'user_prompt',
       );
       expect(userPrompts.length).toBe(0);
+    });
+
+    it('does NOT forward text part events for subagent sessions with mapped relay IDs', async () => {
+      // A subagent that somehow has a relay mapping must still not leak events.
+      const subagentSet = (manager as any)._subagentSessions as Set<string>;
+      subagentSet.add('oc-subagent-part');
+      (manager as any).opencodeSessionToRelayId.set('oc-subagent-part', 'server-oc-subagent-part');
+      (manager as any).opencodeSessions.add('server-oc-subagent-part');
+
+      relay.sent.length = 0;
+      relay.sentEvents.length = 0;
+
+      await (manager as any).handleSSEEvent({
+        type: 'message.part.updated',
+        properties: {
+          part: {
+            id: 'part-subagent-1',
+            sessionID: 'oc-subagent-part',
+            messageID: 'msg-subagent',
+            type: 'text',
+            text: 'subagent reply text',
+          },
+        },
+      });
+
+      const events = relay.sentEvents as any[];
+      const taskComplete = events.find(
+        (e: any) => e.payload?.eventType === 'task_complete',
+      );
+      expect(taskComplete).toBeUndefined();
+    });
+
+    it('does NOT forward message.updated events for subagent sessions', async () => {
+      const subagentSet = (manager as any)._subagentSessions as Set<string>;
+      subagentSet.add('oc-subagent-msg');
+      (manager as any).opencodeSessionToRelayId.set('oc-subagent-msg', 'server-oc-subagent-msg');
+      (manager as any).opencodeSessions.add('server-oc-subagent-msg');
+
+      relay.sent.length = 0;
+      relay.sentEvents.length = 0;
+
+      await (manager as any).handleSSEEvent({
+        type: 'message.updated',
+        properties: {
+          info: {
+            id: 'msg-subagent',
+            sessionID: 'oc-subagent-msg',
+            role: 'user',
+            summary: { body: 'user text from subagent' },
+          },
+        },
+      });
+
+      const events = relay.sentEvents as any[];
+      const userPrompt = events.find(
+        (e: any) => e.payload?.eventType === 'user_prompt',
+      );
+      expect(userPrompt).toBeUndefined();
     });
   });
 
@@ -1010,6 +1353,136 @@ describe('OpenCodeSessionManager event handling', () => {
       );
       expect(taskCompletes.length).toBe(1);
     });
+
+    it('does NOT auto-register subagent sessions for input_required parts', async () => {
+      // Subagent sessions must not auto-register via ensureRelaySession
+      // even for input_required events.
+      const subagentSet = (manager as any)._subagentSessions as Set<string>;
+      subagentSet.add('oc-subagent-input');
+
+      relay.sent.length = 0;
+      relay.sentEvents.length = 0;
+
+      await (manager as any).handleSSEEvent({
+        type: 'message.part.updated',
+        properties: {
+          part: {
+            id: 'part-subagent-input',
+            sessionID: 'oc-subagent-input',
+            messageID: 'msg-subagent-input',
+            type: 'text',
+            text: '',
+            input: { schema: { type: 'object' } },
+            input_required: true,
+          },
+        },
+      });
+
+      await new Promise(r => setTimeout(r, 50));
+
+      // Should NOT have registered at the relay
+      expect(manager.ownsSession('server-oc-subagent-input')).toBe(false);
+      // Should NOT have generated any register_session messages
+      const registrations = relay.sent
+        .map((raw) => JSON.parse(raw))
+        .filter((msg) => msg.type === 'register_session' && msg.payload.claudeSessionId === 'oc-subagent-input');
+      expect(registrations.length).toBe(0);
+    });
+  });
+
+  describe('input_required from message.part.updated with options', () => {
+    it('creates input_required card when part.input has options', async () => {
+      // Setup: create a session via permission.updated first
+      await (manager as any).handleSSEEvent({
+        type: 'permission.updated',
+        properties: {
+          id: 'perm-oc-options',
+          type: 'Bash',
+          sessionID: 'oc-session-oc-options',
+          messageID: 'msg-oc-options',
+          title: 'Test',
+          metadata: {},
+          time: { created: Date.now() },
+        },
+      });
+
+      relay.sent.length = 0;
+      relay.sentEvents.length = 0;
+
+      // OpenCode shows option card via message.part.updated with input.options
+      await (manager as any).handleSSEEvent({
+        type: 'message.part.updated',
+        properties: {
+          part: {
+            id: 'part-oc-options',
+            sessionID: 'oc-session-oc-options',
+            messageID: 'msg-oc-options',
+            type: 'text',
+            text: '',
+            input_required: true,
+            input: {
+              question: '请选择下一步操作',
+              options: [
+                { label: '继续分析', value: 'continue' },
+                { label: '换一种方案', value: 'change' },
+                { label: '自定义输入', value: 'custom' },
+              ],
+            },
+          },
+        },
+      });
+
+      await new Promise(r => setTimeout(r, 20));
+
+      const events = relay.sentEvents as any[];
+      const inputCard = events.find((e: any) => e.payload?.eventType === 'input_required');
+      expect(inputCard, `no input_required card found in: ${JSON.stringify(relay.sent)}`).toBeDefined();
+      const data = inputCard.payload.data;
+      expect(data.type).toBe('input_required');
+      expect(data.questions).toHaveLength(1);
+      expect(data.questions[0].options).toHaveLength(3);
+      expect(data.questions[0].options[0].label).toBe('继续分析');
+    });
+
+    it('creates input_required card when part.params has options (tool_use format)', async () => {
+      await (manager as any).handleSSEEvent({
+        type: 'permission.updated',
+        properties: {
+          id: 'perm-oc-tool',
+          type: 'Bash',
+          sessionID: 'oc-session-oc-tool',
+          messageID: 'msg-oc-tool',
+          title: 'Test',
+          metadata: {},
+          time: { created: Date.now() },
+        },
+      });
+
+      relay.sent.length = 0;
+      relay.sentEvents.length = 0;
+
+      await (manager as any).handleSSEEvent({
+        type: 'message.updated',
+        properties: {
+          info: {
+            id: 'msg-oc-tool',
+            sessionID: 'oc-session-oc-tool',
+            role: 'assistant',
+            params: {
+              question: 'What next?',
+              options: ['1: Continue', '2: Change approach', '3: Custom'],
+            },
+          },
+        },
+      });
+
+      await new Promise(r => setTimeout(r, 20));
+
+      const events = relay.sentEvents as any[];
+      const inputCard = events.find((e: any) => e.payload?.eventType === 'input_required');
+      expect(inputCard, `no input_required card for tool_use format`).toBeDefined();
+      expect(inputCard.payload.data.questions[0].options).toHaveLength(3);
+    });
   });
 
   describe('session.created', () => {
@@ -1133,13 +1606,47 @@ describe('OpenCodeSessionManager event handling', () => {
         await (manager as any).handleSSEEvent({ type: 'server.connected', properties: {} });
         await new Promise(r => setTimeout(r, 50));
 
-        expect(fetchSpy).not.toHaveBeenCalled();
+        // Now fetches /session to pre-populate _subagentSessions
+        expect(fetchSpy).toHaveBeenCalled();
+        // But no register_session events should have been generated
         expect(manager.ownsSession('server-existing-session-1')).toBe(false);
         expect(manager.ownsSession('server-existing-session-2')).toBe(false);
         const registrations = relay.sent
           .map((raw) => JSON.parse(raw))
           .filter((msg) => msg.type === 'register_session');
         expect(registrations.length).toBe(0);
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
+    it('pre-populates subagent session IDs from HTTP /session on server.connected', async () => {
+      const originalFetch = globalThis.fetch;
+      try {
+        globalThis.fetch = async (input: string | URL | Request) => {
+          const url = typeof input === 'string' ? input : input.toString();
+          if (url.endsWith('/session')) {
+            return {
+              ok: true,
+              json: async () => [
+                { id: 'normal-session-1', title: 'My task' },
+                { id: 'subagent-by-type', type: 'subagent', title: 'explore' },
+                { id: 'subagent-by-flag', subagent: true, title: 'general' },
+                { id: 'at-prefix-sub', title: '@explore codebase' },
+              ],
+            } as Response;
+          }
+          return { ok: true, body: null } as Response;
+        };
+
+        await (manager as any).handleSSEEvent({ type: 'server.connected', properties: {} });
+        await new Promise(r => setTimeout(r, 50));
+
+        const subagentSet = (manager as any)._subagentSessions as Set<string>;
+        expect(subagentSet.has('normal-session-1')).toBe(false);
+        expect(subagentSet.has('subagent-by-type')).toBe(true);
+        expect(subagentSet.has('subagent-by-flag')).toBe(true);
+        expect(subagentSet.has('at-prefix-sub')).toBe(false); // Title-based detection is run-time only
       } finally {
         globalThis.fetch = originalFetch;
       }
