@@ -12,10 +12,10 @@
 # What it checks:
 #   1. Backup file exists and is readable
 #   2. Decryption + decompression succeed
-#   3. Decrypted SQL is a valid pg_dump (16 tables)
+#   3. Decrypted SQL is a valid pg_dump (17 tables)
 #   4. Row counts in users / device_bindings / auth_identities /
-#      user_subscriptions / trial_claims / approval_usage /
-#      sessions / redeem_codes match production exactly
+#      user_subscriptions / device_subscriptions / trial_claims /
+#      approval_usage / sessions / redeem_codes match production exactly
 #   5. Temp DB + plaintext SQL always removed on exit (success or fail)
 #
 # Failure semantics: bash + set -euo pipefail. Critical commands write
@@ -35,6 +35,7 @@ BACKUP_DIR="/opt/codekey-backups"
 KEY_FILE="/etc/codekey/backup.key"
 TMP_SQL=$(mktemp /tmp/codekey-restore.XXXXXX.sql)
 TMP_DB=codekey_restore_test
+EXPECTED_TABLE_COUNT=17
 # mktemp -d so we never collide with another run and the EXIT trap
 # can rm -rf the whole thing. Pre-existing dir would leak log files
 # across runs and accumulate schema/error context indefinitely.
@@ -136,8 +137,8 @@ docker exec codekey-pg psql -U codekey -d "${TMP_DB}" \
 echo "  dt restore: rc=$?"
 TABLE_COUNT=$(grep -c '^ public |' "${LOG_DT_RESTORE}" || true)
 echo "  tables found: ${TABLE_COUNT}"
-if [ "${TABLE_COUNT}" -ne 16 ]; then
-  echo "FATAL: expected 16 tables, found ${TABLE_COUNT}" >&2
+if [ "${TABLE_COUNT}" -ne "${EXPECTED_TABLE_COUNT}" ]; then
+  echo "FATAL: expected ${EXPECTED_TABLE_COUNT} tables, found ${TABLE_COUNT}" >&2
   tail -20 "${LOG_DT_RESTORE}" >&2
   exit 1
 fi
@@ -150,6 +151,7 @@ ROW_QUERY="
   UNION ALL SELECT 'device_bindings', count(*) FROM device_bindings
   UNION ALL SELECT 'auth_identities', count(*) FROM auth_identities
   UNION ALL SELECT 'user_subscriptions', count(*) FROM user_subscriptions
+  UNION ALL SELECT 'device_subscriptions', count(*) FROM device_subscriptions
   UNION ALL SELECT 'trial_claims', count(*) FROM trial_claims
   UNION ALL SELECT 'approval_usage', count(*) FROM approval_usage
   UNION ALL SELECT 'sessions', count(*) FROM sessions
