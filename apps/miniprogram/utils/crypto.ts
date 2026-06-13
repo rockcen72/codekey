@@ -31,25 +31,45 @@ if (typeof TextDecoder === 'undefined') {
   (globalThis as any).TextDecoder = class {
     decode(buf: ArrayBuffer | Uint8Array): string {
       const bytes = buf instanceof Uint8Array ? buf : new Uint8Array(buf);
-      try {
-        return decodeURIComponent(escape(String.fromCharCode(...bytes)));
-      } catch {
-        // Not valid UTF-8; return raw Latin-1 string for error messages.
-        return String.fromCharCode(...bytes);
+      // Chunked decode to avoid call-stack overflow on large payloads (100KB+).
+      // String.fromCharCode(...largeArray) hits JS engine argument length limits.
+      let result = '';
+      const CHUNK = 8192;
+      for (let i = 0; i < bytes.length; i += CHUNK) {
+        const end = Math.min(i + CHUNK, bytes.length);
+        let chunk = '';
+        for (let j = i; j < end; j++) chunk += String.fromCharCode(bytes[j]);
+        result += chunk;
       }
+      try { return decodeURIComponent(escape(result)); } catch { return result; }
     }
   };
 }
 
-// Load @noble/ciphers submodules from vendor/ (bypasses npm build limitation)
+// Load @noble/ciphers directly via vendor/aes.js
+// WeChat require() cannot destructure ES module exports — use property access.
 // eslint-disable-next-line @typescript-eslint/no-var-requires
-const gcmImpl: typeof import('@noble/ciphers/aes').gcm = require('../vendor/aes.js').gcm;
-// utf8ToBytes/bytesToUtf8 from @noble/ciphers/utils; after our global polyfill
-// they will use the TextEncoder/TextDecoder we installed above.
-// eslint-disable-next-line @typescript-eslint/no-var-requires
-const nobleUtils = require('../vendor/utils.js');
-const utf8ToBytes: (s: string) => Uint8Array = nobleUtils.utf8ToBytes;
-const bytesToUtf8: (b: Uint8Array) => string = nobleUtils.bytesToUtf8;
+const _nobleAes = require('../vendor/aes.js');
+const gcm: typeof import('@noble/ciphers/aes').gcm = _nobleAes.gcm;
+
+// Inline UTF-8 helpers to avoid needing vendor/utils.js (ES module with TextEncoder dep)
+function utf8ToBytes(s: string): Uint8Array {
+  const enc = unescape(encodeURIComponent(s));
+  const b = new Uint8Array(enc.length);
+  for (let i = 0; i < enc.length; i++) b[i] = enc.charCodeAt(i);
+  return b;
+}
+function bytesToUtf8(b: Uint8Array): string {
+  const CHUNK = 8192;
+  let r = '';
+  for (let i = 0; i < b.length; i += CHUNK) {
+    const end = Math.min(i + CHUNK, b.length);
+    let c = '';
+    for (let j = i; j < end; j++) c += String.fromCharCode(b[j]);
+    r += c;
+  }
+  try { return decodeURIComponent(escape(r)); } catch { return r; }
+}
 
 // ── Constants (must match Node side) ───────────────────────
 
@@ -66,23 +86,29 @@ export interface KeyPair {
 }
 
 /**
- * Secure random bytes using wx.getRandomValues.
- * API returns { errMsg, randomValues: ArrayBuffer } — extract the ArrayBuffer.
+ * Secure random bytes using wx.getRandomValues (callback → Promise wrapper).
+ *
+ * wx API（基础库 2.15+）：
+ *   wx.getRandomValues({ length, success(res) { res.randomValues: ArrayBuffer } })
+ *
+ * 包装成 Promise 以便 async 上下文使用。
  */
-function secureRandomBytes(length: number): Uint8Array {
-  if (typeof wx === 'undefined' || typeof wx.getRandomValues !== 'function') {
-    throw new Error('secureRandomBytes: wx.getRandomValues not available');
-  }
-  const raw = wx.getRandomValues({ length }) as Record<string, unknown>;
-  // WeChat returns { errMsg: "getRandomValues:ok", randomValues: ArrayBuffer }
-  const buffer = raw.randomValues || raw.data;
-  if (!buffer || typeof (buffer as ArrayBuffer).byteLength !== 'number') {
-    throw new Error(
-      'wx.getRandomValues returned unrecognised structure: keys=' +
-      Object.keys(raw).join(','),
-    );
-  }
-  return new Uint8Array(buffer as ArrayBuffer, 0, length);
+function secureRandomBytes(length: number): Promise<Uint8Array> {
+  return new Promise((resolve, reject) => {
+    if (typeof wx === 'undefined' || typeof wx.getRandomValues !== 'function') {
+      reject(new Error('wx.getRandomValues not available'));
+      return;
+    }
+    wx.getRandomValues({
+      length,
+      success: (res: { randomValues: ArrayBuffer }) => {
+        resolve(new Uint8Array(res.randomValues, 0, length));
+      },
+      fail: (err: any) => {
+        reject(new Error('wx.getRandomValues failed: ' + (err.errMsg || JSON.stringify(err))));
+      },
+    });
+  });
 }
 
 export function generateContentKey(): KeyPair {
@@ -124,14 +150,14 @@ export function buildAad(fields: AadFields): Uint8Array {
   return utf8ToBytes(json);
 }
 
-// ── Encrypt / Decrypt ──────────────────────────────────────
+// ── Encrypt / Decrypt (async — wx.getRandomValues is Promise-based) ──
 
-export function encrypt(
+export async function encrypt(
   plaintext: string,
   keyBytes: Uint8Array,
   aad: Uint8Array,
-): string {
-  const iv = secureRandomBytes(IV_LENGTH);
+): Promise<string> {
+  const iv = await secureRandomBytes(IV_LENGTH);
   const cipher = gcm(keyBytes, iv, aad);
   const plaintextBytes = utf8ToBytes(plaintext);
   // @noble/ciphers gcm: encrypt appends auth tag automatically
@@ -144,11 +170,11 @@ export function encrypt(
   return bytesToBase64(combined);
 }
 
-export function decrypt(
+export async function decrypt(
   sealedPayloadB64: string,
   keyBytes: Uint8Array,
   aad: Uint8Array,
-): string {
+): Promise<string> {
   const combined = base64ToBytes(sealedPayloadB64);
 
   if (combined.length < IV_LENGTH + TAG_LENGTH + 1) {
