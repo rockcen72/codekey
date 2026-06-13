@@ -111,6 +111,13 @@ function getEventData(event: UserEvent): Record<string, unknown> {
   return (event.data ?? {}) as Record<string, unknown>;
 }
 
+function isUserPromptEvent(event: UserEvent, data: Record<string, unknown>): boolean {
+  return event.type === 'user_prompt'
+    || data.type === 'user_prompt'
+    || data.role === 'user'
+    || event.role === 'user';
+}
+
 function extractInputOptions(data: Record<string, unknown>): InputOption[] {
   const questions = Array.isArray(data.questions) ? data.questions as Record<string, unknown>[] : [];
   const first = questions.find((question) => Array.isArray(question.options));
@@ -163,6 +170,7 @@ function buildChatMessages(events: UserEvent[], session: UserSession | null, res
     const resolvedDecision = resolvedMap.get(event.id);
     const effectivePending = event.pending && !resolvedDecision;
     const effectiveDecision = resolvedDecision || event.decision;
+    const isUserPrompt = isUserPromptEvent(event, data);
 
     if (event.type === 'session_idle') {
       flushPendingCommandStarted();
@@ -188,16 +196,16 @@ function buildChatMessages(events: UserEvent[], session: UserSession | null, res
       continue;
     }
 
-    if (event.type === 'user_prompt') {
+    if (isUserPrompt) {
       lastCommandStarted = false;
-      const prompt = String(data.prompt || data.summary || '');
+      const prompt = String(data.prompt || data.summary || rawSummary || '');
       if (!prompt || prompt === lastUserPrompt) continue;
       lastUserPrompt = prompt;
       messages.push({
         id: event.id,
         eventId: event.id,
         type: 'user',
-        eventType: event.type,
+        eventType: 'user_prompt',
         senderName: 'You',
         content: prompt,
         command: '',

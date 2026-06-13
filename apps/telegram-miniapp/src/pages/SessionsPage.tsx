@@ -120,7 +120,7 @@ export function SessionsPage({ auth }: Props) {
 
       {devices.error || sessions.error || unbindError ? <div className="notice error-text">{devices.error || sessions.error || unbindError}</div> : null}
 
-      {subscription.subscription ? (
+      {subscription.subscription && subscription.subscription.tier === 'free' ? (
         <section className="subscription-summary compact-redeem">
           <RedeemCode onRedeemed={() => void subscription.refresh()} />
         </section>

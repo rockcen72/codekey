@@ -28,6 +28,7 @@ export interface UserEvent {
   id: string;
   session_id: string;
   type: string;
+  role?: 'user' | 'assistant' | 'agent' | null;
   data: unknown;
   risk_level: string | null;
   pending: boolean;
