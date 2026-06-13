@@ -32,7 +32,7 @@ export { CodexResumeManager } from './codex-resume-manager.js';
 export { OpenCodeSessionManager } from './opencode-session-manager.js';
 
 // Privacy pipeline
-export { runPrivacyPipeline, toCheckedPayload, type PrivacyContext, type PrivacyDecision, type PrivacyCheckedPayload, type AuditEntry, type AuditSink, type SourceType } from './privacy-pipeline.js';
+export { runPrivacyPipeline, toCheckedPayload, projectAllowedFields, projectHistoryEventForPolicy, safeSummary, type PrivacyContext, type PrivacyDecision, type PrivacyCheckedPayload, type AuditEntry, type AuditSink, type SourceType, type ContentPolicy } from './privacy-pipeline.js';
 export { scan, replace, scanAndReplace, type Finding, type Rule } from './secret-scanner.js';
 export { CodeKeyIgnore } from './codekeyignore.js';
 export { DEFAULT_BLOCKED_PATTERNS, matchesAny } from './blocklist.js';

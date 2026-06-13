@@ -17,6 +17,7 @@ import {
   getAllConfigs,
   setConfig,
   deleteConfig,
+  DEFAULT_RECENT_COUNT,
 } from './history-policy.js';
 
 export interface BridgeConfig {
@@ -733,7 +734,7 @@ function handleRequest(req: IncomingMessage, res: ServerResponse, bridge: Approv
         res.end(JSON.stringify({ ok: true }));
 
         const fetchMessages = (sid: string) => {
-          const ocUrl = new URL(`/session/${encodeURIComponent(sid)}/message?limit=5`, bridgeConfig?.openCodeUrl || 'http://127.0.0.1:4096');
+          const ocUrl = new URL(`/session/${encodeURIComponent(sid)}/message?limit=${DEFAULT_RECENT_COUNT}`, bridgeConfig?.openCodeUrl || 'http://127.0.0.1:4096');
           return new Promise<any[]>((resolve) => {
             httpGet({ hostname: ocUrl.hostname, port: ocUrl.port, path: ocUrl.pathname + ocUrl.search, timeout: 5000 }, (ocRes) => {
               let body = '';
@@ -809,7 +810,7 @@ function handleRequest(req: IncomingMessage, res: ServerResponse, bridge: Approv
   if (req.method === 'GET' && url.pathname === '/v1/opencode-sessions/preview') {
     const sid = url.searchParams.get('id') || '';
     if (!sid) { res.writeHead(400); res.end('{}'); return; }
-    const ocUrl = new URL(`/session/${encodeURIComponent(sid)}/message?limit=5`, bridgeConfig?.openCodeUrl || 'http://127.0.0.1:4096');
+    const ocUrl = new URL(`/session/${encodeURIComponent(sid)}/message?limit=${DEFAULT_RECENT_COUNT}`, bridgeConfig?.openCodeUrl || 'http://127.0.0.1:4096');
     console.error('[bridge] opencode-preview: proxying to %s', ocUrl.href);
     const proxy = httpGet(
       { hostname: ocUrl.hostname, port: ocUrl.port, path: ocUrl.pathname + ocUrl.search, timeout: 5000 },
@@ -1332,6 +1333,14 @@ function handleRequest(req: IncomingMessage, res: ServerResponse, bridge: Approv
           payload: { action: 'set', key, config: { ...normalizedConfig, updatedAt: normalizedConfig.updatedAt || Date.now() } },
         }));
         bridge.reevaluateClaudeSync();
+        if (opencodeManager) {
+          for (const localId of bridge.opencodeAttachedIds) {
+            opencodeManager.replayAttachedHistory(localId);
+          }
+        }
+        if (codexResumeManager) {
+          codexResumeManager.replayActiveHistory();
+        }
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ ok: true }));
       } catch {
@@ -1356,6 +1365,14 @@ function handleRequest(req: IncomingMessage, res: ServerResponse, bridge: Approv
       payload: { action: 'delete', key },
     }));
     bridge.reevaluateClaudeSync();
+    if (opencodeManager) {
+      for (const localId of bridge.opencodeAttachedIds) {
+        opencodeManager.replayAttachedHistory(localId);
+      }
+    }
+    if (codexResumeManager) {
+      codexResumeManager.replayActiveHistory();
+    }
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ ok: true }));
     return;

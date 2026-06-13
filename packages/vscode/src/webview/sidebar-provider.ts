@@ -113,8 +113,6 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
   private _codexStaleStopInFlight = new Set<string>();
   /** Sessions currently being synced/unsynced — shown as spinner in UI. */
   private _syncInFlight = new Set<string>();
-  /** Sessions that just completed sync/unsync — shown briefly as Done. */
-  private _syncDoneUntil = new Map<string, number>();
   /** Debounce rapid sync/unsync toggles — 1s between actions. */
   private _lastToggleTime = 0;
   /** Track recent user-initiated detach actions. The remote session list
@@ -148,7 +146,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
    *  + DB write + next sidebar poll, short enough that a real out-of-band
    *  re-attach (mp re-syncs from phone) still wins after the window. */
   private static readonly RECENT_ACTION_WINDOW_MS = 15_000;
-  private static readonly SYNC_DONE_WINDOW_MS = 1200;
+  private static readonly MIN_SYNC_SPINNER_MS = 600;
 
   private _isRecentlyDetached(sessionId: string): boolean {
     const at = this._recentDetachedAt.get(sessionId);
@@ -172,13 +170,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
 
   private _syncStatus(sessionId: string): SidebarState['claudeSessions'][number]['syncStatus'] | undefined {
     if (this._syncInFlight.has(sessionId)) return 'syncing';
-    const doneUntil = this._syncDoneUntil.get(sessionId);
-    if (!doneUntil) return undefined;
-    if (Date.now() > doneUntil) {
-      this._syncDoneUntil.delete(sessionId);
-      return undefined;
-    }
-    return 'done';
+    return undefined;
   }
 
   private _decorateSyncStatus(sessions: SidebarState['claudeSessions']): SidebarState['claudeSessions'] {
@@ -189,16 +181,12 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     });
   }
 
-  private _markSyncDone(sessionId: string): void {
-    if (!sessionId) return;
-    this._syncDoneUntil.set(sessionId, Date.now() + SidebarProvider.SYNC_DONE_WINDOW_MS);
+  private _finishSyncSpinner(sessionId: string, startedAt: number): void {
+    const waitMs = Math.max(0, SidebarProvider.MIN_SYNC_SPINNER_MS - (Date.now() - startedAt));
     setTimeout(() => {
-      const doneUntil = this._syncDoneUntil.get(sessionId);
-      if (doneUntil && Date.now() >= doneUntil) {
-        this._syncDoneUntil.delete(sessionId);
-        this._pushSessionsOnly();
-      }
-    }, SidebarProvider.SYNC_DONE_WINDOW_MS + 50);
+      this._syncInFlight.delete(sessionId);
+      this._pushSessionsOnly();
+    }, waitMs);
   }
 
   constructor(private _context: vscode.ExtensionContext) {}
@@ -573,6 +561,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     // swaps only sessionsContent, leaving other sections unchanged.
     const creds = loadCredentials();
     const state: SidebarState = {
+      lang: vscode.env.language,
       deviceStatus: creds?.deviceToken ? 'paired' : 'unpaired',
       phoneName: '',
       bridge: this._bridgeService.state,
@@ -1210,16 +1199,15 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         if (Date.now() - this._lastToggleTime < 1000) { log('toggle debounced'); break; }
         this._lastToggleTime = Date.now();
         const toggleSid = String(msg.sessionId || '');
+        const syncStartedAt = Date.now();
         if (toggleSid) this._syncInFlight.add(toggleSid);
-        if (toggleSid) this._syncDoneUntil.delete(toggleSid);
         this._pushSessionsOnly();
         if (msg.isopencode) {
           const sessionId = String(msg.sessionId || '');
           const attached = msg.attached === true;
           if (!sessionId) {
             vscode.window.showErrorMessage('OpenCode attach failed: missing session id');
-            this._syncInFlight.delete(toggleSid);
-            this._pushSessionsOnly();
+            this._finishSyncSpinner(toggleSid, syncStartedAt);
             break;
           }
 
@@ -1230,8 +1218,6 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
             break;
           }
           this._opencodeAttachInFlight.add(inFlightKey);
-          let succeeded = false;
-
           const ocUrl = attached
             ? `${this._bridgeService.getBridgeUrl()}/v1/opencode-sessions/detach`
             : `${this._bridgeService.getBridgeUrl()}/v1/opencode-sessions/attach`;
@@ -1251,7 +1237,6 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
                 this._recentAttachedAt.set(sessionId, Date.now());
                 this._recentDetachedAt.delete(sessionId);
               }
-              succeeded = true;
               const creds = loadCredentials();
               if (creds?.deviceId) {
                 if (!attached) {
@@ -1264,10 +1249,8 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
           }).catch(() => {
             vscode.window.showErrorMessage(`${attached ? 'Detach' : 'Attach'} failed: bridge not available`);
           }).finally(() => {
-            this._syncInFlight.delete(toggleSid);
             this._opencodeAttachInFlight.delete(inFlightKey);
-            if (succeeded) this._markSyncDone(toggleSid);
-            this._pushSessionsOnly();
+            this._finishSyncSpinner(toggleSid, syncStartedAt);
             this._pushState();
           });
           break;
@@ -1300,15 +1283,12 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
                 } else if (codexSid) {
                   this._recentDetachedAt.set(codexSid, Date.now());
                   this._recentAttachedAt.delete(codexSid);
-                  this._markSyncDone(toggleSid);
                 }
-                this._syncInFlight.delete(toggleSid);
-                this._pushSessionsOnly();
+                this._finishSyncSpinner(toggleSid, syncStartedAt);
                 this._pushState();
               })
               .catch(() => {
-                this._syncInFlight.delete(toggleSid);
-                this._pushSessionsOnly();
+                this._finishSyncSpinner(toggleSid, syncStartedAt);
                 vscode.window.showErrorMessage('Stop failed: bridge not available');
               });
           } else {
@@ -1323,14 +1303,11 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
               } else if (codexSid) {
                 this._recentAttachedAt.set(codexSid, Date.now());
                 this._recentDetachedAt.delete(codexSid);
-                this._markSyncDone(toggleSid);
               }
-              this._syncInFlight.delete(toggleSid);
-              this._pushSessionsOnly();
+              this._finishSyncSpinner(toggleSid, syncStartedAt);
               this._pushState();
             }).catch(() => {
-              this._syncInFlight.delete(toggleSid);
-              this._pushSessionsOnly();
+              this._finishSyncSpinner(toggleSid, syncStartedAt);
               vscode.window.showErrorMessage('Resume failed: bridge not available');
             });
           }
@@ -1346,25 +1323,20 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
             } else {
               this._recentDetachedAt.set(msg.sessionId, Date.now());
               this._recentAttachedAt.delete(msg.sessionId);
-              this._markSyncDone(toggleSid);
               const creds = loadCredentials();
               if (creds?.deviceId) {
                 await SessionStore.remove(this._context, creds.deviceId, msg.sessionId);
               }
             }
-            this._syncInFlight.delete(toggleSid);
-            this._pushSessionsOnly();
+            this._finishSyncSpinner(toggleSid, syncStartedAt);
             this._pushState();
           }).catch(() => {
-            this._syncInFlight.delete(toggleSid);
-            this._pushSessionsOnly();
+            this._finishSyncSpinner(toggleSid, syncStartedAt);
             this._pushState();
           });
         } else {
           this.attachClaudeSession(msg.sessionId).then((succeeded) => {
-            this._syncInFlight.delete(toggleSid);
-            if (succeeded) this._markSyncDone(toggleSid);
-            this._pushSessionsOnly();
+            this._finishSyncSpinner(toggleSid, syncStartedAt);
             this._pushState();
           });
         }

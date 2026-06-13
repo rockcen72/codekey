@@ -26,8 +26,8 @@ describe('history-policy', () => {
     }
   });
 
-  it('uses a fixed recent history count of 5', () => {
-    expect(DEFAULT_RECENT_COUNT).toBe(5);
+  it('uses a fixed recent history count of 10', () => {
+    expect(DEFAULT_RECENT_COUNT).toBe(10);
   });
 
   // ── API shape: getAllConfigs ─────────────────────
@@ -131,7 +131,7 @@ describe('history-policy', () => {
       const r = checkHistoryPolicy('s', 'codex');
       expect(r.allowed).toBe(true);
       expect(r.maxCount).toBe(DEFAULT_RECENT_COUNT);
-      expect(r.allowedFields).toEqual(['summary', 'metadata', 'status', 'basename']);
+      expect(r.allowedFields).toEqual(['type', 'summary', 'summaryShort', 'status']);
     });
 
     it('per-session overrides agent-level', () => {

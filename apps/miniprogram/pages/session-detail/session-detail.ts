@@ -774,8 +774,8 @@ Page({
           : time;
         messages.push({
           id: e.id,
-          type: eventAgentType ? 'ai' : 'user',
-          side: eventAgentType ? 'left' : 'right',
+          type: 'user',
+          side: 'right',
           content: prompt,
           displayTime,
           typeLabel: '',
@@ -790,9 +790,9 @@ Page({
           canApprove: false,
           eventId: e.id,
           accent: 'neutral',
-          agentClass: eventAgentType ? agentClass : 'unknown',
+          agentClass: 'unknown',
           kindBadge: '',
-          senderName: eventAgentType ? agentName : '你',
+          senderName: '你',
         });
         flushPendingCommandStarted();
         continue;

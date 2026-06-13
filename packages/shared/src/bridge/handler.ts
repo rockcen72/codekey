@@ -12,7 +12,7 @@ import { MAX_PROMPT_LENGTH } from '../types.js';
 import type { AgentEventPayload, SessionEventMessage } from '../types.js';
 import { RiskEngine } from '../risk.js';
 import { tryFormatInputRequiredEvent } from './input-card.js';
-import { runPrivacyPipeline, toCheckedPayload, PrivacyAuditCollector } from './privacy-pipeline.js';
+import { runPrivacyPipeline, toCheckedPayload, PrivacyAuditCollector, projectHistoryEventForPolicy } from './privacy-pipeline.js';
 import type { AuditSink, PrivacyDecision, SourceType, PrivacyStats } from './privacy-pipeline.js';
 import { checkHistoryPolicy, HistorySharePolicy, getEffectiveConfig, DEFAULT_RECENT_COUNT } from './history-policy.js';
 
@@ -135,6 +135,11 @@ export class ApprovalBridge {
   private transcriptAttachedIds = new Set<string>(); // claudeSessionIds attached via attachClaudeSession (for reconciliation)
   private claudeTranscriptSyncTimers = new Map<string, ReturnType<typeof setInterval>>();
   private sentPromptKeys = new Set<string>();     // "claudeSessionId:index" — prevents re-attach duplicates
+
+  /** External target for OpenCode history replay on policy change. Set by bridge-entry. */
+  opencodeReplayTarget: { replayAttachedHistory(localSessionId: string): void } | null = null;
+  /** External target for Codex history replay on policy change. Set by bridge-entry. */
+  codexReplayTarget: { replayActiveHistory(): void } | null = null;
   private sentAssistantKeys = new Set<string>();  // "claudeSessionId:index" — prevents transcript duplicate sends
   private sentAssistantTextKeys = new Set<string>(); // "claudeSessionId:fingerprint" — dedups hook + transcript sends
   // Tracks number of phone commands claimed but not yet acknowledged via session_idle.
@@ -240,6 +245,8 @@ export class ApprovalBridge {
   /** OpenCode session IDs registered via ensureSession — included in getAttachedSessionIds(). */
   private _opencodeAttachedIds = new Set<string>();
 
+  get opencodeAttachedIds(): ReadonlySet<string> { return this._opencodeAttachedIds; }
+
   addOpenCodeAttachedSession(localSessionId: string): void {
     this._opencodeAttachedIds.add(localSessionId);
   }
@@ -311,26 +318,34 @@ export class ApprovalBridge {
         if (info.role === 'user' && Array.isArray(m.parts)) {
           const text = m.parts.filter((p: any) => p.type === 'text' && p.text).map((p: any) => p.text).join('\n');
           if (text) {
-            this.sendEventToRelay(serverSessionId, {
+            const raw = JSON.stringify({ type: 'event', payload: {
               clientEventId: `oc-hist:${localSessionId}:${Date.now()}:${Math.random()}`,
               sessionId: serverSessionId,
               agent: 'opencode',
               eventType: 'user_prompt',
               data: { type: 'user_prompt', prompt: text, summary: text.slice(0, 200) },
               ts: info.time?.created ? new Date(info.time.created).toISOString() : new Date().toISOString(),
-            }, 'history');
+            }});
+            const projected = projectHistoryEventForPolicy(raw, policy);
+            if (projected !== null) {
+              this.privacyCheckAndSend('history', projected, undefined, undefined);
+            }
           }
         } else if (info.role === 'assistant' && m.parts) {
           const text = m.parts.filter((p: any) => p.type === 'text' && p.text).map((p: any) => p.text).join('\n');
           if (text) {
-            this.sendEventToRelay(serverSessionId, {
+            const raw = JSON.stringify({ type: 'event', payload: {
               clientEventId: `oc-hist:${localSessionId}:${Date.now()}:${Math.random()}`,
               sessionId: serverSessionId,
               agent: 'opencode',
               eventType: 'task_complete',
               data: { type: 'task_complete', summary: text, summaryShort: text.slice(0, 200), output: text },
               ts: info.time?.completed || info.time?.created ? new Date((info.time.completed || info.time.created) as number).toISOString() : new Date().toISOString(),
-            }, 'history');
+            }});
+            const projected = projectHistoryEventForPolicy(raw, policy);
+            if (projected !== null) {
+              this.privacyCheckAndSend('history', projected, undefined, undefined);
+            }
           }
         }
       }
@@ -430,6 +445,14 @@ export class ApprovalBridge {
     // Re-evaluate sync timers when relay pushes a policy change (e.g. phone changes policy).
     this.relay.on('sync_history_policy', () => {
       this.reevaluateClaudeSync();
+      if (this.opencodeReplayTarget) {
+        for (const localId of this._opencodeAttachedIds) {
+          this.opencodeReplayTarget.replayAttachedHistory(localId);
+        }
+      }
+      if (this.codexReplayTarget) {
+        this.codexReplayTarget.replayActiveHistory();
+      }
     });
 
     // Resolve pending approval from phone decision (keyed by serverEventId,
@@ -1491,7 +1514,11 @@ export class ApprovalBridge {
     }
 
     if (shouldForwardRelayEvent) {
-      this.privacyCheckAndSend('approval', JSON.stringify(relayMsg));
+      const hookPolicy = checkHistoryPolicy(claudeSessionId, 'claude-code-hook');
+      const hookProjected = projectHistoryEventForPolicy(JSON.stringify(relayMsg), hookPolicy);
+      if (hookProjected !== null) {
+        this.privacyCheckAndSend('approval', hookProjected);
+      }
     }
 
     // Clear pending approvals only when CC actually finishes a turn
@@ -1531,7 +1558,11 @@ export class ApprovalBridge {
           ts: new Date().toISOString(),
         },
       };
-      this.privacyCheckAndSend('transcript', JSON.stringify(msg));
+      const idlePolicy = checkHistoryPolicy(claudeSessionId, 'claude-code-hook');
+      const idleProjected = projectHistoryEventForPolicy(JSON.stringify(msg), idlePolicy);
+      if (idleProjected !== null) {
+        this.privacyCheckAndSend('transcript', idleProjected);
+      }
     }
 
     // Note: task_complete does NOT clean up local caches — session lifecycle
@@ -1718,7 +1749,10 @@ export class ApprovalBridge {
             ts: entry.timestamp || new Date().toISOString(),
           },
         };
-        this.privacyCheckAndSend('transcript', JSON.stringify(relayMsg), undefined, policy.allowedFields);
+        const raw = JSON.stringify(relayMsg);
+        const projected = projectHistoryEventForPolicy(raw, policy);
+        if (projected === null) continue;
+        this.privacyCheckAndSend('transcript', projected, undefined, undefined);
         continue;
       }
 
@@ -1743,7 +1777,11 @@ export class ApprovalBridge {
           ts: entry.timestamp || new Date().toISOString(),
         },
       };
-      this.privacyCheckAndSend('transcript', JSON.stringify(relayMsg), undefined, policy.allowedFields);
+      const raw = JSON.stringify(relayMsg);
+      const projected = projectHistoryEventForPolicy(raw, policy);
+      if (projected !== null) {
+        this.privacyCheckAndSend('transcript', projected, undefined, undefined);
+      }
       this.resolvePendingApprovalsForSession(serverSessionId);
     }
   }
@@ -1805,7 +1843,11 @@ export class ApprovalBridge {
           ts: entry.timestamp,
         },
       };
-      this.privacyCheckAndSend('transcript', JSON.stringify(relayMsg), undefined, policy.allowedFields);
+      const raw = JSON.stringify(relayMsg);
+      const projected = projectHistoryEventForPolicy(raw, policy);
+      if (projected !== null) {
+        this.privacyCheckAndSend('transcript', projected, undefined, undefined);
+      }
     }
   }
 

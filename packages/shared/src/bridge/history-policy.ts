@@ -11,10 +11,10 @@ export interface HistoryPolicyConfig {
 }
 
 export const DEFAULT_HISTORY_SHARE_POLICY = HistorySharePolicy.Off;
-export const DEFAULT_RECENT_COUNT = 5;
+export const DEFAULT_RECENT_COUNT = 10;
 export const MIN_RECENT_COUNT = 1;
 export const MAX_RECENT_COUNT = 50;
-export const SANITIZED_ALLOWED_FIELDS = ['summary', 'metadata', 'status', 'basename'] as const;
+export const SANITIZED_ALLOWED_FIELDS = ['type', 'summary', 'summaryShort', 'status'] as const;
 
 export type AgentType = 'claude' | 'codex' | 'opencode' | string;
 export type PolicyKey = `${AgentType}:${string}` | AgentType | '*';

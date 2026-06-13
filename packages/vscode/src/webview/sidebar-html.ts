@@ -33,7 +33,7 @@ export interface SubscriptionInfo {
 
 export interface PrivacyInfo {
   summary: { forwarded: number; blocked: number; sanitized: number; totalFindings: number };
-  recentEntries: { timestamp: string; source: string; action: string; sanitized: boolean; blocked: boolean; payloadPreview: string; findingCount: number; payloadLength: number }[];
+  recentEntries: { timestamp: string; source: string; action: string; sanitized: boolean; blocked: boolean; payloadPreview: string; findingCount: number; payloadLength: number; blockedPaths?: string[] }[];
 }
 
 export interface HistoryPolicyEntry {
@@ -86,7 +86,7 @@ export interface ClaudeSessionItem {
   /** True when this Codex session has been resumed */
   resumed?: boolean;
   /** Transient sync button state controlled by the extension host */
-  syncStatus?: 'syncing' | 'done';
+  syncStatus?: 'syncing';
 }
 
 // ── Helpers ──────────────────────────────────────────────
@@ -301,8 +301,17 @@ export function renderPrivacyDetailContent(state: SidebarState, filter: string):
   if (!p) return '';
   const entries = p.recentEntries;
   const filtered = filter === 'all' ? entries : entries.filter(e => e.action === filter);
-  const actionLabels: Record<string, string> = { forwarded: 'Forwarded', blocked: 'Blocked', sanitized: 'Sanitized' };
-  const sourceLabels: Record<string, string> = { approval: 'Approve', transcript: 'Transcript', history: 'History', command: 'Command' };
+  const actionLabels: Record<string, string> = {
+    forwarded: i18n(state.lang, 'Forwarded', '已发'),
+    blocked: i18n(state.lang, 'Blocked', '已拦截'),
+    sanitized: i18n(state.lang, 'Sanitized', '已脱敏'),
+  };
+  const sourceLabels: Record<string, string> = {
+    approval: i18n(state.lang, 'Approval', '审批'),
+    transcript: i18n(state.lang, 'Transcript', '转录'),
+    history: i18n(state.lang, 'History', '历史'),
+    command: i18n(state.lang, 'Command', '命令'),
+  };
   const backText = i18n(state.lang, 'Back', '返回');
   const emptyText = i18n(state.lang, 'No events', '无记录');
   const filterLabel = filter === 'all' ? i18n(state.lang, 'All Events', '全部记录') : (actionLabels[filter] || filter);
@@ -315,6 +324,9 @@ export function renderPrivacyDetailContent(state: SidebarState, filter: string):
       const act = actionLabels[e.action] || e.action;
       const preview = e.payloadPreview ? h(truncate(e.payloadPreview, 200)) : '';
       const ts = e.timestamp ? formatTime(e.timestamp) : '';
+      const blockedPaths = e.blockedPaths && e.blockedPaths.length > 0
+        ? `<div class="sd-event-blocked">${i18n(state.lang, 'Blocked paths', '拦截路径')}: ${h(e.blockedPaths.join(', '))}</div>`
+        : '';
       return `<div class="sd-event">
         <div class="sd-event-header">
           <span class="privacy-tag ${e.action}">${h(act)}</span>
@@ -323,6 +335,7 @@ export function renderPrivacyDetailContent(state: SidebarState, filter: string):
           <span class="sd-event-len">${h(String(e.payloadLength))}B</span>
         </div>
         ${preview ? `<div class="sd-event-data preview-line">${preview}</div>` : ''}
+        ${blockedPaths}
       </div>`;
     }).join('');
   }
@@ -471,9 +484,8 @@ function _sessionItemHtml(lang: string | undefined, s: any, extraCls: string): s
       const sid = s.sessionId;
       const syncStatus = s.syncStatus || (s.syncing === true ? 'syncing' : '');
       const isSyncing = syncStatus === 'syncing';
-      const isDone = syncStatus === 'done';
-      const btnCls = isSyncing ? 'btn-syncing' : isDone ? 'btn-done' : isAttached ? 'btn-attached' : '';
-      const btnText = isSyncing ? '' : isDone ? i18n(lang, 'Done', '完成') : isAttached ? i18n(lang, 'Unsync', '取消同步') : i18n(lang, 'Sync', '同步');
+      const btnCls = isSyncing ? 'btn-syncing' : isAttached ? 'btn-attached' : '';
+      const btnText = isSyncing ? '' : isAttached ? i18n(lang, 'Unsync', '取消同步') : i18n(lang, 'Sync', '同步');
       const agent = s.isOpenCodeSession ? 'opencode' : s.isCodexSession ? 'codex' : 'claude-code';
       const isCodex = s.isCodexSession ? 'true' : 'false';
       const isOpenCode = s.isOpenCodeSession ? 'true' : '';
@@ -701,9 +713,9 @@ export function renderPairingContent(state: SidebarState): string {
     </div>` : '';
   const wechatGuide = platform === 'wechat' && hasCode
     ? `<div class="tg-guide">
-      <div class="guide-step">1. Open WeChat on your phone</div>
-      <div class="guide-step">2. Search for <strong>CodeKey</strong> mini program</div>
-      <div class="guide-step">3. Tap <strong>Scan QR</strong> on the home page to pair</div>
+      <div class="guide-step">${i18n(state.lang, 'Open WeChat on your phone', '打开手机微信')}</div>
+      <div class="guide-step">${i18n(state.lang, 'Search for <strong>CodeKey</strong> mini program', '搜索「<strong>码钥</strong>」小程序')}</div>
+      <div class="guide-step">${i18n(state.lang, 'Tap <strong>Scan QR</strong> on the home page to pair', '点击首页「<strong>扫码</strong>」完成配对')}</div>
     </div>` : '';
   const guideHtml = tgGuide || wechatGuide;
 
@@ -1542,7 +1554,6 @@ body{
 }
 .btn-attached:hover{background:rgba(46,204,113,.2);border-color:#2ecc71}
 .btn-syncing{background:rgba(128,128,128,.1);border-color:var(--vscode-panel-border,#1e1e2e);pointer-events:none}
-.btn-done{background:rgba(46,204,113,.1);border-color:#2ecc71;color:#2ecc71;pointer-events:none}
 @keyframes spin{to{transform:rotate(360deg)}}
 .spinner{display:inline-block;width:12px;height:12px;border:2px solid var(--vscode-descriptionForeground,#50506e);border-top-color:transparent;border-radius:50%;animation:spin .6s linear infinite;vertical-align:middle}
 .session-meta{
@@ -1587,6 +1598,7 @@ body{
 .sd-event-len{font-size:8px;color:var(--vscode-descriptionForeground,#50506e);margin-left:auto}
 .sd-event-data{font-size:10px;color:var(--vscode-editor-foreground);white-space:pre-wrap;word-break:break-word;max-height:60px;overflow:hidden}
 .sd-event-data.preview-line{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-height:none}
+.sd-event-blocked{font-size:9px;color:#f74d4d;margin-top:2px}
 .sd-event-data.expanded{max-height:none}
 .sd-expand{font-size:8px;color:var(--vscode-textLink-foreground,#00ffe0);cursor:pointer;background:none;border:none;padding:0;margin-top:2px}
 .sd-expand:hover{text-decoration:underline}

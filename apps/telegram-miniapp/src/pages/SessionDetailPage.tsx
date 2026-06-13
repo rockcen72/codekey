@@ -193,13 +193,12 @@ function buildChatMessages(events: UserEvent[], session: UserSession | null, res
       const prompt = String(data.prompt || data.summary || '');
       if (!prompt || prompt === lastUserPrompt) continue;
       lastUserPrompt = prompt;
-      const isAgentContext = Boolean(data.agentType || data.eventAgentType || data.agent);
       messages.push({
         id: event.id,
         eventId: event.id,
-        type: isAgentContext ? 'agent' : 'user',
+        type: 'user',
         eventType: event.type,
-        senderName: isAgentContext ? agentChatName(eventAgentType) : 'You',
+        senderName: 'You',
         content: prompt,
         command: '',
         typeLabel: '',
@@ -209,7 +208,7 @@ function buildChatMessages(events: UserEvent[], session: UserSession | null, res
         decision: null,
         createdAt: event.created_at,
         accent: 'neutral',
-        agentClass: isAgentContext ? agentClass : 'unknown',
+        agentClass: 'unknown',
         inputOptions: [],
       });
       flushPendingCommandStarted();

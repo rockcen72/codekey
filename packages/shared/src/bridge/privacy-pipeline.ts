@@ -21,6 +21,9 @@ import { DEFAULT_BLOCKED_PATTERNS, matchesAny } from './blocklist.js';
 
 export type SourceType = 'approval' | 'transcript' | 'history' | 'command';
 
+/** Classifies a payload for history-policy enforcement vs exemption. */
+export type ContentPolicy = 'enforce' | 'phone-originated' | 'approval-exempt';
+
 export interface PrivacyContext {
   /** Which component generated this payload */
   source: SourceType;
@@ -94,6 +97,7 @@ export interface AuditEntry {
   payloadPreview: string;
   findingCount: number;
   payloadLength: number;
+  blockedPaths?: string[];
 }
 
 /** Callback type for audit logging. Injected by the host (VS Code). */
@@ -296,6 +300,52 @@ export function projectAllowedFields(rawPayload: string, allowedFields: readonly
 }
 
 /**
+ * Replace payload.data.summary and summaryShort with a safe, fixed-phrase
+ * summary derived from eventType. Never reads the original summary content
+ * (which may contain the raw user prompt or agent output).
+ */
+export function safeSummary(rawPayload: string): string {
+  try {
+    const root = JSON.parse(rawPayload);
+    const payload = (root as Record<string, unknown>).payload as Record<string, unknown> | undefined;
+    if (!payload || typeof payload.data !== 'object') return rawPayload;
+    const eventType = String(payload.eventType || '');
+    let summary = `Event: ${eventType}`;
+    switch (eventType) {
+      case 'user_prompt':   summary = 'User prompt'; break;
+      case 'task_complete':  summary = 'Task completed'; break;
+      case 'error':          summary = 'Error occurred'; break;
+      case 'command_started': summary = 'Command sent from phone'; break;
+      case 'session_idle':   summary = 'Session idle'; break;
+    }
+    const data = payload.data as Record<string, unknown>;
+    data.summary = summary;
+    data.summaryShort = summary;
+    return JSON.stringify(root);
+  } catch {
+    return rawPayload;
+  }
+}
+
+/**
+ * History-policy-aware pre-projection to be called BEFORE the privacy pipeline.
+ *
+ *  - Off + enforce   → null (do not send)
+ *  - Full or exempt  → rawPayload (no projection)
+ *  - Summary         → safeSummary() + projectAllowedFields()
+ */
+export function projectHistoryEventForPolicy(
+  rawPayload: string,
+  policy: { allowed: boolean; allowedFields?: readonly string[] },
+  contentPolicy: ContentPolicy = 'enforce',
+): string | null {
+  if (!policy.allowed && contentPolicy === 'enforce') return null;
+  if (!policy.allowedFields || contentPolicy === 'approval-exempt' || contentPolicy === 'phone-originated') return rawPayload;
+  const safe = safeSummary(rawPayload);
+  return projectAllowedFields(safe, policy.allowedFields);
+}
+
+/**
  * Extract file paths from a structured payload and/or raw string.
  * Priority: structuredPayload > extraPaths > heuristic from raw.
  * Handles Unix, Windows, and relative paths.
@@ -422,6 +472,7 @@ export function runPrivacyPipeline(
       payloadPreview: trimmedPayload.slice(0, 200),
       findingCount: findings.length,
       payloadLength: ctx.rawPayload.length,
+      blockedPaths: dedupedBlocked.length > 0 ? dedupedBlocked : undefined,
     });
   }
 

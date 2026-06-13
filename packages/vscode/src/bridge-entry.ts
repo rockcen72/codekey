@@ -71,6 +71,7 @@ async function main(): Promise<void> {
   bridge.registerResumedServerSessionIds(resumedServerSessionIds);
   const resumeStoragePath = path.join(os.tmpdir(), 'codekey-resume-sessions.json');
   const codexResumeManager = new CodexResumeManager(relay, resumedServerSessionIds, bridge, resumeStoragePath, createAuditSink());
+  bridge.codexReplayTarget = codexResumeManager;
   codexResumeManager.startListening();
 
   // ── OpenCode Session Manager ─────────────────────────────
@@ -80,6 +81,7 @@ async function main(): Promise<void> {
     const ocPort = discoverOpenCodePort() ?? 4096;
     ocUrl = `http://127.0.0.1:${ocPort}`;
     opencodeManager = new OpenCodeSessionManager(ocUrl, bridge);
+    bridge.opencodeReplayTarget = opencodeManager;
     const startOpenCodeWithRetry = async (maxRetries = 5) => {
       for (let attempt = 1; attempt <= maxRetries; attempt++) {
         try {

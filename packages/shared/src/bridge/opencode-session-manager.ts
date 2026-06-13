@@ -7,7 +7,8 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { discoverOpenCodePort } from './platform.js';
 import { tryFormatInputRequiredEvent } from './input-card.js';
-import { checkHistoryPolicy } from './history-policy.js';
+import { checkHistoryPolicy, DEFAULT_RECENT_COUNT } from './history-policy.js';
+import { projectHistoryEventForPolicy } from './privacy-pipeline.js';
 
 interface OpenCodeSessionInfo {
   id: string;
@@ -102,6 +103,13 @@ export class OpenCodeSessionManager {
     this.opencodeSessionToRelayId.set(localSessionId, serverSessionId);
   }
 
+  /** Re-trigger history replay for a session — called when policy changes from Off to allowed. */
+  replayAttachedHistory(localSessionId: string): void {
+    const serverSessionId = this.opencodeSessionToRelayId.get(localSessionId);
+    if (!serverSessionId) return;
+    this.replayHistory(localSessionId, serverSessionId);
+  }
+
   async start(): Promise<void> {
     this.bridge.registerExternalApprovalResponder({
       agentType: 'opencode',
@@ -152,7 +160,7 @@ export class OpenCodeSessionManager {
 
   async attachSession(localSessionId: string, title?: string, knownServerSessionId?: string): Promise<string> {
     const fetchMessages = (sid: string): Promise<any[]> => {
-      return fetch(`${this.opencodeBaseUrl}/session/${encodeURIComponent(sid)}/message?limit=5`)
+      return fetch(`${this.opencodeBaseUrl}/session/${encodeURIComponent(sid)}/message?limit=${DEFAULT_RECENT_COUNT}`)
         .then(r => r.ok ? r.json() as Promise<any[]> : Promise.resolve([]))
         .catch((): any[] => []);
     };
@@ -245,7 +253,7 @@ export class OpenCodeSessionManager {
   private async replayHistory(localSessionId: string, serverSessionId: string): Promise<void> {
     const policy = checkHistoryPolicy(localSessionId, 'opencode');
     if (!policy.allowed) return;
-    const url = `${this.opencodeBaseUrl}/session/${encodeURIComponent(localSessionId)}/message?limit=${policy.maxCount ?? 5}`;
+    const url = `${this.opencodeBaseUrl}/session/${encodeURIComponent(localSessionId)}/message?limit=${policy.maxCount ?? DEFAULT_RECENT_COUNT}`;
     console.error('[opencode] replayHistory: fetching %s', url);
     try {
       const resp = await fetch(url);
@@ -262,14 +270,18 @@ export class OpenCodeSessionManager {
             .map((p: any) => p.text)
             .join('\n');
           if (text) {
-            this.bridge.sendEventToRelay(serverSessionId, {
+            const raw = JSON.stringify({ type: 'event', payload: {
               clientEventId: `oc-hist:${localSessionId}:${Date.now()}:${Math.random()}`,
               sessionId: serverSessionId,
               agent: 'opencode',
               eventType: 'user_prompt',
               data: { type: 'user_prompt', prompt: text, summary: text.slice(0, 200) },
               ts: info.time?.created ? new Date(info.time.created).toISOString() : new Date().toISOString(),
-            }, "history", policy.allowedFields);
+            }});
+            const projected = projectHistoryEventForPolicy(raw, policy);
+            if (projected !== null) {
+              this.bridge.privacyCheckAndSend('history', projected, undefined, undefined);
+            }
           }
         } else if (info.role === 'assistant' && m.parts) {
           const text = m.parts
@@ -277,14 +289,18 @@ export class OpenCodeSessionManager {
             .map((p: any) => p.text)
             .join('\n');
           if (text) {
-            this.bridge.sendEventToRelay(serverSessionId, {
+            const raw = JSON.stringify({ type: 'event', payload: {
               clientEventId: `oc-hist:${localSessionId}:${Date.now()}:${Math.random()}`,
               sessionId: serverSessionId,
               agent: 'opencode',
               eventType: 'task_complete',
               data: { type: 'task_complete', summary: text, summaryShort: text.slice(0, 200), output: text },
               ts: info.time?.completed || info.time?.created ? new Date((info.time.completed || info.time.created) as number).toISOString() : new Date().toISOString(),
-            }, "history", policy.allowedFields);
+            }});
+            const projected = projectHistoryEventForPolicy(raw, policy);
+            if (projected !== null) {
+              this.bridge.privacyCheckAndSend('history', projected, undefined, undefined);
+            }
           }
         }
       }
@@ -570,24 +586,24 @@ export class OpenCodeSessionManager {
 
     if (!checkHistoryPolicy(sessionID, 'opencode').allowed) return;
 
-    // OpenCode sometimes carries an error payload on session.idle even
-    // when no separate session.error event was emitted (e.g. the agent
-    // hit a max-iteration cap and gave up). Surface it as a proper
-    // error event so the phone can show the reason — otherwise the
-    // user only sees a generic "Session idle" and has no idea why the
-    // task ended without completing.
+    const policy = checkHistoryPolicy(sessionID, 'opencode');
+
     const errorObj = props.error as Record<string, unknown> | undefined;
     if (errorObj) {
       const message = (errorObj.message as string) || 'Session idle with error';
-      this.bridge.sendEventToRelay(serverSessionId, {
+      const errRaw = JSON.stringify({ type: 'event', payload: {
         sessionId: serverSessionId,
         agent: 'opencode',
         eventType: 'error',
         data: { type: 'error', message },
-      }, "transcript");
+      }});
+      const errProjected = projectHistoryEventForPolicy(errRaw, policy);
+      if (errProjected !== null) {
+        this.bridge.privacyCheckAndSend('transcript', errProjected, undefined, undefined);
+      }
     }
 
-    this.bridge.sendEventToRelay(serverSessionId, {
+    const idleRaw = JSON.stringify({ type: 'event', payload: {
       sessionId: serverSessionId,
       agent: 'opencode',
       eventType: 'task_complete',
@@ -595,7 +611,11 @@ export class OpenCodeSessionManager {
         type: 'task_complete',
         summary: errorObj ? (errorObj.message as string) || 'Session idle with error' : 'Session idle',
       },
-    }, "transcript");
+    }});
+    const idleProjected = projectHistoryEventForPolicy(idleRaw, policy);
+    if (idleProjected !== null) {
+      this.bridge.privacyCheckAndSend('transcript', idleProjected, undefined, undefined);
+    }
   }
 
   private onSessionError(props: Record<string, unknown>): void {
@@ -606,10 +626,11 @@ export class OpenCodeSessionManager {
 
     if (!checkHistoryPolicy(sessionID, 'opencode').allowed) return;
 
+    const policy = checkHistoryPolicy(sessionID, 'opencode');
     const errorObj = props.error as Record<string, unknown> | undefined;
     const message = (errorObj?.message as string) || 'Session error';
 
-    this.bridge.sendEventToRelay(serverSessionId, {
+    const raw = JSON.stringify({ type: 'event', payload: {
       sessionId: serverSessionId,
       agent: 'opencode',
       eventType: 'error',
@@ -617,7 +638,11 @@ export class OpenCodeSessionManager {
         type: 'error',
         message,
       },
-    }, "transcript");
+    }});
+    const projected = projectHistoryEventForPolicy(raw, policy);
+    if (projected !== null) {
+      this.bridge.privacyCheckAndSend('transcript', projected, undefined, undefined);
+    }
   }
 
   // ── Message handling ────────────────────────────────────
@@ -658,24 +683,34 @@ export class OpenCodeSessionManager {
       const policy = checkHistoryPolicy(sessionID, 'opencode');
       if (!policy.allowed) return;
       const summary = info.summary as Record<string, unknown> | undefined;
-      const text = (summary?.body as string) || (summary?.title as string) || '';
+      const partsText = Array.isArray(info.parts)
+        ? (info.parts as any[]).filter((p: any) => p.type === 'text' && p.text).map((p: any) => p.text).join('\n')
+        : '';
+      const text = (summary?.body as string) || (summary?.title as string) || partsText || '';
       if (text && !this._isRecentPhoneCommand(sessionID, text)) {
-        this.bridge.sendEventToRelay(serverSessionId, {
+        const raw = JSON.stringify({ type: 'event', payload: {
           clientEventId: `oc-user:${messageID}:${Date.now()}`,
           sessionId: serverSessionId,
           agent: 'opencode',
           eventType: 'user_prompt',
           data: { type: 'user_prompt', prompt: text, summary: text.slice(0, 200) },
           ts: new Date().toISOString(),
-        }, "history", policy.allowedFields);
+        }});
+        const projected = projectHistoryEventForPolicy(raw, policy);
+        if (projected !== null) {
+          this.bridge.privacyCheckAndSend('history', projected, undefined, undefined);
+        }
+        // Track so onMessagePartUpdated can dedup the text-part echo
+        this._trackPhoneCommand(sessionID, text);
       }
       return;
     }
 
     const error = info.error as Record<string, unknown> | undefined;
     if (error) {
-      if (!checkHistoryPolicy(sessionID, 'opencode').allowed) return;
-      this.bridge.sendEventToRelay(serverSessionId, {
+      const policy = checkHistoryPolicy(sessionID, 'opencode');
+      if (!policy.allowed) return;
+      const raw = JSON.stringify({ type: 'event', payload: {
         sessionId: serverSessionId,
         agent: 'opencode',
         eventType: 'error',
@@ -683,7 +718,11 @@ export class OpenCodeSessionManager {
           type: 'error',
           message: (error.message as string) || 'Unknown error',
         },
-      }, "transcript");
+      }});
+      const projected = projectHistoryEventForPolicy(raw, policy);
+      if (projected !== null) {
+        this.bridge.privacyCheckAndSend('transcript', projected, undefined, undefined);
+      }
     }
   }
 
@@ -774,7 +813,7 @@ export class OpenCodeSessionManager {
       // once as a task_complete marked as the agent's reply.
       if (this._isRecentPhoneCommand(sessionID, text)) return;
 
-      this.bridge.sendEventToRelay(serverSessionId, {
+      const rawText = JSON.stringify({ type: 'event', payload: {
         clientEventId: `oc-part:${partID}:${Date.now()}`,
         sessionId: serverSessionId,
         agent: 'opencode',
@@ -785,7 +824,11 @@ export class OpenCodeSessionManager {
           summaryShort: text.slice(0, 200),
           output: text,
         },
-      }, "transcript", policy.allowedFields);
+      }});
+      const projectedText = projectHistoryEventForPolicy(rawText, policy);
+      if (projectedText !== null) {
+        this.bridge.privacyCheckAndSend('transcript', projectedText, undefined, undefined);
+      }
     } else if (partType === 'tool') {
       const state = part.state as Record<string, unknown> | undefined;
       if (state?.status === 'completed') {
@@ -793,7 +836,7 @@ export class OpenCodeSessionManager {
         const title = (state.title as string) || (part.tool as string) || 'Tool completed';
         const policy = checkHistoryPolicy(sessionID, 'opencode');
         if (!policy.allowed) return;
-        this.bridge.sendEventToRelay(serverSessionId, {
+        const rawTool = JSON.stringify({ type: 'event', payload: {
           sessionId: serverSessionId,
           agent: 'opencode',
           eventType: 'task_complete',
@@ -801,7 +844,11 @@ export class OpenCodeSessionManager {
             type: 'task_complete',
             summary: title,
           },
-        }, "transcript", policy.allowedFields);
+        }});
+        const projectedTool = projectHistoryEventForPolicy(rawTool, policy);
+        if (projectedTool !== null) {
+          this.bridge.privacyCheckAndSend('transcript', projectedTool, undefined, undefined);
+        }
       }
     }
   }
