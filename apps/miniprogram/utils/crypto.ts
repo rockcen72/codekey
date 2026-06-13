@@ -111,8 +111,8 @@ function secureRandomBytes(length: number): Promise<Uint8Array> {
   });
 }
 
-export function generateContentKey(): KeyPair {
-  const keyBytes = secureRandomBytes(KEY_LENGTH);
+export async function generateContentKey(): Promise<KeyPair> {
+  const keyBytes = await secureRandomBytes(KEY_LENGTH);
   return {
     keyBytes,
     keyHex: bytesToHex(keyBytes),

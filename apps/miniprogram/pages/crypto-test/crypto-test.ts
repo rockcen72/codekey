@@ -37,17 +37,17 @@ Page({
         dbg.push('fixed-sealed=' + (typeof sealed === 'string' ? sealed.slice(0,24) : ''));
       } catch (e: any) { rec('Fixed key roundtrip', false, (e.message||'').slice(0,80)); }
 
-      // Test 2: Random key via async wx.getRandomValues (proves RNG + crypto module chain)
+      // Test 2: generateContentKey (async, full production flow)
       try {
-        const keyRaw: any = await wx.getRandomValues({ length: 32 });
-        const key = new Uint8Array(keyRaw.randomValues || keyRaw.data || keyRaw, 0, 32);
-        const aad = buildAad({v:1,keyId:'rng-test',deviceId:'d',sessionId:'s',eventId:'e',eventType:'user_prompt'});
-        const pt = 'Random key works! 🌍';
-        const sealed = await encrypt(pt, key, aad);
-        const decrypted = await decrypt(sealed, key, aad);
-        rec('Random key roundtrip', decrypted === pt, 'sealed len=' + sealed.length + ', ok');
-        dbg.push('rng-key=' + Array.from(key.slice(0,4)).join(','));
-      } catch (e: any) { rec('Random key roundtrip', false, (e.message||'').slice(0,80)); }
+        const kp = await generateContentKey();
+        rec('generateContentKey', kp.keyHex.length === 64 && kp.keyId.length > 0, 'key=' + kp.keyHex.slice(0,12) + '... id=' + kp.keyId.slice(0,8) + '...');
+        const aad = buildAad({v:1,keyId:kp.keyId,deviceId:'d',sessionId:'s',eventId:'e',eventType:'user_prompt'});
+        const pt = 'Generated key works! 🌍';
+        const sealed = await encrypt(pt, kp.keyBytes, aad);
+        const decrypted = await decrypt(sealed, kp.keyBytes, aad);
+        rec('GenerateContentKey → roundtrip', decrypted === pt, 'sealed len=' + sealed.length + ', ok');
+        dbg.push('gen-key=' + kp.keyHex.slice(0,8));
+      } catch (e: any) { rec('GenerateContentKey → roundtrip', false, (e.message||'').slice(0,80)); }
     }
 
     // Test 3: wx.getRandomValues structure
