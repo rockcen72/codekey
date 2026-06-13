@@ -496,7 +496,7 @@ Page({
         command_started: 1,
         approval_required: 2,
       };
-      return (priority[a.type] ?? 2) - (priority[b.type] ?? 2);
+      return (priority[this.effectiveEventType(a)] ?? 2) - (priority[this.effectiveEventType(b)] ?? 2);
     });
     const messages: ChatMessage[] = [];
     let lastUserPrompt = '';
@@ -517,13 +517,41 @@ Page({
       const eventAgentType = e.data?.agent || e.data?.agentType || e.agent || e.agent_type;
       const agentName = this.chatAgentName(eventAgentType);
       const agentClass = agentColorClass(eventAgentType || this.data.session?.agent_type || this.data.session?.metadata?.runtime);
+      const effectiveType = this.effectiveEventType(e);
 
       // Dedup consecutive user_prompt events with identical content
-      if (e.type === 'user_prompt') {
+      if (effectiveType === 'user_prompt') {
         lastCommandStarted = false;
         const prompt = e.data?.prompt || e.data?.summary || '';
         if (prompt === lastUserPrompt) continue;
         lastUserPrompt = prompt;
+        const displayTime = e.data?.timestamp
+          ? this.formatTime(e.data.timestamp)
+          : time;
+        messages.push({
+          id: e.id,
+          type: 'user',
+          side: 'right',
+          content: prompt,
+          displayTime,
+          typeLabel: '',
+          isTaskComplete: false,
+          command: '',
+          summary: prompt,
+          risk_level: '',
+          riskText: '',
+          pending: false,
+          decision: '',
+          decisionText: '',
+          canApprove: false,
+          eventId: e.id,
+          accent: 'neutral',
+          agentClass: 'unknown',
+          kindBadge: '',
+          senderName: '你',
+        });
+        flushPendingCommandStarted();
+        continue;
       }
 
       if (e.type === 'error') {
@@ -766,37 +794,6 @@ Page({
         }
         continue;
       }
-
-      if (e.type === 'user_prompt') {
-        const prompt = e.data?.prompt || e.data?.summary || '';
-        const displayTime = e.data?.timestamp
-          ? this.formatTime(e.data.timestamp)
-          : time;
-        messages.push({
-          id: e.id,
-          type: 'user',
-          side: 'right',
-          content: prompt,
-          displayTime,
-          typeLabel: '',
-          isTaskComplete: false,
-          command: '',
-          summary: prompt,
-          risk_level: '',
-          riskText: '',
-          pending: false,
-          decision: '',
-          decisionText: '',
-          canApprove: false,
-          eventId: e.id,
-          accent: 'neutral',
-          agentClass: 'unknown',
-          kindBadge: '',
-          senderName: '你',
-        });
-        flushPendingCommandStarted();
-        continue;
-      }
     }
 
     flushPendingCommandStarted();
@@ -852,6 +849,13 @@ Page({
       if (msg.type === 'ai' && msg.pending) return msg;
     }
     return null;
+  },
+
+  effectiveEventType(event: any): string {
+    if (event?.type === 'user_prompt' || event?.data?.type === 'user_prompt' || event?.data?.role === 'user' || event?.role === 'user') {
+      return 'user_prompt';
+    }
+    return event?.type || '';
   },
 
   getDecisionText(decision: string): string {
