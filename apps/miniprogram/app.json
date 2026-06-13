@@ -4,7 +4,8 @@
     "pages/bind/bind",
     "pages/sessions/sessions",
     "pages/session-detail/session-detail",
-    "pages/settings/settings"
+    "pages/settings/settings",
+    "pages/crypto-test/crypto-test"
   ],
   "window": {
     "navigationBarTitleText": "CodeKey",
