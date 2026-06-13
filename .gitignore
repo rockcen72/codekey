@@ -7,11 +7,8 @@ dist/
 .vscode/
 package-lock.json
 
-# Build artifacts
-*.tsbuildinfo
-*.vsix
-*.js.map
-packages/server/relay.cjs
+# Relay server — maintained in private repo codekey-server
+packages/server/
 
 # Bundled bridge output (esbuild)
 packages/shared/src/bridge/claude-transcripts.js
