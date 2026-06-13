@@ -178,14 +178,11 @@ const CLAUDE_CODE_EXT_ID = 'anthropic.claude-code';
  * Note: Does NOT auto-create sessions. Sessions are created on-demand
  * when user clicks Attach in the sidebar or when a hook event fires.
  *
- * Returns true if setup succeeded (CC extension installed + credentials exist).
+ * Returns true if setup succeeded (credentials exist).
  */
 export function ensureCcSessionSync(context: vscode.ExtensionContext): boolean {
   const creds = loadCredentials();
   if (!creds?.deviceToken) return false;
-
-  const ccExt = vscode.extensions.getExtension(CLAUDE_CODE_EXT_ID);
-  if (!ccExt) return false;
 
   // Install hook + start bridge (once per window)
   if (!_bridgeSetupDone) {
@@ -194,6 +191,9 @@ export function ensureCcSessionSync(context: vscode.ExtensionContext): boolean {
     installHook(scriptsDir);
     bridgeService.ensureStarted();
   }
+
+  const ccExt = vscode.extensions.getExtension(CLAUDE_CODE_EXT_ID);
+  if (!ccExt) return true;
 
   // Tab label sync (once per window) — only syncs labels, does NOT auto-create sessions.
   // Sessions are created on-demand when user clicks Attach in the sidebar.

@@ -33,7 +33,20 @@ export interface SubscriptionInfo {
 
 export interface PrivacyInfo {
   summary: { forwarded: number; blocked: number; sanitized: number; totalFindings: number };
-  recentEntries: { timestamp: string; source: string; action: string; sanitized: boolean; blocked: boolean; payloadPreview: string; findingCount: number; payloadLength: number; blockedPaths?: string[] }[];
+  recentEntries: {
+    timestamp: string;
+    source: string;
+    action: string;
+    sanitized: boolean;
+    blocked: boolean;
+    payloadPreview: string;
+    eventType?: string;
+    displayText?: string;
+    previewKind?: 'content' | 'summary' | 'raw';
+    findingCount: number;
+    payloadLength: number;
+    blockedPaths?: string[];
+  }[];
 }
 
 export interface HistoryPolicyEntry {
@@ -322,7 +335,14 @@ export function renderPrivacyDetailContent(state: SidebarState, filter: string):
     entriesHtml = filtered.slice().reverse().map(e => {
       const src = sourceLabels[e.source] || e.source;
       const act = actionLabels[e.action] || e.action;
-      const preview = e.payloadPreview ? h(truncate(e.payloadPreview, 200)) : '';
+      const eventType = e.eventType || '';
+      const eventClass = eventType.replace(/[^a-z0-9_-]/gi, '') || 'event';
+      const eventLabel = eventType ? eventTypeLabel(eventType, state.lang) : '';
+      const previewText = e.previewKind === 'summary'
+        ? i18n(state.lang, 'Content hidden by Summary mode', '摘要模式已隐藏正文')
+        : (e.displayText || e.payloadPreview || '');
+      const previewClass = e.previewKind === 'summary' ? ' preview-summary' : '';
+      const preview = previewText ? h(truncate(previewText, 300)) : '';
       const ts = e.timestamp ? formatTime(e.timestamp) : '';
       const blockedPaths = e.blockedPaths && e.blockedPaths.length > 0
         ? `<div class="sd-event-blocked">${i18n(state.lang, 'Blocked paths', '拦截路径')}: ${h(e.blockedPaths.join(', '))}</div>`
@@ -330,11 +350,12 @@ export function renderPrivacyDetailContent(state: SidebarState, filter: string):
       return `<div class="sd-event">
         <div class="sd-event-header">
           <span class="privacy-tag ${e.action}">${h(act)}</span>
+          ${eventLabel ? `<span class="sd-event-type ${h(eventClass)}">${eventLabel}</span>` : ''}
           <span class="sd-event-source">${h(src)}</span>
           <span class="sd-event-ts">${h(ts)}</span>
           <span class="sd-event-len">${h(String(e.payloadLength))}B</span>
         </div>
-        ${preview ? `<div class="sd-event-data preview-line">${preview}</div>` : ''}
+        ${preview ? `<div class="sd-event-data preview-line${previewClass}">${preview}</div>` : ''}
         ${blockedPaths}
       </div>`;
     }).join('');
@@ -1586,18 +1607,19 @@ body{
 .sd-empty{font-size:10px;color:var(--vscode-descriptionForeground,#50506e);text-align:center;padding:12px 0}
 .sd-event{margin-bottom:4px;padding:4px 6px;border-radius:3px;font-size:10px;line-height:1.4}
 .sd-event:hover{background:rgba(255,255,255,.02)}
-.sd-event-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:2px}
+.sd-event-header{display:flex;align-items:center;gap:6px;margin-bottom:2px}
 .sd-event-type{font-weight:600;font-size:9px;text-transform:uppercase;letter-spacing:.03em}
 .sd-event-type.user_prompt{color:#2ecc71}
 .sd-event-type.task_complete{color:#5c9cf5}
 .sd-event-type.approval_required{color:#e2b714}
 .sd-event-type.command_started{color:#a855f7}
 .sd-event-type.event{color:#8888a8}
-.sd-event-ts{font-size:8px;color:var(--vscode-descriptionForeground,#50506e)}
+.sd-event-ts{font-size:8px;color:var(--vscode-descriptionForeground,#50506e);margin-left:auto}
 .sd-event-source{font-size:9px;color:var(--vscode-descriptionForeground,#7878a0);flex-shrink:0}
-.sd-event-len{font-size:8px;color:var(--vscode-descriptionForeground,#50506e);margin-left:auto}
+.sd-event-len{font-size:8px;color:var(--vscode-descriptionForeground,#50506e)}
 .sd-event-data{font-size:10px;color:var(--vscode-editor-foreground);white-space:pre-wrap;word-break:break-word;max-height:60px;overflow:hidden}
 .sd-event-data.preview-line{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-height:none}
+.sd-event-data.preview-summary{color:var(--vscode-descriptionForeground,#7878a0);font-style:italic}
 .sd-event-blocked{font-size:9px;color:#f74d4d;margin-top:2px}
 .sd-event-data.expanded{max-height:none}
 .sd-expand{font-size:8px;color:var(--vscode-textLink-foreground,#00ffe0);cursor:pointer;background:none;border:none;padding:0;margin-top:2px}

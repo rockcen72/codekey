@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import * as crypto from 'node:crypto';
 import * as os from 'node:os';
 import { loadCredentials, saveCredentials, loadDesktopInstallId } from '../auth/credentials.js';
+import { installHook } from '../hook/installer.js';
 import { BridgeStatusService } from '../services/bridge-status.js';
 import type { StatusBar } from '../status/bar.js';
 import { log } from '../log.js';
@@ -134,6 +135,11 @@ export async function pairDevice(_context: vscode.ExtensionContext, statusBar: S
     channel.appendLine('✓ Binding successful! Device connected.');
     channel.dispose();
     vscode.window.showInformationMessage('CodeKey paired successfully!');
+
+    // Install/refresh Claude hooks immediately after pairing; activate() may
+    // have skipped this earlier because no device token existed yet.
+    const scriptsDir = vscode.Uri.joinPath(_context.extensionUri, 'scripts').fsPath;
+    installHook(scriptsDir);
 
     // Restart bridge with fresh token
     BridgeStatusService.getInstance().restart();

@@ -1,6 +1,6 @@
 # CodeKey
 
-<img src="https://raw.githubusercontent.com/rockcen72/codekey/master/packages/vscode/media/codekey-icon.png" width="100" alt="CodeKey icon" />
+![CodeKey icon](https://codekey.tinymoney.cn/assets/readme/codekey-icon-v1.png)
 
 **AI coding remote control for your phone**
 
@@ -21,17 +21,33 @@ CodeKey moves those waiting points from your desktop to your phone.
 
 ## At a glance
 
-**VS Code sidebar** — Pair devices, manage sessions, handle approvals
-
-<img src="https://raw.githubusercontent.com/rockcen72/codekey/master/packages/vscode/media/readme-sidebar.png" width="100%" alt="VS Code sidebar" />
-
-**Mobile session list** — Filter by agent and resume active work
-
-<img src="https://raw.githubusercontent.com/rockcen72/codekey/master/packages/vscode/media/readme-mobile-history.jpg" width="100%" alt="Mobile history" />
-
-**Mobile session detail** — Chat-style timeline, send next prompt
-
-<img src="https://raw.githubusercontent.com/rockcen72/codekey/master/packages/vscode/media/readme-mobile-session.jpg" width="100%" alt="Mobile session" />
+<table>
+  <tr>
+    <td align="center" width="33%">
+      <img src="https://codekey.tinymoney.cn/assets/readme/sidebar-v1.png" height="320" alt="VS Code sidebar" />
+    </td>
+    <td align="center" width="33%">
+      <img src="https://codekey.tinymoney.cn/assets/readme/mobile-history-v1.jpg" height="320" alt="Mobile history" />
+    </td>
+    <td align="center" width="33%">
+      <img src="https://codekey.tinymoney.cn/assets/readme/mobile-session-v1.jpg" height="320" alt="Mobile session" />
+    </td>
+  </tr>
+  <tr>
+    <td align="center" valign="top">
+      <strong>VS Code sidebar</strong><br />
+      Pair devices, manage sessions, handle approvals.
+    </td>
+    <td align="center" valign="top">
+      <strong>Mobile session list</strong><br />
+      Filter by agent and resume active work.
+    </td>
+    <td align="center" valign="top">
+      <strong>Mobile session detail</strong><br />
+      Chat-style timeline, send the next prompt.
+    </td>
+  </tr>
+</table>
 
 ## Key features
 

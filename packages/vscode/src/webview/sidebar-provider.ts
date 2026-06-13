@@ -473,7 +473,9 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         this._recentDetachedAt.delete(sessionId);
         const creds = loadCredentials();
         if (creds?.deviceId) {
-          await SessionStore.add(this._context, creds.deviceId, sessionId);
+          await SessionStore.add(this._context, creds.deviceId, sessionId).catch((storeErr) => {
+            log(`SessionStore.add failed (non-fatal): ${storeErr instanceof Error ? storeErr.message : String(storeErr)}`);
+          });
         }
         vscode.window.showInformationMessage(`Session ${sessionId.slice(0, 8)} pushed to remote`);
         return true;
