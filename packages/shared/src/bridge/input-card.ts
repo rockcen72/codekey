@@ -54,8 +54,19 @@ export function tryFormatInputRequiredEvent(value: unknown, agent: string): Inpu
   const params = asRecord(value);
   if (Object.keys(params).length === 0) return null;
   const questions = extractQuestions(params);
-  if (questions.length === 0) return null;
-  return formatInputRequiredEvent({ id: params.id ?? params.requestId, params }, agent);
+  if (questions.length > 0) {
+    return formatInputRequiredEvent({ id: params.id ?? params.requestId, params }, agent);
+  }
+  // Fallback: options may be nested inside params/input (OpenCode tool_use / input format)
+  for (const key of ['params', 'input'] as const) {
+    const nested = asRecord(params[key]);
+    if (Object.keys(nested).length === 0) continue;
+    const nestedQuestions = extractQuestions(nested);
+    if (nestedQuestions.length > 0) {
+      return formatInputRequiredEvent({ id: params.id ?? params.requestId, params: nested }, agent);
+    }
+  }
+  return null;
 }
 
 export function parseInputReply(message: string, questions: Pick<InputQuestion, 'id'>[]): Record<string, string[]> {

@@ -1136,12 +1136,13 @@ function handleRequest(req: IncomingMessage, res: ServerResponse, bridge: Approv
           res.end(JSON.stringify({ ok: false, error: 'sessionId required' }));
           return;
         }
-        bridge.attachClaudeSession(sessionId).then((serverSessionId) => {
-          res.writeHead(200, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ ok: true, serverSessionId }));
-        }).catch((err: Error) => {
-          res.writeHead(404, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ ok: false, error: err.message }));
+        // Match OpenCode attach semantics: return once the user action is accepted.
+        // Relay registration/history replay can complete after the HTTP request.
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: true }));
+
+        bridge.attachClaudeSession(sessionId).catch((err: Error) => {
+          console.error('[bridge] claude attach failed: %s', err.message);
         });
       } catch {
         res.writeHead(400, { 'Content-Type': 'application/json' });

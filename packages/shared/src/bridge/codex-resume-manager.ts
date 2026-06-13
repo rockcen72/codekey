@@ -554,6 +554,8 @@ export class CodexResumeManager {
     if (decision.action === 'block') return;
     const checked = toCheckedPayload(decision);
     if (checked) this.relay.sendCheckedPayload(checked);
+    // Unreachable: toCheckedPayload returns null only for 'skip' action,
+    // which requires empty rawPayload — projected is always non-empty here.
     else this.relay.sendRaw(projected);
   }
 }

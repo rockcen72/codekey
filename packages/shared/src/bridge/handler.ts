@@ -315,8 +315,9 @@ export class ApprovalBridge {
 
       for (const m of msgs) {
         const info = m.info || {};
-        if (info.role === 'user' && Array.isArray(m.parts)) {
-          const text = m.parts.filter((p: any) => p.type === 'text' && p.text).map((p: any) => p.text).join('\n');
+        const role = getOpenCodeHistoryMessageRole(m);
+        const text = extractOpenCodeHistoryText(m);
+        if (role === 'user') {
           if (text) {
             const raw = JSON.stringify({ type: 'event', payload: {
               clientEventId: `oc-hist:${localSessionId}:${Date.now()}:${Math.random()}`,
@@ -331,8 +332,7 @@ export class ApprovalBridge {
               this.privacyCheckAndSend('history', projected, undefined, undefined);
             }
           }
-        } else if (info.role === 'assistant' && m.parts) {
-          const text = m.parts.filter((p: any) => p.type === 'text' && p.text).map((p: any) => p.text).join('\n');
+        } else if (role === 'assistant') {
           if (text) {
             const raw = JSON.stringify({ type: 'event', payload: {
               clientEventId: `oc-hist:${localSessionId}:${Date.now()}:${Math.random()}`,
@@ -2164,4 +2164,46 @@ export class ApprovalBridge {
       }, 5_000);
     }).catch(() => {});
   }
+}
+
+function getOpenCodeHistoryMessageRole(message: Record<string, unknown>): 'user' | 'assistant' | undefined {
+  const info = message.info as Record<string, unknown> | undefined;
+  const parts = Array.isArray(message.parts) ? message.parts as Record<string, unknown>[] : [];
+  const candidates = [
+    info?.role,
+    message.role,
+    (message.message as Record<string, unknown> | undefined)?.role,
+    (info?.message as Record<string, unknown> | undefined)?.role,
+    ...parts.flatMap((part) => [
+      part.role,
+      (part.info as Record<string, unknown> | undefined)?.role,
+      (part.message as Record<string, unknown> | undefined)?.role,
+    ]),
+  ];
+  for (const candidate of candidates) {
+    if (candidate === 'user' || candidate === 'assistant') return candidate;
+  }
+  return undefined;
+}
+
+function extractOpenCodeHistoryText(message: Record<string, unknown>): string {
+  const info = message.info as Record<string, unknown> | undefined;
+  const summary = info?.summary as Record<string, unknown> | undefined;
+  const partsText = Array.isArray(message.parts)
+    ? (message.parts as Record<string, unknown>[])
+      .filter((part) => part.type === 'text' && typeof part.text === 'string' && part.text)
+      .map((part) => part.text as string)
+      .join('\n')
+    : '';
+  const candidates = [
+    partsText,
+    message.text,
+    message.content,
+    summary?.body,
+    summary?.title,
+  ];
+  for (const candidate of candidates) {
+    if (typeof candidate === 'string' && candidate.trim()) return candidate;
+  }
+  return '';
 }
