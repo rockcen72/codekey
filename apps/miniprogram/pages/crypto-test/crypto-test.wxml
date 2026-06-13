@@ -1,27 +1,12 @@
 <view class="page">
   <view class="header">
     <text class="title">Crypto POC</text>
-    <text class="subtitle">AES-256-GCM runtime verification</text>
+    <text class="subtitle">AES-GCM runtime diagnostic</text>
   </view>
-
-  <view class="summary" wx:if="{{ready}}">
-    <text class="score">{{passed}} / {{passed + failed}} passed</text>
-    <text class="verdict {{failed === 0 ? 'ok' : 'fail'}}">
-      {{failed === 0 ? '✅ All tests pass' : '❌ Some tests failed'}}
-    </text>
-  </view>
-
   <view class="loading" wx:if="{{!ready}}">
-    <text>Running tests...</text>
+    <text>Running...</text>
   </view>
-
-  <view class="results" wx:if="{{ready}}">
-    <view class="test-item {{item.passed ? 'pass' : 'fail'}}" wx:for="{{results}}" wx:key="name">
-      <view class="test-head">
-        <text class="test-icon">{{item.passed ? '✅' : '❌'}}</text>
-        <text class="test-name">{{item.name}}</text>
-      </view>
-      <text class="test-detail">{{item.detail}}</text>
-    </view>
+  <view class="output" wx:if="{{ready}}">
+    <text class="line" wx:for="{{lines}}" wx:key="*this">{{item}}</text>
   </view>
 </view>

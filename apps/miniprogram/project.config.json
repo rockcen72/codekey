@@ -20,7 +20,7 @@
     "enhance": false,
     "packNpmManually": true,
     "packNpmRelationList": [
-      {"packageJsonPath": "./package.json", "miniprogramNpmDistDir": "./"}
+      {"packageJsonPath": "./package.json", "miniprogramNpmDistDir": "./miniprogram_npm"}
     ],
     "minifyWXSS": true,
     "minifyWXML": true,
