@@ -82,5 +82,6 @@
     <text class="section-title">关于</text>
     <text class="about-text">CodeKey v0.1.0</text>
     <text class="about-text">AI 远程控制工具</text>
+    <text class="about-link" bindtap="goCryptoTest">加密验证 →</text>
   </view>
 </view>

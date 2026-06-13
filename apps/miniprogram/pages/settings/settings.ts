@@ -73,6 +73,10 @@ Page({
     wx.navigateBack();
   },
 
+  goCryptoTest() {
+    wx.navigateTo({ url: '/pages/crypto-test/crypto-test' });
+  },
+
   unbindDevice() {
     wx.showModal({
       title: '解绑设备',
