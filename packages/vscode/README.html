@@ -462,12 +462,12 @@
           <h2 class="lang-en">Privacy is a product feature, not a slogan</h2>
           <h2 class="lang-zh">隐私保护是产品能力，不是标语</h2>
           <p class="lang-en">
-            Remote control requires relay forwarding, but CodeKey projects, sanitizes, and blocks events locally first.
-            You can turn history off entirely or share safe summaries only.
+            Remote control requires relay forwarding. CodeKey projects, sanitizes, and blocks events locally first,
+            then only shares the history level you choose.
           </p>
           <p class="lang-zh">
             远程控制需要 relay 转发消息，但 CodeKey 在本机先做策略判断、脱敏和拦截。
-            你可以关闭历史同步，也可以只同步安全摘要。
+            之后只按你选择的历史级别同步。
           </p>
         </div>
         <div class="privacy">
@@ -484,18 +484,18 @@
               <tbody>
                 <tr>
                   <td><strong>Off</strong></td>
-                  <td class="lang-en">Approval cards only. No session history.</td>
-                  <td class="lang-zh">只同步审批卡，不同步会话历史。</td>
+                  <td class="lang-en">Approval cards only. Session history is not shared to mobile history.</td>
+                  <td class="lang-zh">只同步审批卡，不把会话历史同步到手机历史。</td>
                 </tr>
                 <tr>
                   <td><strong>Summary</strong></td>
-                  <td class="lang-en">Safe status summaries without raw prompt or output text.</td>
+                  <td class="lang-en">Safe status summaries without raw prompt or agent output text.</td>
                   <td class="lang-zh">同步安全摘要和状态，不带原始 prompt 或 agent 输出。</td>
                 </tr>
                 <tr>
                   <td><strong>Full</strong></td>
-                  <td class="lang-en">Full session history, still filtered by local secret scanning and blocklists.</td>
-                  <td class="lang-zh">同步完整会话内容，但仍经过本机 secret scanning 和 blocklist。</td>
+                  <td class="lang-en">Full session history after local secret scanning and blocklist checks.</td>
+                  <td class="lang-zh">同步完整会话内容，但会先经过本机 secret scanning 和 blocklist 检查。</td>
                 </tr>
               </tbody>
             </table>
@@ -507,6 +507,8 @@
               <li>Field projection keeps Summary mode limited to safe event type, state, and summary fields.</li>
               <li>Audit panel shows forwarded, blocked, and sanitized event counts in the sidebar.</li>
               <li>Per-agent policy lets Claude Code, Codex, and OpenCode use different history modes.</li>
+              <li>Current model is policy-based filtering and redaction, not full end-to-end encryption.</li>
+              <li>When Summary or Full is enabled, the relay may receive and store event data needed for mobile history and remote actions.</li>
             </ul>
             <ul class="lang-zh">
               <li>Secret scanning：API key、token、password 等敏感字段先脱敏。</li>
@@ -514,6 +516,8 @@
               <li>Field projection：Summary 模式只保留类型、状态和安全摘要。</li>
               <li>Audit panel：侧栏展示 forwarded、blocked、sanitized 的统计和原因。</li>
               <li>Per-agent policy：每个 agent 可独立设置历史同步模式。</li>
+              <li>当前是基于策略的过滤和脱敏，不是完整端到端加密。</li>
+              <li>开启 Summary 或 Full 时，relay 可能接收并保存手机历史和远程操作所需的事件数据。</li>
             </ul>
           </div>
         </div>

@@ -4,7 +4,7 @@
 
 **AI coding remote control for your phone**
 
-Remote control for AI agents, with local-first privacy controls.
+Remote control for AI agents, with clear, local-first privacy controls.
 
 ---
 
@@ -64,11 +64,16 @@ CodeKey moves those waiting points from your desktop to your phone.
 CodeKey uses a local privacy pipeline before forwarding events to the relay server.
 You decide how much session history, if any, is visible on mobile.
 
+CodeKey's current privacy model is policy-based filtering and redaction, not full
+end-to-end encryption. When you choose Summary or Full, the relay server may
+receive and store the event data needed to show mobile history and route remote
+actions. Use Off for maximum minimization.
+
 | Mode | What mobile can see | Best for |
 | --- | --- | --- |
-| Off | Approval cards only. No session history. | Maximum data minimization |
-| Summary | Safe status summaries without raw prompt or output text. | Progress tracking without exposing content |
-| Full | Full session history, still filtered by local secret scanning and blocklists. | Rich remote monitoring and follow-up prompts |
+| Off | Approval cards only. Session history is not shared to mobile history. | Maximum data minimization |
+| Summary | Safe status summaries without raw prompt or agent output text. | Progress tracking with less content exposure |
+| Full | Full session history after local secret scanning and blocklist checks. | Rich remote monitoring and follow-up prompts |
 
 Privacy controls include:
 
@@ -77,6 +82,12 @@ Privacy controls include:
 - Field projection: Summary mode keeps only safe event type, state, and summary fields
 - Audit panel: inspect forwarded, blocked, and sanitized event counts in the sidebar
 - Per-agent policy: configure Claude Code, Codex, and OpenCode independently
+
+Important boundaries:
+
+- Approval and input cards still send the content required for you to approve, deny, or reply from mobile.
+- Summary mode reduces history detail, but it is not a cryptographic guarantee that the server cannot see every field.
+- Full mode is intended for convenience and observability; do not enable it for repositories where remote history storage is not acceptable.
 
 ## Getting started
 
