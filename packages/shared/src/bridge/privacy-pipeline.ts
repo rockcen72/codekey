@@ -95,6 +95,9 @@ export interface AuditEntry {
   sanitized: boolean;
   blocked: boolean;
   payloadPreview: string;
+  eventType?: string;
+  displayText?: string;
+  previewKind?: 'content' | 'summary' | 'raw';
   findingCount: number;
   payloadLength: number;
   blockedPaths?: string[];
@@ -345,6 +348,51 @@ export function projectHistoryEventForPolicy(
   return projectAllowedFields(safe, policy.allowedFields);
 }
 
+function firstString(...values: unknown[]): string {
+  for (const value of values) {
+    if (typeof value === 'string' && value.trim()) return value.trim();
+  }
+  return '';
+}
+
+function auditPreviewForPayload(rawPayload: string, summaryOnly: boolean): Pick<AuditEntry, 'eventType' | 'displayText' | 'previewKind'> {
+  try {
+    const root = JSON.parse(rawPayload) as Record<string, unknown>;
+    const payload = root.payload as Record<string, unknown> | undefined;
+    if (!payload || typeof payload !== 'object') return { displayText: rawPayload.slice(0, 500), previewKind: 'raw' };
+
+    const eventType = typeof payload.eventType === 'string' ? payload.eventType : undefined;
+    const data = payload.data as Record<string, unknown> | undefined;
+    if (!data || typeof data !== 'object') {
+      return { eventType, displayText: rawPayload.slice(0, 500), previewKind: 'raw' };
+    }
+
+    if (summaryOnly) {
+      return { eventType, displayText: '', previewKind: 'summary' };
+    }
+
+    const displayText = eventType === 'user_prompt'
+      ? firstString(data.prompt, data.summary)
+      : eventType === 'task_complete'
+        ? firstString(data.summary, data.summaryShort, data.output)
+        : eventType === 'approval_required' || eventType === 'input_required'
+          ? firstString(data.summary, data.command, data.action, data.question)
+          : eventType === 'command_started'
+            ? firstString(data.command, data.summary)
+            : eventType === 'error'
+              ? firstString(data.message, data.summary)
+              : firstString(data.summary, data.summaryShort, data.message, data.command, data.prompt, data.output);
+
+    return {
+      eventType,
+      displayText: displayText.slice(0, 500),
+      previewKind: displayText ? 'content' : 'raw',
+    };
+  } catch {
+    return { displayText: rawPayload.slice(0, 500), previewKind: 'raw' };
+  }
+}
+
 /**
  * Extract file paths from a structured payload and/or raw string.
  * Priority: structuredPayload > extraPaths > heuristic from raw.
@@ -457,6 +505,7 @@ export function runPrivacyPipeline(
 
   // ── 5. Audit ──
   if (sink) {
+    const preview = auditPreviewForPayload(trimmedPayload, !!ctx.allowedFields);
     sink({
       timestamp: new Date().toISOString(),
       source: ctx.source,
@@ -470,6 +519,7 @@ export function runPrivacyPipeline(
       sanitized: findings.length > 0,
       blocked: action === 'block',
       payloadPreview: trimmedPayload.slice(0, 200),
+      ...preview,
       findingCount: findings.length,
       payloadLength: ctx.rawPayload.length,
       blockedPaths: dedupedBlocked.length > 0 ? dedupedBlocked : undefined,

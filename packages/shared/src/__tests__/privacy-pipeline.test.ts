@@ -73,6 +73,48 @@ describe('privacy-pipeline', () => {
       expect(sink.mock.calls[0][0].sanitized).toBe(true);
     });
 
+    it('adds readable audit preview fields for forwarded user prompts', () => {
+      const sink = vi.fn();
+      const rawPayload = JSON.stringify({
+        type: 'event',
+        payload: {
+          sessionId: 'session-1',
+          eventType: 'user_prompt',
+          data: { type: 'user_prompt', prompt: '帮我检查 OpenCode 历史记录' },
+        },
+      });
+
+      runPrivacyPipeline({ source: 'history', rawPayload }, undefined, sink);
+
+      const entry = sink.mock.calls[0][0];
+      expect(entry.eventType).toBe('user_prompt');
+      expect(entry.displayText).toBe('帮我检查 OpenCode 历史记录');
+      expect(entry.previewKind).toBe('content');
+    });
+
+    it('marks summary-mode audit previews instead of showing generic prompt text as content', () => {
+      const sink = vi.fn();
+      const rawPayload = JSON.stringify({
+        type: 'event',
+        payload: {
+          sessionId: 'session-1',
+          eventType: 'user_prompt',
+          data: { type: 'user_prompt', summary: 'User prompt' },
+        },
+      });
+
+      runPrivacyPipeline(
+        { source: 'history', rawPayload, allowedFields: ['type', 'summary'] },
+        undefined,
+        sink,
+      );
+
+      const entry = sink.mock.calls[0][0];
+      expect(entry.eventType).toBe('user_prompt');
+      expect(entry.displayText).toBe('');
+      expect(entry.previewKind).toBe('summary');
+    });
+
     it('blocks .env file in transcript', () => {
       const result = runPrivacyPipeline({
         source: 'transcript',
