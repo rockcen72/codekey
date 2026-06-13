@@ -57,7 +57,7 @@ export function SessionsPage({ auth }: Props) {
           <p className="brand-sub">CodeKey AI Remote</p>
         </div>
         <div className="top-actions">
-          {subscription.subscription ? <SubscriptionPill subscription={subscription.subscription} /> : null}
+          {devices.devices.length > 0 && subscription.subscription ? <SubscriptionPill subscription={subscription.subscription} /> : null}
           <div className={`conn-pill ${serviceOnline ? 'online' : 'offline'}`}>
             <span className="conn-dot" />
             <span>{serviceOnline ? 'Online' : 'Offline'}</span>
