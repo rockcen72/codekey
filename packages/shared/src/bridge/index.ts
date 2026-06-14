@@ -28,6 +28,9 @@ export type { ResumeResult, ResumeEvent, CodexResumeRuntimeOptions } from './cod
 export { CodexTranscriptWatcher } from './codex-transcript-watcher.js';
 export type { TranscriptEvent, CodexTranscriptWatcherOptions } from './codex-transcript-watcher.js';
 
+export { generateEcdhKeyPair, computeSharedSecret, deriveKeyMaterial } from './e2e-key-exchange.js';
+export type { EcdhKeyPair, DerivedKeyMaterial } from './e2e-key-exchange.js';
+
 export { CodexResumeManager } from './codex-resume-manager.js';
 export { OpenCodeSessionManager } from './opencode-session-manager.js';
 

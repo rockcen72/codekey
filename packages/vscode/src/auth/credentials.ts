@@ -12,6 +12,8 @@ export interface Credentials {
   platform?: 'wechat' | 'feishu' | 'telegram';
   contentKeyHex?: string;
   keyId?: string;
+  ecdhKeyHex?: string;
+  ecdhKeyId?: string;
 }
 
 export interface DesktopInstallIdentity {
@@ -45,6 +47,8 @@ export function loadCredentials(): Credentials | null {
       platform: parsed.platform || undefined,
       contentKeyHex: typeof parsed.contentKeyHex === 'string' ? parsed.contentKeyHex : undefined,
       keyId: typeof parsed.keyId === 'string' ? parsed.keyId : undefined,
+      ecdhKeyHex: typeof parsed.ecdhKeyHex === 'string' ? parsed.ecdhKeyHex : undefined,
+      ecdhKeyId: typeof parsed.ecdhKeyId === 'string' ? parsed.ecdhKeyId : undefined,
     };
   } catch {
     return null;

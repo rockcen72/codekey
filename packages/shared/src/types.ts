@@ -167,7 +167,7 @@ export type WsMessage =
   | { type: 'session_deactivated'; payload: { sessionId: string } }
   | { type: 'attached_sessions'; payload: { sessions: { id: string; claudeSessionId: string | null }[] } }
   | { type: 'pairing_ready'; payload: { deviceId: string } }
-  | { type: 'device_token'; payload: { deviceToken: string; deviceId: string } }
+  | { type: 'device_token'; payload: { deviceToken: string; deviceId: string; phonePublicKeyHex?: string; e2eAvailable?: boolean } }
   | { type: 'mp_online' }
   | { type: 'mp_offline' }
   | { type: 'error'; payload: { code: string } }

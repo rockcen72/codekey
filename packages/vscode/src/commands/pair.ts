@@ -3,6 +3,7 @@ import * as crypto from 'node:crypto';
 import * as os from 'node:os';
 import qrcode from 'qrcode-terminal';
 import { loadCredentials, saveCredentials, loadDesktopInstallId } from '../auth/credentials.js';
+import { generateEcdhKeyPair, computeSharedSecret, deriveKeyMaterial } from '@codekey/shared/bridge';
 import { installHook } from '../hook/installer.js';
 import { BridgeStatusService } from '../services/bridge-status.js';
 import type { StatusBar } from '../status/bar.js';
@@ -31,8 +32,11 @@ export async function pairDevice(_context: vscode.ExtensionContext, statusBar: S
     let deviceSecretHash = crypto.createHash('sha256').update(creds.deviceSecret).digest('hex');
     const hostname = os.hostname();
 
-    // 2. Request pairing code from relay
-    const body: Record<string, unknown> = { desktopInstallId, deviceSecretHash, deviceName: hostname };
+    // 2. Generate ECDH keypair for E2E encryption
+    const ecdhKeyPair = generateEcdhKeyPair();
+
+    // 3. Request pairing code from relay, sending our public key
+    const body: Record<string, unknown> = { desktopInstallId, deviceSecretHash, deviceName: hostname, publicKeyHex: ecdhKeyPair.publicKeyHex };
     if (!isNew) body.deviceId = creds.deviceId;
 
     let response = await secureFetch(`${relayUrl}/api/v1/devices/pair`, {
@@ -69,11 +73,11 @@ export async function pairDevice(_context: vscode.ExtensionContext, statusBar: S
 
     const effectiveDeviceId = pairResult.deviceId ?? creds.deviceId;
 
-    // 3. Generate E2E content key (never sent to relay)
+    // 4. Generate legacy E2E content key (fallback for non-ECDH phones)
     const contentKeyHex = crypto.randomBytes(32).toString('hex');
     const keyId = crypto.randomUUID();
 
-    // 4. Show pairing code + E2E key QR to user
+    // 5. Show pairing code + E2E key QR to user
     channel = vscode.window.createOutputChannel('CodeKey Pair');
     channel.appendLine('');
     channel.appendLine('┌────────────────────────────────────────────┐');
@@ -112,14 +116,14 @@ export async function pairDevice(_context: vscode.ExtensionContext, statusBar: S
       `Pairing code: ${pairResult.code}. ${keyId ? 'E2E encryption key ready.' : ''}`,
     );
 
-    // 5. Connect to relay WS and wait for device_token
+    // 6. Connect to relay WS and wait for device_token
     // Uses native WebSocket (Node.js 18+) — no 'ws' package dependency needed.
     const wsUrl = relayUrl.replace(/^http/, 'ws');
     const ws = new WebSocket(`${wsUrl}/ws?device_id=${effectiveDeviceId}&device_secret=${creds.deviceSecret}`);
 
     channel.appendLine('Waiting for phone to scan QR code...');
 
-    const deviceToken = await new Promise<string>((resolve, reject) => {
+    const tokenResult = await new Promise<{ deviceToken: string; phonePublicKeyHex?: string }>((resolve, reject) => {
       const timeout = setTimeout(() => {
         ws.close();
         reject(new Error('Pairing timed out after 5 minutes'));
@@ -131,7 +135,7 @@ export async function pairDevice(_context: vscode.ExtensionContext, statusBar: S
           const msg = JSON.parse(raw);
           if (msg.type === 'device_token') {
             clearTimeout(timeout);
-            resolve(msg.payload.deviceToken);
+            resolve({ deviceToken: msg.payload.deviceToken, phonePublicKeyHex: msg.payload.phonePublicKeyHex });
           }
           if (msg.type === 'pairing_ready') {
             channel!.appendLine('QR code scanned! Waiting for confirmation...');
@@ -150,11 +154,27 @@ export async function pairDevice(_context: vscode.ExtensionContext, statusBar: S
       });
     });
 
-    // 6. Save deviceToken + E2E contentKey and notify user
+    // 7. If phone supports ECDH, compute shared secret and derive E2E key material
+    let ecdhKeyHex: string | undefined;
+    let ecdhKeyId: string | undefined;
+    if (tokenResult.phonePublicKeyHex) {
+      try {
+        const sharedSecret = computeSharedSecret(ecdhKeyPair.privateKey, tokenResult.phonePublicKeyHex);
+        const material = deriveKeyMaterial(sharedSecret);
+        ecdhKeyHex = material.contentKeyHex;
+        ecdhKeyId = material.keyId;
+      } catch (err) {
+        log('[CodeKey] ECDH key exchange failed:', err instanceof Error ? err.message : String(err));
+      }
+    }
+
+    // 8. Save deviceToken + E2E keys and notify user
     const final = loadCredentials()!;
-    final.deviceToken = deviceToken;
+    final.deviceToken = tokenResult.deviceToken;
     final.contentKeyHex = contentKeyHex;
     final.keyId = keyId;
+    if (ecdhKeyHex) final.ecdhKeyHex = ecdhKeyHex;
+    if (ecdhKeyId) final.ecdhKeyId = ecdhKeyId;
     saveCredentials(final);
 
     clearTimeout(closeTimer);
