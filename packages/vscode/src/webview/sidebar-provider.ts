@@ -30,6 +30,7 @@ import {
 import { loadConversation, loadCodexConversation, normalizeCodexSessionTitle } from '@codekey/shared/bridge';
 import { log } from '../log.js';
 import { secureFetch } from '../util/secure-fetch.js';
+import { generateEcdhKeyPair, computeSharedSecret, deriveKeyMaterial } from '@codekey/shared/bridge';
 
 const AGENT_DISPLAY_NAMES: Record<string, string> = {
   'claude-code': 'Claude Code',
@@ -108,6 +109,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
   private _lastApprovalSig = '';
   private _pairingWs?: WebSocket;
   private _pairingTimeout?: ReturnType<typeof setTimeout>;
+  private _ecdhPrivateKey?: Buffer;
   private _claudeAttachInFlight = new Set<string>();
   private _opencodeAttachInFlight = new Set<string>();
   private _codexStaleStopInFlight = new Set<string>();
@@ -1470,6 +1472,11 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     const existingCreds = loadCredentials();
     const desktopInstallId = loadDesktopInstallId();
     let deviceSecret = existingCreds?.deviceSecret || crypto.randomUUID();
+
+    // Generate ECDH keypair for E2E encryption
+    const ecdhKeyPair = generateEcdhKeyPair();
+    this._ecdhPrivateKey = ecdhKeyPair.privateKey;
+
     const requestPair = (deviceId?: string) => {
       const deviceSecretHash = crypto.createHash('sha256').update(deviceSecret).digest('hex');
       return secureFetch(`${relayUrl}/api/v1/devices/pair`, {
@@ -1480,6 +1487,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
           desktopInstallId,
           deviceSecretHash,
           deviceName: `VS Code (${os.hostname()})`,
+          publicKeyHex: ecdhKeyPair.publicKeyHex,
         }),
         signal: AbortSignal.timeout(10000),
       });
@@ -1574,7 +1582,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       try {
         const msg = JSON.parse(raw.toString()) as {
           type?: string;
-          payload?: { deviceToken?: string; deviceId?: string; e2eKeyReceived?: boolean };
+          payload?: { deviceToken?: string; deviceId?: string; phonePublicKeyHex?: string; e2eAvailable?: boolean };
           deviceToken?: string;
           token?: string;
           deviceId?: string;
@@ -1597,7 +1605,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         if (msg.type === 'device_token') {
           const token = msg.payload?.deviceToken || msg.deviceToken || msg.token;
           const nextDeviceId = msg.payload?.deviceId || msg.deviceId;
-          this._handlePairingComplete(token, nextDeviceId, msg.payload?.e2eKeyReceived === true);
+          this._handlePairingComplete(token, nextDeviceId, msg.payload?.phonePublicKeyHex);
         }
       } catch (err) {
         log(`Pairing socket message parse failed: ${err}`);
@@ -1615,7 +1623,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     });
   }
 
-  private async _handlePairingComplete(token?: string, deviceId?: string, e2eKeyReceived = false): Promise<void> {
+  private async _handlePairingComplete(token?: string, deviceId?: string, phonePublicKeyHex?: string): Promise<void> {
     this._closePairingSocket();
     if (!token) {
       log('Pairing completed without device token');
@@ -1631,19 +1639,38 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       return;
     }
 
+    // Derive ECDH key material if phone sent its public key
+    let ecdhKeyHex: string | undefined;
+    let ecdhKeyId: string | undefined;
+    if (phonePublicKeyHex && this._ecdhPrivateKey) {
+      try {
+        const sharedSecret = computeSharedSecret(this._ecdhPrivateKey, phonePublicKeyHex);
+        const material = deriveKeyMaterial(sharedSecret);
+        ecdhKeyHex = material.contentKeyHex;
+        ecdhKeyId = material.keyId;
+      } catch (err) {
+        log('[CodeKey] ECDH key exchange failed:', err instanceof Error ? err.message : String(err));
+      }
+    }
+    this._ecdhPrivateKey = undefined;
+
+    const e2eAvailable = !!ecdhKeyHex;
+
     const creds = loadCredentials();
     if (creds) {
       if (deviceId) creds.deviceId = deviceId;
       creds.deviceToken = token;
       const platform = this._pairingState?.platform;
       if (platform === 'feishu' || platform === 'wechat' || platform === 'telegram') creds.platform = platform;
-      if (platform === 'telegram' && !e2eKeyReceived) {
+      if (platform === 'telegram' && !e2eAvailable) {
         delete creds.contentKeyHex;
         delete creds.keyId;
       } else {
         if (this._pairingState?.contentKeyHex) creds.contentKeyHex = this._pairingState.contentKeyHex;
         if (this._pairingState?.keyId) creds.keyId = this._pairingState.keyId;
       }
+      if (ecdhKeyHex) creds.ecdhKeyHex = ecdhKeyHex;
+      if (ecdhKeyId) creds.ecdhKeyId = ecdhKeyId;
       const { saveCredentials } = await import('../auth/credentials.js');
       saveCredentials(creds);
       BridgeStatusService.getInstance().restart();
@@ -1656,7 +1683,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       status: 'paired',
       statusText: this._pairingState?.platform === 'wechat' ? 'Connected via WeChat'
         : this._pairingState?.platform === 'feishu' ? 'Connected via Feishu'
-        : this._pairingState?.platform === 'telegram' && !e2eKeyReceived ? 'Connected via Telegram (E2E off)'
+        : this._pairingState?.platform === 'telegram' && !e2eAvailable ? 'Connected via Telegram (E2E off)'
         : 'Connected via Telegram',
       expiresAt: 0,
     };
