@@ -29,14 +29,23 @@ Page({
       onlyFromCamera: true,
       success: (res) => {
         const raw = res.result.trim();
-        // 支持直接扫描配对码（8位）或 pairUrl（如 https://domain/pair?code=XXX）
+        // 支持: codekey://pair?code=XXX&key_id=... 或直接 8 位配对码
         let code = raw;
+        let keyId = '';
+        let contentKey = '';
         const urlMatch = raw.match(/[?&]code=([A-Z2-9]{8})(?:$|&)/i);
         if (urlMatch) {
           code = urlMatch[1].toUpperCase();
+          const keyIdMatch = raw.match(/[?&]key_id=([^&]+)/i);
+          const contentKeyMatch = raw.match(/[?&]content_key=([^&]+)/i);
+          if (keyIdMatch) keyId = keyIdMatch[1];
+          if (contentKeyMatch) contentKey = contentKeyMatch[1];
         }
         if (code.length === 8 && /^[A-Z2-9]+$/.test(code)) {
-          wx.navigateTo({ url: `/pages/bind/bind?code=${code}` });
+          let url = `/pages/bind/bind?code=${code}`;
+          if (keyId) url += `&key_id=${encodeURIComponent(keyId)}`;
+          if (contentKey) url += `&content_key=${encodeURIComponent(contentKey)}`;
+          wx.navigateTo({ url });
         } else {
           wx.showToast({ title: '无效的配对码', icon: 'none' });
         }

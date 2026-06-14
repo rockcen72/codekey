@@ -6,6 +6,8 @@ import type { AuthState } from '../hooks/useAuth';
 import { useDevices } from '../hooks/useDevices';
 import { DeviceBadge } from '../components/DeviceBadge';
 import { formatDate } from '../utils/format';
+import { getContentKey } from '../auth/device-storage';
+import { getTelegramStartParam, parsePairingStartParam } from '../auth/pairing-start-param';
 
 interface Props {
   auth: AuthState;
@@ -18,7 +20,9 @@ export function SettingsPage({ auth }: Props) {
   const [unbindTarget, setUnbindTarget] = useState<UserDevice | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
+  const contentKey = getContentKey();
+  const startParam = getTelegramStartParam(new URLSearchParams(window.location.search));
+  const startParamHasKey = !!parsePairingStartParam(startParam)?.contentKey;
   async function confirmUnbind() {
     if (!unbindTarget) return;
     setBusy(true);
@@ -69,6 +73,23 @@ export function SettingsPage({ auth }: Props) {
           ))}
         </section>
       )}
+
+      <div className="e2e-section">
+        <span className="e2e-section-title">E2E Encryption</span>
+        <div className="e2e-key-row">
+          <span className="label">Status</span>
+          <span className={contentKey ? 'e2e-ok' : 'e2e-missing'}>
+            {contentKey ? '✓ Enabled' : '○ Not enabled'}
+          </span>
+        </div>
+        {!contentKey ? (
+          <div className="e2e-help">
+            {startParamHasKey
+              ? 'Encryption key was received but not saved. Please bind again from the QR code.'
+              : 'Manual code binding does not transfer an encryption key. Scan the QR code from VS Code to enable E2E.'}
+          </div>
+        ) : null}
+      </div>
 
       {unbindTarget ? (
         <div className="modal-backdrop" onClick={() => setUnbindTarget(null)}>

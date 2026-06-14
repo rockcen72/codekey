@@ -1,5 +1,5 @@
 import { createApi } from '../../services/api';
-import { saveAuth, getServerUrl } from '../../services/storage';
+import { saveAuth, saveContentKey, getServerUrl } from '../../services/storage';
 import { ensureUserToken } from '../../services/auth';
 
 const app = getApp<any>();
@@ -13,17 +13,22 @@ Page({
 
   onLoad(query: any) {
     const code = query.code || '';
+    const keyId = query.key_id || '';
+    const contentKey = query.content_key || '';
     const platform: 'wechat' | 'feishu' = query.platform === 'feishu' ? 'feishu' : 'wechat';
     this.setData({ code, platform });
-    this.confirmBind(code, platform);
+    this.confirmBind(code, platform, keyId, contentKey);
   },
 
-  async confirmBind(code: string, platform: 'wechat' | 'feishu') {
+  async confirmBind(code: string, platform: 'wechat' | 'feishu', keyId?: string, contentKey?: string) {
     this.setData({ status: 'binding', errorMsg: '' });
     try {
       const api = createApi(getServerUrl());
       const result = await api.confirmCode(code, platform);
       saveAuth(result.clientToken, result.deviceId);
+      if (keyId && contentKey) {
+        saveContentKey(contentKey, keyId);
+      }
       // Bind this newly-paired device to the logged-in user. If the
       // user hasn't logged in to WeChat yet (e.g. mini program opened
       // first time on the bind page), ensureUserToken will run

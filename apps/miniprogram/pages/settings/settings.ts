@@ -1,4 +1,4 @@
-import { getDeviceId, clearAuth, getUserToken } from '../../services/storage';
+import { getDeviceId, clearAuth, getUserToken, getContentKey } from '../../services/storage';
 import {
   getSubscription,
   redeemCode,
@@ -35,6 +35,7 @@ interface PageData {
   redeemInput: string;
   redeemBusy: boolean;
   loaded: boolean;
+  hasE2EKey: boolean;
 }
 
 Page({
@@ -51,11 +52,13 @@ Page({
     redeemInput: '',
     redeemBusy: false,
     loaded: false,
+    hasE2EKey: false,
   } as PageData,
 
   onShow() {
     this.setData({
       deviceId: getDeviceId() || '',
+      hasE2EKey: !!getContentKey(),
     });
     this.refreshSubscription();
   },

@@ -10,6 +10,8 @@ export interface Credentials {
   deviceToken?: string;
   relayUrl: string;
   platform?: 'wechat' | 'feishu' | 'telegram';
+  contentKeyHex?: string;
+  keyId?: string;
 }
 
 export interface DesktopInstallIdentity {
@@ -41,6 +43,8 @@ export function loadCredentials(): Credentials | null {
       // that's a security regression (P1-1).
       relayUrl: typeof parsed.relayUrl === 'string' ? parsed.relayUrl : '',
       platform: parsed.platform || undefined,
+      contentKeyHex: typeof parsed.contentKeyHex === 'string' ? parsed.contentKeyHex : undefined,
+      keyId: typeof parsed.keyId === 'string' ? parsed.keyId : undefined,
     };
   } catch {
     return null;

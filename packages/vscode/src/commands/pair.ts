@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import * as crypto from 'node:crypto';
 import * as os from 'node:os';
+import qrcode from 'qrcode-terminal';
 import { loadCredentials, saveCredentials, loadDesktopInstallId } from '../auth/credentials.js';
 import { installHook } from '../hook/installer.js';
 import { BridgeStatusService } from '../services/bridge-status.js';
@@ -68,32 +69,55 @@ export async function pairDevice(_context: vscode.ExtensionContext, statusBar: S
 
     const effectiveDeviceId = pairResult.deviceId ?? creds.deviceId;
 
-    // 3. Show pairing code to user
+    // 3. Generate E2E content key (never sent to relay)
+    const contentKeyHex = crypto.randomBytes(32).toString('hex');
+    const keyId = crypto.randomUUID();
+
+    // 4. Show pairing code + E2E key QR to user
     channel = vscode.window.createOutputChannel('CodeKey Pair');
     channel.appendLine('');
     channel.appendLine('┌────────────────────────────────────────────┐');
     channel.appendLine(`│  Pairing Code: ${pairResult.code.padEnd(30)}│`);
     channel.appendLine('│                                            │');
-    channel.appendLine('│  Enter this code in WeChat Mini Program    │');
+    channel.appendLine('│  Scan QR below with WeChat Mini Program    │');
+    channel.appendLine('│  or enter pairing code manually            │');
     channel.appendLine('│  Code expires in 5 minutes                 │');
     channel.appendLine('└────────────────────────────────────────────┘');
     channel.appendLine('');
-    channel.show();
 
-    // Schedule auto-close after 30s so the output channel doesn't stay active
-    // and cause CC extension to pick it up as an @-mention reference.
-    closeTimer = setTimeout(() => channel?.dispose(), 30_000);
-
-    vscode.window.showInformationMessage(
-      `Pairing code: ${pairResult.code}. Enter it in the WeChat Mini Program.`,
+    // Render ASCII QR with contentKey embedded (codekey:// custom scheme)
+    qrcode.generate(
+      `codekey://pair?code=${pairResult.code}&key_id=${keyId}&content_key=${contentKeyHex}&v=1`,
+      { small: true },
+      (qr: string) => {
+        channel!.appendLine(qr);
+      },
     );
 
-    // 4. Connect to relay WS and wait for device_token
+    channel.appendLine('');
+    channel.appendLine('── E2E Encryption Key (for manual entry) ─────');
+    channel.appendLine(`  Key ID:      ${keyId}`);
+    channel.appendLine(`  Content Key: ${contentKeyHex}`);
+    channel.appendLine('──────────────────────────────────────────────');
+    channel.appendLine('Telegram users: paste both Key ID and Content Key');
+    channel.appendLine('into the respective fields after binding.');
+    channel.appendLine('');
+    channel.show();
+
+    // Schedule auto-close after 120s — long enough to scan QR but
+    // not so long that CC picks it up as an @-mention source.
+    closeTimer = setTimeout(() => channel?.dispose(), 120_000);
+
+    vscode.window.showInformationMessage(
+      `Pairing code: ${pairResult.code}. ${keyId ? 'E2E encryption key ready.' : ''}`,
+    );
+
+    // 5. Connect to relay WS and wait for device_token
     // Uses native WebSocket (Node.js 18+) — no 'ws' package dependency needed.
     const wsUrl = relayUrl.replace(/^http/, 'ws');
     const ws = new WebSocket(`${wsUrl}/ws?device_id=${effectiveDeviceId}&device_secret=${creds.deviceSecret}`);
 
-    channel.appendLine('Waiting for QR code scan...');
+    channel.appendLine('Waiting for phone to scan QR code...');
 
     const deviceToken = await new Promise<string>((resolve, reject) => {
       const timeout = setTimeout(() => {
@@ -126,9 +150,11 @@ export async function pairDevice(_context: vscode.ExtensionContext, statusBar: S
       });
     });
 
-    // 5. Save deviceToken and notify user
+    // 6. Save deviceToken + E2E contentKey and notify user
     const final = loadCredentials()!;
     final.deviceToken = deviceToken;
+    final.contentKeyHex = contentKeyHex;
+    final.keyId = keyId;
     saveCredentials(final);
 
     clearTimeout(closeTimer);

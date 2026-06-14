@@ -56,6 +56,7 @@ export interface ConfirmResult {
   clientToken: string;
   deviceId: string;
   desktopNotified?: boolean;
+  e2eKeyReceived?: boolean;
 }
 
 export interface ClaimResult {

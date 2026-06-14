@@ -32,3 +32,5 @@
 .about { padding-bottom: 40rpx; }
 .about-text { font-size: 26rpx; color: var(--ck-muted); display: block; margin-bottom: 8rpx; }
 .about-link { display: inline-block; margin-top: 12rpx; font-size: 26rpx; color: var(--ck-primary); font-weight: 600; }
+.e2e-ok { color: #16a34a; font-weight: 700; }
+.e2e-missing { color: var(--ck-muted); }

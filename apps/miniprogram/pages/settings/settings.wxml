@@ -84,4 +84,12 @@
     <text class="about-text">AI 远程控制工具</text>
     <text class="about-link" bindtap="goCryptoTest">加密验证 →</text>
   </view>
+
+    <view class="section">
+    <text class="section-title">端到端加密</text>
+    <view class="info-row">
+      <text class="label">加密状态</text>
+      <text class="value {{hasE2EKey ? 'e2e-ok' : 'e2e-missing'}}">{{hasE2EKey ? '已启用' : '未启用'}}</text>
+    </view>
+  </view>
 </view>

@@ -1500,18 +1500,31 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         return;
       }
       const result = await resp.json() as { code: string; deviceId: string; expiresIn?: number; pairUrl?: string };
+
+      const platform = this._pairingState?.platform || this._selectedPairingPlatform;
+      // E2E key generation: WeChat (QR carries key via codekey:// URL),
+      // Telegram (user manually enters key). Feishu not in scope yet.
+      const contentKeyHex = platform !== 'feishu' ? crypto.randomBytes(32).toString('hex') : '';
+      const keyId = contentKeyHex ? contentKeyHex.slice(0, 16) : '';
+      let pairUrl = result.pairUrl || '';
+      if (platform === 'wechat') {
+        pairUrl = `codekey://pair?code=${result.code}&key_id=${keyId}&content_key=${contentKeyHex}&v=1`;
+      }
+
       const { saveCredentials } = await import('../auth/credentials.js');
       saveCredentials({ deviceId: result.deviceId, deviceSecret, relayUrl });
       await BridgeStatusService.getInstance().stop({ force: true });
       this._openPairingSocket(result.deviceId, deviceSecret, relayUrl);
       this._pairingState = {
         code: String(result.code),
-        method: (this._pairingState?.platform || this._selectedPairingPlatform) === 'telegram' ? 'qr' : 'code',
-        platform: this._pairingState?.platform || this._selectedPairingPlatform,
+        method: platform === 'telegram' ? 'qr' : 'code',
+        platform,
         status: 'waiting',
         statusText: 'Waiting for scan...',
         expiresAt: Date.now() + (result.expiresIn ?? 300) * 1000,
-        pairUrl: result.pairUrl || '',
+        pairUrl,
+        contentKeyHex,
+        keyId,
       };
       this._pushState();
     } catch (err) {
@@ -1561,27 +1574,30 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       try {
         const msg = JSON.parse(raw.toString()) as {
           type?: string;
-          payload?: { deviceToken?: string; deviceId?: string };
+          payload?: { deviceToken?: string; deviceId?: string; e2eKeyReceived?: boolean };
           deviceToken?: string;
           token?: string;
           deviceId?: string;
         };
         if (msg.type === 'pairing_ready') {
+          const prev = this._pairingState;
           this._pairingState = {
-            code: this._pairingState?.code || '',
-            method: (this._pairingState?.platform || this._selectedPairingPlatform) === 'telegram' ? 'qr' : 'code',
-            platform: this._pairingState?.platform || this._selectedPairingPlatform,
+            code: prev?.code || '',
+            method: (prev?.platform || this._selectedPairingPlatform) === 'telegram' ? 'qr' : 'code',
+            platform: prev?.platform || this._selectedPairingPlatform,
             status: 'waiting',
             statusText: 'Code accepted. Waiting for confirmation...',
-            expiresAt: this._pairingState?.expiresAt || Date.now() + 5 * 60 * 1000,
-            pairUrl: this._pairingState?.pairUrl,
+            expiresAt: prev?.expiresAt || Date.now() + 5 * 60 * 1000,
+            pairUrl: prev?.pairUrl,
+            contentKeyHex: prev?.contentKeyHex,
+            keyId: prev?.keyId,
           };
           this._pushState();
         }
         if (msg.type === 'device_token') {
           const token = msg.payload?.deviceToken || msg.deviceToken || msg.token;
           const nextDeviceId = msg.payload?.deviceId || msg.deviceId;
-          this._handlePairingComplete(token, nextDeviceId);
+          this._handlePairingComplete(token, nextDeviceId, msg.payload?.e2eKeyReceived === true);
         }
       } catch (err) {
         log(`Pairing socket message parse failed: ${err}`);
@@ -1599,7 +1615,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     });
   }
 
-  private async _handlePairingComplete(token?: string, deviceId?: string): Promise<void> {
+  private async _handlePairingComplete(token?: string, deviceId?: string, e2eKeyReceived = false): Promise<void> {
     this._closePairingSocket();
     if (!token) {
       log('Pairing completed without device token');
@@ -1621,6 +1637,13 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       creds.deviceToken = token;
       const platform = this._pairingState?.platform;
       if (platform === 'feishu' || platform === 'wechat' || platform === 'telegram') creds.platform = platform;
+      if (platform === 'telegram' && !e2eKeyReceived) {
+        delete creds.contentKeyHex;
+        delete creds.keyId;
+      } else {
+        if (this._pairingState?.contentKeyHex) creds.contentKeyHex = this._pairingState.contentKeyHex;
+        if (this._pairingState?.keyId) creds.keyId = this._pairingState.keyId;
+      }
       const { saveCredentials } = await import('../auth/credentials.js');
       saveCredentials(creds);
       BridgeStatusService.getInstance().restart();
@@ -1633,6 +1656,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       status: 'paired',
       statusText: this._pairingState?.platform === 'wechat' ? 'Connected via WeChat'
         : this._pairingState?.platform === 'feishu' ? 'Connected via Feishu'
+        : this._pairingState?.platform === 'telegram' && !e2eKeyReceived ? 'Connected via Telegram (E2E off)'
         : 'Connected via Telegram',
       expiresAt: 0,
     };

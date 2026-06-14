@@ -4,6 +4,8 @@ const KEYS = {
   SERVER_URL: 'CODEKEY_SERVER_URL',
   USER_TOKEN: 'CODEKEY_USER_TOKEN',
   USER_ID: 'CODEKEY_USER_ID',
+  CONTENT_KEY: 'CODEKEY_CONTENT_KEY',
+  KEY_ID: 'CODEKEY_KEY_ID',
 };
 
 export function saveAuth(clientToken: string, deviceId: string): void {
@@ -19,9 +21,28 @@ export function getDeviceId(): string | null {
   return wx.getStorageSync(KEYS.DEVICE_ID) || null;
 }
 
+export function saveContentKey(contentKeyHex: string, keyId: string): void {
+  wx.setStorageSync(KEYS.CONTENT_KEY, contentKeyHex);
+  wx.setStorageSync(KEYS.KEY_ID, keyId);
+}
+
+export function getContentKey(): string | null {
+  return wx.getStorageSync(KEYS.CONTENT_KEY) || null;
+}
+
+export function getKeyId(): string | null {
+  return wx.getStorageSync(KEYS.KEY_ID) || null;
+}
+
+export function clearContentKey(): void {
+  wx.removeStorageSync(KEYS.CONTENT_KEY);
+  wx.removeStorageSync(KEYS.KEY_ID);
+}
+
 export function clearAuth(): void {
   wx.removeStorageSync(KEYS.CLIENT_TOKEN);
   wx.removeStorageSync(KEYS.DEVICE_ID);
+  clearContentKey();
 }
 
 export function saveUserToken(token: string, userId: number): void {

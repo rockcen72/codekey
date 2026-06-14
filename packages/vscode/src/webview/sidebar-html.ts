@@ -22,6 +22,8 @@ export interface PairingState {
   statusText: string;
   expiresAt: number;
   pairUrl?: string;
+  contentKeyHex?: string;
+  keyId?: string;
 }
 
 export interface SubscriptionInfo {
@@ -641,6 +643,14 @@ ${rects.join('\n')}
 </svg>`;
 }
 
+function hexToBase64Url(hex: string): string {
+  return Buffer.from(hex, 'hex')
+    .toString('base64')
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/g, '');
+}
+
 export function renderPairingContent(state: SidebarState): string {
   const p = state.pairing;
   const isWaiting = p?.status === 'waiting';
@@ -678,14 +688,21 @@ export function renderPairingContent(state: SidebarState): string {
 
   // Generate QR SVGs
   const qrSize = 200;
-  const wechatQrSvg = p?.code ? generateQrSvg(p.code, qrSize) : '';
+  const wechatQrSvg = p?.pairUrl && p?.platform === 'wechat' ? generateQrSvg(p.pairUrl, qrSize)
+    : p?.code && !p?.pairUrl ? generateQrSvg(p.code, qrSize) : '';
   const feishuQrSvg = p?.code && feishuAppId
     ? generateQrSvg(`feishu://app/${feishuAppId}/pages/login/login?code=${p.code}&platform=feishu`, qrSize)
     : '';
   const tgDeepLink = p?.code
-    ? `https://t.me/CodekeyAiBot?startapp=${p.code}`
+    ? (p?.contentKeyHex && p?.keyId
+        ? `https://t.me/CodekeyAiBot?startapp=ck_${hexToBase64Url(p.contentKeyHex)}_${p.code}`
+        : `https://t.me/CodekeyAiBot?startapp=${p.code}`)
     : '';
   const tgQrSvg = tgDeepLink ? generateQrSvg(tgDeepLink, qrSize) : '';
+  const tgKeyInfo = platform === 'telegram' && hasCode && p?.contentKeyHex
+    ? `<div class="tg-key-info" style="margin-top:8px">
+      <div class="guide-step" style="font-size:11px;color:#16a34a;font-weight:600">${i18n(state.lang, 'E2E encryption key embedded in QR — auto-paired', 'E2E 加密密钥已嵌入二维码，扫码自动配对')}</div>
+    </div>` : '';
 
   // Platform toggle — all neutral, no default selection
   const platToggleHtml = `<div class="platform-toggle">
@@ -729,8 +746,9 @@ export function renderPairingContent(state: SidebarState): string {
   const tgGuide = platform === 'telegram' && hasCode
     ? `<div class="tg-guide">
       <div class="guide-step">1. Scan QR with phone camera or open Telegram</div>
-      <div class="guide-step">2. Mini App opens → code auto-filled</div>
-      <div class="guide-step">3. Tap <strong>Confirm</strong> to pair</div>
+      <div class="guide-step">2. Mini App opens → auto-filled &amp; pairs</div>
+      <div class="guide-step">3. Done — no manual entry needed</div>
+      ${tgKeyInfo}
     </div>` : '';
   const wechatGuide = platform === 'wechat' && hasCode
     ? `<div class="tg-guide">
@@ -1724,6 +1742,8 @@ body{
 .plat-opt svg{width:14px;height:14px}
 .plat-badge{font-size:7px;padding:1px 4px;border-radius:99px;background:rgba(255,255,255,.06);color:var(--vscode-descriptionForeground,#50506e);white-space:nowrap}
 .tg-guide{margin-top:8px;text-align:left;font-size:10px;color:var(--vscode-descriptionForeground,#50506e);line-height:1.6}
+.tg-key-info{margin-top:4px;border-top:1px solid var(--vscode-widget-border,#333);padding-top:6px}
+.key-text{font-family:monospace;font-size:11px;word-break:break-all;background:var(--vscode-editor-background,#1a1a2e);padding:6px 8px;border-radius:4px;margin:4px 0;color:var(--vscode-editor-foreground,#ccc)}
 .guide-step strong{color:var(--vscode-editor-foreground)}
 
 /* ═══════════════════════════════════════════════
