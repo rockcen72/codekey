@@ -5,6 +5,7 @@ import type { AuthState } from '../hooks/useAuth';
 import type { ClaimResult, ConfirmResult } from '../api/types';
 import { setDeviceCredentials, setContentKey } from '../auth/device-storage';
 import { getTelegramStartParam, parsePairingStartParam } from '../auth/pairing-start-param';
+import { generateEcdhKeyPair, deriveKeyMaterial } from '../utils/encryption';
 
 interface Props {
   auth: AuthState;
@@ -26,25 +27,44 @@ export function BindPage({ auth }: Props) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [bound, setBound] = useState(false);
+  const [confirmEcdh, setConfirmEcdh] = useState(false);
 
   async function bindWithCode(code: string) {
     if (!auth.token || code.length < 8) return;
     setBusy(true);
     setError(null);
     try {
+      // Generate ECDH keypair for E2E key exchange
+      const ecdhKeyPair = await generateEcdhKeyPair();
+
       const confirm = await publicRequest<ConfirmResult>('/api/v1/devices/confirm', {
         method: 'POST',
-        body: JSON.stringify({ code, platform: 'telegram', e2eKeyReceived: hasE2EKey }),
+        body: JSON.stringify({ code, platform: 'telegram', phonePublicKeyHex: ecdhKeyPair.publicKeyHex }),
       });
       await userRequest<ClaimResult>('/api/v1/auth/claim-device', {
         method: 'POST',
         body: JSON.stringify({ clientToken: confirm.clientToken }),
       });
       setDeviceCredentials(confirm.deviceId, confirm.clientToken);
-      // Save E2E encryption key if provided via auto-parsed startapp payload
-      if (hasE2EKey) {
+
+      // Phase 2: derive E2E key via ECDH when desktop provides its public key
+      let ecdhDerived = false;
+      if (confirm.desktopPublicKeyHex) {
+        try {
+          const material = await deriveKeyMaterial(ecdhKeyPair.privateKey, confirm.desktopPublicKeyHex);
+          setContentKey(material.contentKeyHex, material.keyId);
+          ecdhDerived = true;
+        } catch (err) {
+          console.error('[CodeKey] ECDH key derivation failed:', err);
+        }
+      }
+
+      // Phase 1 fallback: save E2E key from QR-embedded payload
+      if (!ecdhDerived && hasE2EKey) {
         setContentKey(urlContentKey, urlKeyId);
       }
+
+      setConfirmEcdh(ecdhDerived);
       auth.refreshBinding();
       setBound(true);
     } catch (err) {
@@ -81,7 +101,9 @@ export function BindPage({ auth }: Props) {
       {bound ? (
         <section className="tool-panel">
           <p className="success-text">Device bound successfully!</p>
-          {hasE2EKey ? (
+          {confirmEcdh ? (
+            <p className="success-text" style={{marginTop:8,fontSize:13}}>E2E encryption established via ECDH key exchange.</p>
+          ) : hasE2EKey ? (
             <p className="success-text" style={{marginTop:8,fontSize:13}}>E2E encryption key received &amp; saved.</p>
           ) : (
             <p className="muted" style={{marginTop:8,fontSize:13}}>Manual code binding does not enable E2E encryption. Scan the QR code from VS Code to enable it.</p>

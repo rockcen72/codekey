@@ -57,6 +57,8 @@ export interface ConfirmResult {
   deviceId: string;
   desktopNotified?: boolean;
   e2eKeyReceived?: boolean;
+  desktopPublicKeyHex?: string;
+  e2eAvailable?: boolean;
 }
 
 export interface ClaimResult {

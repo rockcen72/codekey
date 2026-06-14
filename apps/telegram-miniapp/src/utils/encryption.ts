@@ -18,6 +18,12 @@ const KEY_LENGTH = 32;   // bytes (256 bits)
 const IV_LENGTH = 12;    // bytes (96 bits, GCM recommended)
 const TAG_LENGTH = 16;   // bytes (128 bits)
 
+// ECDH P-256 — must match packages/shared/src/bridge/e2e-key-exchange.ts
+const HKDF_INFO = 'codekey-e2e-key-v1';
+const ECDH_CURVE = 'P-256';
+const ECDH_KEY_LENGTH = 256; // bits (shared secret)
+const DERIVED_OUTPUT_LENGTH = 320; // bits (32 bytes contentKey + 8 bytes keyId)
+
 // ── Key utilities ──────────────────────────────────────────
 
 export function generateContentKey(): { keyHex: string; keyId: string } {
@@ -69,6 +75,85 @@ function asBuf(v: Uint8Array): Uint8Array<ArrayBuffer> {
   return new Uint8Array(
     v.buffer.slice(v.byteOffset, v.byteOffset + v.byteLength) as ArrayBuffer,
   );
+}
+
+// ── ECDH P-256 Key Exchange ────────────────────────────────
+
+export interface EcdhKeyPair {
+  publicKeyHex: string;
+  privateKey: CryptoKey;
+}
+
+/** Generate an ECDH P-256 keypair, exporting public key as uncompressed hex (130 chars). */
+export async function generateEcdhKeyPair(): Promise<EcdhKeyPair> {
+  const keyPair = await crypto.subtle.generateKey(
+    { name: 'ECDH', namedCurve: ECDH_CURVE },
+    true,
+    ['deriveBits'],
+  );
+  const rawPub = await crypto.subtle.exportKey('raw', keyPair.publicKey);
+  const pubBytes = new Uint8Array(rawPub);
+  // P-256 raw public key is 65 bytes: 0x04 prefix + 32 x + 32 y
+  if (pubBytes[0] !== 0x04 || pubBytes.length !== 65) {
+    throw new Error('Unexpected P-256 public key format');
+  }
+  return { publicKeyHex: buf2hex(pubBytes), privateKey: keyPair.privateKey };
+}
+
+/** Import a peer's uncompressed P-256 public key from hex. */
+async function importPeerPublicKey(publicKeyHex: string): Promise<CryptoKey> {
+  const raw = hex2buf(publicKeyHex);
+  if (raw[0] !== 0x04 || raw.length !== 65) {
+    throw new Error('Invalid P-256 public key: expected 65 bytes with 0x04 prefix');
+  }
+  return crypto.subtle.importKey(
+    'raw',
+    asBuf(raw),
+    { name: 'ECDH', namedCurve: ECDH_CURVE },
+    false,
+    [],
+  );
+}
+
+/** Compute ECDH shared secret (256-bit) from our private key and peer's public key. */
+async function computeSharedSecret(privKey: CryptoKey, peerPubKeyHex: string): Promise<ArrayBuffer> {
+  const peerPub = await importPeerPublicKey(peerPubKeyHex);
+  return crypto.subtle.deriveBits(
+    { name: 'ECDH', public: peerPub },
+    privKey,
+    ECDH_KEY_LENGTH,
+  );
+}
+
+/** Derive contentKeyHex[32] + keyId[8] from ECDH shared secret via HKDF-SHA256.
+ *  Must match deriveKeyMaterial() in packages/shared/src/bridge/e2e-key-exchange.ts. */
+export async function deriveKeyMaterial(privKey: CryptoKey, peerPubKeyHex: string): Promise<{ contentKeyHex: string; keyId: string }> {
+  const sharedSecret = await computeSharedSecret(privKey, peerPubKeyHex);
+
+  // Import shared secret as HKDF base key
+  const hkdfKey = await crypto.subtle.importKey(
+    'raw',
+    asBuf(new Uint8Array(sharedSecret)),
+    { name: 'HKDF' },
+    false,
+    ['deriveBits'],
+  );
+
+  const derived = await crypto.subtle.deriveBits(
+    {
+      name: 'HKDF',
+      hash: 'SHA-256',
+      salt: new Uint8Array(0),
+      info: new TextEncoder().encode(HKDF_INFO),
+    },
+    hkdfKey,
+    DERIVED_OUTPUT_LENGTH,
+  );
+
+  const bytes = new Uint8Array(derived);
+  const contentKeyHex = buf2hex(bytes.subarray(0, 32));
+  const keyId = buf2hex(bytes.subarray(32, 40));
+  return { contentKeyHex, keyId };
 }
 
 // ── Encrypt / Decrypt (async — Web Crypto API) ─────────────
