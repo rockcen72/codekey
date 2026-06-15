@@ -437,6 +437,82 @@ describe('Codex real transcript format', () => {
       });
       expect(started?.payload?.data).not.toHaveProperty('command');
     });
+
+    it('decrypts sealed_command and delivers plaintext to handleCommand for resumed Codex sessions', async () => {
+      // Import live crypto helpers to produce a real sealed_command
+      const { encryptCommandPayload, normalizeCommandPayload } = await import('../bridge/command-envelope.js');
+
+      // Generate a deterministic test content key (32 bytes = 64 hex chars)
+      const contentKeyHex = 'a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2';
+      const deviceId = 'test-device-uuid';
+      const keyId = 'test-key-id';
+      const sessionId = 'server-codex-sealed';
+      const commandId = 'test-cmd-uuid-0000';
+      const commandText = '查询上海的天气';
+
+      // Produce a real sealed_command envelope
+      const envelope = encryptCommandPayload(commandText, contentKeyHex, keyId, deviceId, sessionId, commandId);
+
+      // Build a mock ApprovalBridge with resolveCommandData backed by the real helper
+      const mockBridge = {
+        resolveCommandData: (payload: any) => normalizeCommandPayload(payload, contentKeyHex, deviceId),
+        encryptOutboundPayload: (p: any) => p,
+      };
+
+      const sent: Record<string, any>[] = [];
+      const relay = Object.assign(new EventEmitter(), {
+        sendRaw(value: string) {
+          sent.push(JSON.parse(value));
+        },
+        sendCheckedPayload(p: { raw: string }) { this.sendRaw(p.raw); },
+      });
+      const resumedIds = new Set<string>([sessionId]);
+      const manager = new CodexResumeManager(relay as any, resumedIds, mockBridge as any);
+
+      // Set up a mock resumed session so handleCommand has a target
+      (manager as any).sessions.set(sessionId, {
+        localSession: {
+          sessionId: 'local-codex-sealed',
+          cwd: tmpHome,
+          title: 'sealed command test',
+          transcriptPath: path.join(tmpHome, 'dummy-sealed.jsonl'),
+          source: 'vscode',
+          updatedAt: '2026-06-01T08:00:00.000Z',
+          createdAt: '2026-06-01T07:00:00.000Z',
+        },
+        runtime: {
+          resumeOnce: async () => ({ success: true, exitCode: 0, timedOut: false, stderr: '', events: [] }),
+        },
+        watcher: null,
+        forwardedTextKeys: new Set(),
+      });
+
+      // Start listening — this registers the relay 'command' handler
+      manager.startListening();
+
+      // Emit a sealed_command from the relay
+      relay.emit('command', {
+        sessionId,
+        action: 'write_stdin',
+        sealed_command: envelope.sealed_command,
+        command_id: envelope.command_id,
+        key_id: envelope.key_id,
+        encryption_version: envelope.encryption_version,
+      });
+
+      // Wait a microtask for the async command handler
+      await new Promise(resolve => setTimeout(resolve, 50));
+
+      const userPrompt = sent.find((m) => m.type === 'event' && m.payload?.eventType === 'user_prompt');
+      const commandStarted = sent.find((m) => m.type === 'event' && m.payload?.eventType === 'command_started');
+
+      expect(userPrompt).toBeDefined();
+      // handleCommand routes through privacy pipeline — verify the decrypted
+      // text was used (exact data shape depends on pipeline normalization)
+      expect(JSON.stringify(userPrompt!.payload.data)).toContain(commandText);
+      expect(commandStarted).toBeDefined();
+      expect(commandStarted!.payload.sessionId).toBe(sessionId);
+    });
   });
 
   describe('loadCodexConversation', () => {

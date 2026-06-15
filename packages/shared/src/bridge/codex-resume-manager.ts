@@ -60,12 +60,32 @@ export class CodexResumeManager {
     if (this._listening) return;
     this._listening = true;
 
-    this.relay.on('command', (payload: { sessionId?: string; action: string; data: string }) => {
+    this.relay.on('command', (payload: {
+      sessionId?: string;
+      action: string;
+      data?: string;
+      sealed_command?: string;
+      command_id?: string;
+      key_id?: string;
+      encryption_version?: number;
+    }) => {
       if (payload.action !== 'write_stdin') return;
       if (!payload.sessionId) return;
       if (!this.resumedServerSessionIds.has(payload.sessionId)) return;
 
-      this.handleCommand(payload.sessionId, payload.data).catch((err) => {
+      // Phase 4B: resolve sealed_command to plaintext via ApprovalBridge
+      const cmdData = this.approvalBridge
+        ? this.approvalBridge.resolveCommandData(payload)
+        : (payload.data ?? null);
+
+      if (!cmdData) {
+        if (payload.sealed_command) {
+          console.error('[codex-resume] sealed_command decrypt failed for sessionId=%s', payload.sessionId);
+        }
+        return;
+      }
+
+      this.handleCommand(payload.sessionId, cmdData).catch((err) => {
         console.error('[codex-resume] command error:', err);
       });
     });

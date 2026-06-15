@@ -14,6 +14,7 @@ import { RiskEngine } from '../risk.js';
 import { tryFormatInputRequiredEvent } from './input-card.js';
 import { runPrivacyPipeline, toCheckedPayload, PrivacyAuditCollector, projectHistoryEventForPolicy, ensureSafeSummary } from './privacy-pipeline.js';
 import { encryptEventPayload } from './event-envelope.js';
+import { normalizeCommandPayload } from './command-envelope.js';
 import type { AuditSink, PrivacyDecision, SourceType, PrivacyStats } from './privacy-pipeline.js';
 import { checkHistoryPolicy, HistorySharePolicy, getEffectiveConfig, DEFAULT_RECENT_COUNT } from './history-policy.js';
 
@@ -198,6 +199,27 @@ export class ApprovalBridge {
     this._contentKeyHex = undefined;
     this._keyId = undefined;
     this._deviceId = undefined;
+  }
+
+  /**
+   * Resolve a command payload to its plaintext data, decrypting sealed_command
+   * if present.  Uses the bridge's stored content key / deviceId.
+   *
+   * All relay 'command' event consumers (CodexResumeManager, CodexRelay, etc.)
+   * should call this instead of accessing payload.data directly, so they are
+   * not reliant on listener ordering for decryption.
+   *
+   * Returns null when the command is sealed but cannot be decrypted.
+   */
+  resolveCommandData(payload: {
+    data?: string;
+    sealed_command?: string;
+    command_id?: string;
+    key_id?: string;
+    encryption_version?: number;
+    sessionId?: string;
+  }): string | null {
+    return normalizeCommandPayload(payload, this._contentKeyHex, this._deviceId);
   }
 
   /** Event types whose `data` body must be encrypted into `sealed_payload`
@@ -1719,9 +1741,28 @@ export class ApprovalBridge {
   }
 
   listenRelayCommands(): void {
-    this.relay.on('command', (payload: { sessionId?: string; claudeSessionId?: string; action: string; data: string }) => {
+    this.relay.on('command', (payload: {
+      sessionId?: string;
+      claudeSessionId?: string;
+      action: string;
+      data?: string;
+      sealed_command?: string;
+      command_id?: string;
+      key_id?: string;
+      encryption_version?: number;
+    }) => {
       if (payload.action !== 'write_stdin') return;
       if (!payload.sessionId) return;
+
+      // Phase 4B: decrypt sealed_command into plaintext data
+      const resolved = this.resolveCommandData(payload);
+      if (resolved === null) {
+        if (payload.sealed_command) {
+          console.error('[bridge] sealed_command decrypt failed for sessionId=%s', payload.sessionId);
+        }
+        return;
+      }
+      payload.data = resolved;
 
       // Codex resume routing guard: if this serverSessionId is managed by
       // CodexResumeManager, skip the Claude command queue.

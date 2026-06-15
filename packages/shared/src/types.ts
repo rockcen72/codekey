@@ -129,13 +129,13 @@ export interface ResponseMessage {
   };
 }
 
+export type CommandMessagePayload =
+  | { sessionId: string; action: 'write_stdin' | 'pause_session' | 'resume_session'; data: string; claudeSessionId?: string }
+  | { sessionId: string; action: 'write_stdin'; sealed_command: string; command_id: string; key_id: string; encryption_version: number; claudeSessionId?: string };
+
 export interface CommandMessage {
   type: 'command';
-  payload: {
-    sessionId: string;
-    action: 'write_stdin' | 'pause_session' | 'resume_session';
-    data: string;
-  };
+  payload: CommandMessagePayload;
 }
 
 export interface EventPushMessage {
