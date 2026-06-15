@@ -4,6 +4,24 @@ const CONTENT_KEY_KEY = 'CODEKEY_TG_CONTENT_KEY';
 const KEY_ID_KEY = 'CODEKEY_TG_KEY_ID';
 const E2E_STATUS_KEY = 'CODEKEY_TG_E2E_STATUS';
 
+export interface E2EState {
+  state: 'enabled' | 'stale' | 'disabled';
+  lastServerKeyId: string | null;
+  localKeyId: string | null;
+  at: number;
+  lastToastAt: number;
+  lastToastSessionId: string | null;
+}
+
+const DEFAULT_E2E_STATE: E2EState = {
+  state: 'disabled',
+  lastServerKeyId: null,
+  localKeyId: null,
+  at: 0,
+  lastToastAt: 0,
+  lastToastSessionId: null,
+};
+
 function getStoredValue(key: string): string | null {
   return sessionStorage.getItem(key) || localStorage.getItem(key);
 }
@@ -16,6 +34,15 @@ function setStoredValue(key: string, value: string): void {
 function removeStoredValue(key: string): void {
   sessionStorage.removeItem(key);
   localStorage.removeItem(key);
+}
+
+function parseE2EState(raw: string | null): E2EState {
+  if (!raw) return { ...DEFAULT_E2E_STATE };
+  try {
+    return { ...DEFAULT_E2E_STATE, ...JSON.parse(raw) };
+  } catch {
+    return { state: raw as any || 'disabled', lastServerKeyId: null, localKeyId: null, at: Date.now(), lastToastAt: 0, lastToastSessionId: null };
+  }
 }
 
 export function getDeviceId(): string | null {
@@ -42,15 +69,35 @@ export function getKeyId(): string | null {
 export function setContentKey(contentKeyHex: string, keyId: string): void {
   if (contentKeyHex) setStoredValue(CONTENT_KEY_KEY, contentKeyHex);
   if (keyId) setStoredValue(KEY_ID_KEY, keyId);
-  if (contentKeyHex) setE2EStatus('enabled'); // re-pair resets stale → enabled
+  if (contentKeyHex) {
+    const current = getE2EState();
+    current.state = 'enabled';
+    current.localKeyId = keyId || current.localKeyId;
+    current.lastServerKeyId = keyId || current.lastServerKeyId;
+    current.at = Date.now();
+    setStoredValue(E2E_STATUS_KEY, JSON.stringify(current));
+  }
 }
 
 export function getE2EStatus(): 'enabled' | 'stale' | 'disabled' {
-  return (getStoredValue(E2E_STATUS_KEY) as 'enabled' | 'stale' | 'disabled') || 'disabled';
+  return getE2EState().state;
 }
 
 export function setE2EStatus(status: 'enabled' | 'stale' | 'disabled'): void {
-  setStoredValue(E2E_STATUS_KEY, status);
+  const current = getE2EState();
+  current.state = status;
+  current.at = Date.now();
+  setStoredValue(E2E_STATUS_KEY, JSON.stringify(current));
+}
+
+export function getE2EState(): E2EState {
+  return parseE2EState(getStoredValue(E2E_STATUS_KEY));
+}
+
+export function setE2EState(partial: Partial<E2EState> & { state: 'enabled' | 'stale' | 'disabled' }): void {
+  const current = getE2EState();
+  Object.assign(current, partial, { at: Date.now() });
+  setStoredValue(E2E_STATUS_KEY, JSON.stringify(current));
 }
 
 export function clearContentKey(): void {

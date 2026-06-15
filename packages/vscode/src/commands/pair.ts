@@ -10,7 +10,7 @@ import type { StatusBar } from '../status/bar.js';
 import { log } from '../log.js';
 import { secureFetch } from '../util/secure-fetch.js';
 
-export async function pairDevice(_context: vscode.ExtensionContext, statusBar: StatusBar): Promise<void> {
+export async function pairDevice(context: vscode.ExtensionContext, statusBar: StatusBar): Promise<void> {
   let channel: vscode.OutputChannel | undefined;
   let closeTimer: ReturnType<typeof setTimeout> | undefined;
   try {
@@ -215,7 +215,7 @@ export async function pairDevice(_context: vscode.ExtensionContext, statusBar: S
 
     // Install/refresh Claude hooks immediately after pairing; activate() may
     // have skipped this earlier because no device token existed yet.
-    const scriptsDir = vscode.Uri.joinPath(_context.extensionUri, 'scripts').fsPath;
+    const scriptsDir = vscode.Uri.joinPath(context.extensionUri, 'scripts').fsPath;
     installHook(scriptsDir);
 
     // Restart bridge with fresh token

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { userRequest } from '../api/client';
+import { UnboundDeviceError, userRequest } from '../api/client';
 import type { UserSession } from '../api/types';
 
 const POLL_INTERVAL = 5_000;
@@ -19,7 +19,13 @@ export function useSessions(enabled: boolean) {
     try {
       setSessions(await userRequest<UserSession[]>('/api/v1/user/sessions?history=1'));
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load sessions');
+      // UnboundDeviceError is the silent "no active binding" state —
+      // see useDevices for rationale. Avoids 5s-tick error spam.
+      if (err instanceof UnboundDeviceError) {
+        setSessions([]);
+      } else {
+        setError(err instanceof Error ? err.message : 'Failed to load sessions');
+      }
     } finally {
       setLoading(false);
       inFlight.current = false;

@@ -760,7 +760,7 @@ describe('ApprovalBridge canonical sessions', () => {
     expect(registerMsg).toBeDefined();
     expect(registerMsg.payload.metadata.title).toBe('My OpenCode Task');
     expect(registerMsg.payload.metadata.runtime).toBe('opencode');
-    expect(registerMsg.payload.metadata.source).toBe('opencode');
+    expect(registerMsg.payload.metadata.source).toBe('opencode_attach');
     expect(sentTypes).not.toContain('update_session_label');
   });
 
@@ -778,6 +778,7 @@ describe('ApprovalBridge canonical sessions', () => {
 
     expect(registerMsg).toBeDefined();
     expect('title' in registerMsg.payload.metadata).toBe(false);
+    expect(registerMsg.payload.metadata.source).toBe('opencode_attach');
     expect(sentTypes).not.toContain('update_session_label');
   });
 

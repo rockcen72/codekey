@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { AUTH_EXPIRED_EVENT, userRequest } from '../api/client';
+import { AUTH_EXPIRED_EVENT, CLIENT_TOKEN_INVALID_EVENT, UnboundDeviceError, userRequest } from '../api/client';
 import type { UserDevice } from '../api/types';
 import { clearUserToken, getUserToken, setUserToken } from '../auth/storage';
 import { getDeviceId, getClientToken, clearDeviceCredentials } from '../auth/device-storage';
@@ -68,8 +68,21 @@ export function useAuth(): AuthState {
       setClientToken(null);
       setLoading(false);
     }
+    function handleClientTokenInvalid() {
+      // Server told us our clientToken is no longer the active one (the
+      // other platform took over the device, or the device was unbound).
+      // Keep the user_token so we don't bounce to login — just clear the
+      // device credentials so the UI renders an unbound state.
+      setDeviceId(null);
+      setClientToken(null);
+      setLoading(false);
+    }
     window.addEventListener(AUTH_EXPIRED_EVENT, handleAuthExpired);
-    return () => window.removeEventListener(AUTH_EXPIRED_EVENT, handleAuthExpired);
+    window.addEventListener(CLIENT_TOKEN_INVALID_EVENT, handleClientTokenInvalid);
+    return () => {
+      window.removeEventListener(AUTH_EXPIRED_EVENT, handleAuthExpired);
+      window.removeEventListener(CLIENT_TOKEN_INVALID_EVENT, handleClientTokenInvalid);
+    };
   }, []);
 
   useEffect(() => {
@@ -81,7 +94,15 @@ export function useAuth(): AuthState {
       }
       try {
         await userRequest<UserDevice[]>('/api/v1/user/devices');
-      } catch {
+      } catch (err) {
+        // Unbound device is an expected state (Telegram session has no
+        // active clientToken, or another platform took over). user_token
+        // remains valid — render the unbound state instead of looping
+        // back into login().
+        if (err instanceof UnboundDeviceError) {
+          if (active) setLoading(false);
+          return;
+        }
         if (active) await login();
         return;
       }

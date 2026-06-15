@@ -11,6 +11,7 @@ import { SettingsPage } from './pages/SettingsPage';
 import { getTelegramStartParam, parsePairingStartParam } from './auth/pairing-start-param';
 
 const PROCESSED_KEY = 'ck:processed_start_param';
+const SUPPRESSED_PAIRING_PARAM_KEY = 'ck:suppressed_pairing_start_param';
 
 function DeepLinkRedirect({ auth }: { auth: ReturnType<typeof useAuth> }) {
   const [params] = useSearchParams();
@@ -23,7 +24,8 @@ function DeepLinkRedirect({ auth }: { auth: ReturnType<typeof useAuth> }) {
   // Use sessionStorage to track processed startParams — survives component
   // mount/unmount cycles and allows processing if Telegram navigates to a
   // new deep link within the same WebView (different startParam value).
-  const alreadyProcessed = sessionStorage.getItem(PROCESSED_KEY) === startParam;
+  const alreadyProcessed = sessionStorage.getItem(PROCESSED_KEY) === startParam
+    || localStorage.getItem(SUPPRESSED_PAIRING_PARAM_KEY) === startParam;
 
   const parsedStartParam = parsePairingStartParam(startParam);
 
@@ -73,9 +75,15 @@ export default function App() {
     }
 
     const ws = new WsClient(relayUrl, auth.deviceId, auth.clientToken);
-    ws.on('auth_failed', () => {
+    ws.on('auth_failed', (payload?: { code?: string; replacedByPlatform?: string }) => {
+      const startParam = getTelegramStartParam(new URLSearchParams(window.location.search));
+      const replacedByTelegram = payload?.code === 'DEVICE_REPLACED' && payload.replacedByPlatform === 'telegram';
+      if (startParam && !replacedByTelegram) {
+        sessionStorage.setItem(PROCESSED_KEY, startParam);
+        localStorage.setItem(SUPPRESSED_PAIRING_PARAM_KEY, startParam);
+      }
       auth.clearBinding();
-      navigate('/bind', { replace: true });
+      navigate('/', { replace: true });
     });
     ws.connect();
     wsRef.current = ws;

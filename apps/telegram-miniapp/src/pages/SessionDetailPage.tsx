@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { userRequest } from '../api/client';
+import { UnboundDeviceError, userRequest } from '../api/client';
 import type { ApprovalResponseResult, UserEvent, UserSession } from '../api/types';
 import type { AuthState } from '../hooks/useAuth';
 import { compactMarkdownWhitespace, markdownToHtml } from '../utils/markdown';
 import { agentChatName, agentColorClass, agentLabel } from '../utils/session-display';
 import { decryptEventPayload, encryptCommandPayload } from '../utils/encryption';
-import { getContentKey, getKeyId, getDeviceId, setE2EStatus } from '../auth/device-storage';
+import { getContentKey, getKeyId, getDeviceId, getE2EStatus, getE2EState, setE2EStatus, setE2EState } from '../auth/device-storage';
 
 const POLL_INTERVAL = 5_000;
 
@@ -692,15 +692,19 @@ export function SessionDetailPage({ auth }: Props) {
       {
         const ck = getContentKey();
         let status: 'enabled' | 'stale' | 'disabled';
+        let latestSealed: any = null;
         if (!ck) { status = 'disabled'; }
         else {
-          const latestSealed = nextEvents
+          latestSealed = nextEvents
             .filter((ev) => ev.sealed_payload)
             .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())[0];
           status = latestSealed && getEventData(latestSealed).e2eKeyStale === true ? 'stale' : 'enabled';
         }
-        setE2eStatus(status);
-        setE2EStatus(status); // persist for Settings page
+        if (status === 'stale') {
+          setE2EState({ state: 'stale', localKeyId: getKeyId(), lastServerKeyId: latestSealed?.key_id ?? null });
+        } else {
+          setE2EStatus(status);
+        }
       }
 
       nextEvents.sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
@@ -733,11 +737,18 @@ export function SessionDetailPage({ auth }: Props) {
       setSession(nextSession);
       setError(null);
     } catch (err) {
+      // Device became unbound during a polling tick — kick to root so
+      // the user lands on the unbound view (or pairing prompt) instead
+      // of staring at a stale session detail with a noisy error.
+      if (err instanceof UnboundDeviceError) {
+        navigate('/', { replace: true });
+        return;
+      }
       setError(err instanceof Error ? err.message : 'Failed to load session');
     } finally {
       loadingRef.current = false;
     }
-  }, [auth.token, id]);
+  }, [auth.token, id, navigate]);
 
   const messages = useMemo(() => buildChatMessages(events, session, resolvedMap), [events, session, resolvedMap]);
   const primaryPending = useMemo(() => {
@@ -845,6 +856,18 @@ export function SessionDetailPage({ auth }: Props) {
       let body: Record<string, unknown>;
 
       if (contentKeyHex && keyId && deviceId) {
+        const e2eState = getE2EState();
+        if (e2eState.state === 'stale') {
+          const sameSession = e2eState.lastToastSessionId === (id ?? null);
+          if (sameSession && Date.now() - e2eState.lastToastAt < 30_000) {
+            setPromptBusy(false);
+            return;
+          }
+          setE2EState({ state: 'stale', localKeyId: keyId, lastToastAt: Date.now(), lastToastSessionId: id ?? null });
+          showToast('E2E keys are stale — re-pair phone to send encrypted commands');
+          setPromptBusy(false);
+          return;
+        }
         const commandId = crypto.randomUUID();
         const envelope = await encryptCommandPayload(
           promptText.trim(), contentKeyHex, keyId, deviceId, id, commandId,

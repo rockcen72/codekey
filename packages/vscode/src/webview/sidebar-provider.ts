@@ -3,7 +3,7 @@ import * as path from 'node:path';
 import * as crypto from 'node:crypto';
 import * as os from 'node:os';
 import WebSocket from 'ws';
-import { loadCredentials, clearCredentials, loadDesktopInstallId, type Credentials } from '../auth/credentials.js';
+import { loadCredentials, saveCredentials, clearCredentials, loadDesktopInstallId, type Credentials } from '../auth/credentials.js';
 import { createApi, ApiError, type SessionResponse, type EventResponse, type SubscriptionResponse } from '../api/client.js';
 import { getAgents } from '../agents/registry.js';
 import { BridgeStatusService } from '../services/bridge-status.js';
@@ -28,7 +28,7 @@ import {
   type PairingState,
 } from './sidebar-html.js';
 import { loadConversation, loadCodexConversation, normalizeCodexSessionTitle } from '@codekey/shared/bridge';
-import { log } from '../log.js';
+import { log, debug } from '../log.js';
 import { secureFetch } from '../util/secure-fetch.js';
 import { generateEcdhKeyPair, computeSharedSecret, deriveKeyMaterial } from '@codekey/shared/bridge';
 
@@ -43,6 +43,7 @@ const POLL_MS = 5000;
 const APPROVAL_POLL_MS = 1000;
 const PRIVACY_POLL_MS = 5000;
 const BRIDGE_FETCH_TIMEOUT_MS = 2000;
+const CC_RECENT_WORKSPACE_FALLBACK_LIMIT = 10;
 
 interface BridgePendingApproval {
   id: string;
@@ -203,7 +204,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     const waitMs = Math.max(0, SidebarProvider.MIN_SYNC_SPINNER_MS - (Date.now() - startedAt));
     setTimeout(() => {
       this._syncInFlight.delete(sessionId);
-      this._pushSessionsOnly();
+      this._pushState().catch(err => log(`_pushState (sync-finished) failed: ${err?.stack || err}`));
     }, waitMs);
   }
 
@@ -430,13 +431,13 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     const norm = (p: string) => path.resolve(p).toLowerCase();
     const normWorkspaces = workspacePaths.map(norm);
 
-    // When CC is running, admit the 2 most-recent workspace sessions as fallback
+    // When CC is running, admit recent workspace sessions as fallback
     // (covers bridge restart window before hook events re-register the session).
     const recentFallbackIds = new Set<string>();
     if (hasCcRunning) {
       let admitted = 0;
       for (const s of sessions) {
-        if (admitted >= 2) break;
+        if (admitted >= CC_RECENT_WORKSPACE_FALLBACK_LIMIT) break;
         if (!s.cwd) continue;
         const cwd = norm(s.cwd);
         if (normWorkspaces.some(wp => cwd === wp || cwd.startsWith(wp + path.sep.toLowerCase()))) {
@@ -525,7 +526,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       if (this._bridgeApprovals.length > 0) {
         try {
           await this._pushStateApprovalsOnly();
-        } catch {}
+        } catch (e) { log('_pushState approvals-only fallback failed: %s', e instanceof Error ? e.message : e); }
       }
       if (this._view && this._firstPush) {
         this._view.webview.html = `<!DOCTYPE html><html><body style="background:#0f0f18;color:#e8e8f0;padding:20px;font-family:sans-serif;font-size:12px"><h3 style="color:#f74d4d">CodeKey error</h3><pre style="white-space:pre-wrap;word-break:break-word;font-size:11px">${String(err?.stack || err).replace(/&/g,'&amp;').replace(/</g,'&lt;')}</pre></body></html>`;
@@ -641,6 +642,15 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     // 'unpaired' due to stale health data would briefly flash the pairing UI.
     let deviceStatus: SidebarState['deviceStatus'] =
       creds?.deviceToken ? 'paired' : 'unpaired';
+    // Drop a stale `_pairingState` whenever credentials disappear out from
+    // under us (e.g. the bridge received auth_failed because the phone
+    // unbound or another platform took over). Without this, the next pair
+    // panel render keeps showing the OLD code/QR — the cached
+    // `_pairingState.code` is still set from the previous successful pair,
+    // and the user scans a code that the relay has already consumed.
+    if (!creds?.deviceToken && this._pairingState && this._pairingState.status !== 'waiting') {
+      this._pairingState = undefined;
+    }
     let sessions: SessionResponse[] = [];
     let allDeviceSessions: SessionResponse[] = [];
     let allDeviceSessionsFresh = false;
@@ -806,7 +816,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         const health = await healthResp.json() as { supports?: string[] };
         canDetach = health.supports?.includes('detach-session') ?? false;
       }
-    } catch {}
+    } catch (e) { debug('_pushStateInner: bridge health check failed: %s', e instanceof Error ? e.message : e); }
 
     if (canDetach) {
       try {
@@ -815,7 +825,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
           const attBody = await attResp.json() as { attached?: string[] };
           attachedSessions = attBody.attached ?? [];
         }
-      } catch {}
+      } catch (e) { debug('_pushStateInner: attached-sessions fetch failed: %s', e instanceof Error ? e.message : e); }
     }
 
     // Build lookup: claudeSessionId → relay session title (synced tab label).
@@ -903,7 +913,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
 
     const mergedClaudeSessions = filteredSessions.map(s => ({
       ...s,
-      title: relayTitleByClaudeSessionId.get(s.sessionId) || s.title,
+      title: s.title || relayTitleByClaudeSessionId.get(s.sessionId) || s.sessionId.slice(0, 8),
       attached: attachedSessions.includes(s.sessionId) && !this._isRecentlyDetached(s.sessionId),
       canDetach: canDetach,
     }));
@@ -1188,7 +1198,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         this._handleSessionPreview(msg.sessionId, msg.iscodex === true);
         break;
       case 'showSessionDetail':
-        this._handleShowSessionDetail(msg.serverSessionId, msg.sessionId);
+        this._handleShowSessionDetail(msg.serverSessionId);
         break;
       case 'hideSessionDetail':
         break;
@@ -1418,7 +1428,6 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
   private async _handleUnpair(): Promise<void> {
     this._closePairingSocket();
     const creds = loadCredentials();
-    let localOnly = false;
     if (creds?.deviceToken) {
       try {
         const res = await secureFetch(`${creds.relayUrl}/api/v1/devices/${creds.deviceId}`, {
@@ -1438,11 +1447,10 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         }
       } catch (err) {
         const msg = err instanceof Error ? err.message : 'server request failed';
-        // Token already revoked or device already deleted — or server returned
-        // an error (Electron raw TLS parsing may misrepresent HTTP status codes).
-        // Server-side state is already clean in all these cases: proceed with
-        // local cleanup without blocking the user.
-        localOnly = true;
+        log(`[CodeKey] unpair failed before local cleanup: ${msg}`);
+        vscode.window.showErrorMessage(`CodeKey unpair failed: ${msg}`);
+        void this._pushState();
+        return;
       }
     }
     clearCredentials();
@@ -1795,7 +1803,6 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       if (pending.contentKeyHex) creds.contentKeyHex = pending.contentKeyHex;
       if (pending.keyId) creds.keyId = pending.keyId;
     }
-    const { saveCredentials } = await import('../auth/credentials.js');
     saveCredentials(creds);
     BridgeStatusService.getInstance().restart();
     vscode.window.showInformationMessage('Device paired successfully!');
@@ -1867,7 +1874,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     }
   }
 
-  private _handleShowSessionDetail(serverSessionId: string, _sessionId: string): void {
+  private _handleShowSessionDetail(serverSessionId: string): void {
     const lang = vscode.env.language;
     const claudeSessions: any[] = this._lastClaudeSessions;
     const events = this._lastEvents[serverSessionId] || [];
@@ -1914,11 +1921,13 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
   private _handleSetHistoryPolicy(key: string, policy: string): void {
     const bridgeUrl = this._bridgeService.getBridgeUrl();
     if (!bridgeUrl) return;
-    this._bridgeFetch(`${bridgeUrl}/v1/history-policy`, {
+    const keys = key === '*' ? ['*', 'claude-code-hook', 'codex', 'opencode'] : [key];
+    const updatedAt = Date.now();
+    Promise.all(keys.map((policyKey) => this._bridgeFetch(`${bridgeUrl}/v1/history-policy`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ key, config: { policy, updatedAt: Date.now() } }),
-    }).then(() => this._pushState()).catch((err) => log(`setHistoryPolicy failed: ${err}`));
+      body: JSON.stringify({ key: policyKey, config: { policy, updatedAt } }),
+    }))).then(() => this._pushState()).catch((err) => log(`setHistoryPolicy failed: ${err}`));
   }
 
   private _handleDeleteHistoryPolicy(key: string): void {

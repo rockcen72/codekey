@@ -324,6 +324,30 @@ function lastTranscriptTimestamp(filePath: string): string {
   return '';
 }
 
+/** Read the transcript tail and return the latest meaningful user prompt as a local display title. */
+function lastTranscriptTitle(filePath: string): string {
+  try {
+    const fd = openSync(filePath, 'r');
+    try {
+      const size = fstatSync(fd).size;
+      if (size === 0) return '';
+      const readSize = Math.min(size, 65536);
+      const buf = Buffer.alloc(readSize);
+      readSync(fd, buf, 0, readSize, size - readSize);
+      const lines = buf.toString('utf8').split('\n').filter(l => l.trim());
+      for (let i = lines.length - 1; i >= 0; i--) {
+        try {
+          const title = titleFromLine(JSON.parse(lines[i]) as TranscriptLine);
+          if (title) return title;
+        } catch { /* skip malformed or partial tail lines */ }
+      }
+    } finally {
+      closeSync(fd);
+    }
+  } catch { /* ignore */ }
+  return '';
+}
+
 export async function listRecentClaudeTranscripts(limit = 5): Promise<ClaudeTranscriptMetadata[]> {
   const baseDir = claudeConfigDir();
   const projectsDir = path.join(baseDir, 'projects');
@@ -358,6 +382,8 @@ export async function listRecentClaudeTranscripts(limit = 5): Promise<ClaudeTran
       if (lines.length >= 200) break;
     }
     const meta = parseClaudeTranscriptLines(lines, sessionId, fullPath);
+    const tailTitle = lastTranscriptTitle(fullPath);
+    if (tailTitle) meta.title = tailTitle;
     // Override updatedAt with the file's LAST timestamp (newest activity).
     // parseClaudeTranscriptLines only sees the first 200 lines, which are the
     // OLDEST lines — new lines are appended to the end. Reading the tail gives

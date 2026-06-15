@@ -41,6 +41,13 @@ class FakeRelay extends EventEmitter {
   }
 }
 
+/** Pre-register an OpenCode session so event handlers can resolve it.
+ *  This mirrors the opt-in design: user must click Sync in the sidebar
+ *  before any permission/chat/input events leave the desktop. */
+async function registerOCSession(manager: OpenCodeSessionManager, localId: string, serverId: string): Promise<void> {
+  await manager.attachSession(localId, 'Test', serverId);
+}
+
 describe('OpenCodeSessionManager event handling', () => {
   let relay: FakeRelay;
   let bridge: ApprovalBridge;
@@ -86,6 +93,10 @@ describe('OpenCodeSessionManager event handling', () => {
 
   describe('permission.asked/updated', () => {
     it('creates approval from OpenCode permission.asked event', async () => {
+      await registerOCSession(manager, 'oc-session-asked', 'server-oc-session-asked');
+      relay.sent.length = 0;
+      relay.sentEvents.length = 0;
+
       const permissionEvent = {
         type: 'permission.asked',
         properties: {
@@ -110,6 +121,10 @@ describe('OpenCodeSessionManager event handling', () => {
     });
 
     it('creates approval from Permission object', async () => {
+      await registerOCSession(manager, 'oc-session-1', 'server-oc-session-1');
+      relay.sent.length = 0;
+      relay.sentEvents.length = 0;
+
       const permissionEvent = {
         type: 'permission.updated',
         properties: {
@@ -144,6 +159,10 @@ describe('OpenCodeSessionManager event handling', () => {
     });
 
     it('uses title field as summary', async () => {
+      await registerOCSession(manager, 'oc-session-2', 'server-oc-session-2');
+      relay.sent.length = 0;
+      relay.sentEvents.length = 0;
+
       const permissionEvent = {
         type: 'permission.updated',
         properties: {
@@ -164,22 +183,26 @@ describe('OpenCodeSessionManager event handling', () => {
       expect(pending[0].summary).toBe('Edit file: src/main.ts');
     });
 
-    it('replies to OpenCode approvals through the current permission endpoint', async () => {
+    it('replies to OpenCode approvals through the current permission endpoint (1st)', async () => {
+      await registerOCSession(manager, 'oc-session-reply', 'server-oc-session-reply');
+      relay.sent.length = 0;
+      relay.sentEvents.length = 0;
+      // Prime the permission mapping so handleApprovalForward can find it
+      await (manager as any).handleSSEEvent({
+        type: 'permission.asked',
+        properties: {
+          id: 'perm-reply',
+          permission: 'Bash',
+          sessionID: 'oc-session-reply',
+          metadata: { command: 'npm test' },
+          time: { created: Date.now() },
+        },
+      });
+
       const originalFetch = globalThis.fetch;
       const fetchSpy = vi.fn(async () => ({ ok: true }) as Response);
       globalThis.fetch = fetchSpy as any;
       try {
-        await (manager as any).handleSSEEvent({
-          type: 'permission.asked',
-          properties: {
-            id: 'perm-reply',
-            permission: 'Bash',
-            sessionID: 'oc-session-reply',
-            metadata: { command: 'npm test' },
-            time: { created: Date.now() },
-          },
-        });
-
         const handled = await manager.handleApprovalForward('oc-perm:perm-reply', 'approve');
 
         expect(handled).toBe(true);
@@ -196,22 +219,26 @@ describe('OpenCodeSessionManager event handling', () => {
       }
     });
 
-    it('replies to OpenCode approvals through the current permission endpoint', async () => {
+    it('replies to OpenCode approvals through the current permission endpoint (2nd)', async () => {
+      await registerOCSession(manager, 'oc-session-reply', 'server-oc-session-reply');
+      relay.sent.length = 0;
+      relay.sentEvents.length = 0;
+      // Prime the permission mapping
+      await (manager as any).handleSSEEvent({
+        type: 'permission.asked',
+        properties: {
+          id: 'perm-reply',
+          permission: 'Bash',
+          sessionID: 'oc-session-reply',
+          metadata: { command: 'npm test' },
+          time: { created: Date.now() },
+        },
+      });
+
       const originalFetch = globalThis.fetch;
       const fetchSpy = vi.fn(async () => ({ ok: true }) as Response);
       globalThis.fetch = fetchSpy as any;
       try {
-        await (manager as any).handleSSEEvent({
-          type: 'permission.asked',
-          properties: {
-            id: 'perm-reply',
-            permission: 'Bash',
-            sessionID: 'oc-session-reply',
-            metadata: { command: 'npm test' },
-            time: { created: Date.now() },
-          },
-        });
-
         const handled = await manager.handleApprovalForward('oc-perm:perm-reply', 'approve');
 
         expect(handled).toBe(true);
@@ -233,23 +260,27 @@ describe('OpenCodeSessionManager event handling', () => {
       // the phone's decision, the SSE may not have reconnected yet but the
       // fetch still needs the new port. Verify refreshOpenCodeUrl is called
       // and the fetch uses the new port.
+      await registerOCSession(manager, 'oc-session-rebind', 'server-oc-session-rebind');
+      relay.sent.length = 0;
+      relay.sentEvents.length = 0;
+      // Prime the permission mapping
+      await (manager as any).handleSSEEvent({
+        type: 'permission.asked',
+        properties: {
+          id: 'perm-rebind',
+          permission: 'Bash',
+          sessionID: 'oc-session-rebind',
+          metadata: { command: 'echo hi' },
+          time: { created: Date.now() },
+        },
+      });
+
       (discoverOpenCodePort as unknown as Mock).mockReturnValueOnce(20031);
       const refreshSpy = vi.spyOn(manager as any, 'refreshOpenCodeUrl');
       const originalFetch = globalThis.fetch;
       const fetchSpy = vi.fn(async () => ({ ok: true }) as Response);
       globalThis.fetch = fetchSpy as any;
       try {
-        await (manager as any).handleSSEEvent({
-          type: 'permission.asked',
-          properties: {
-            id: 'perm-rebind',
-            permission: 'Bash',
-            sessionID: 'oc-session-rebind',
-            metadata: { command: 'echo hi' },
-            time: { created: Date.now() },
-          },
-        });
-
         await manager.handleApprovalForward('oc-perm:perm-rebind', 'approve');
 
         expect(refreshSpy).toHaveBeenCalled();
@@ -265,23 +296,24 @@ describe('OpenCodeSessionManager event handling', () => {
     });
 
     it('error message includes the request URL (so phone can show why it failed)', async () => {
-      // The previous error was 'OpenCode reply returned 404' with no URL. If
-      // OpenCode renames the endpoint again, the user / dev needs to know
-      // which one. Verify the URL is in the error message.
+      await registerOCSession(manager, 'oc-session-fail', 'server-oc-session-fail');
+      relay.sent.length = 0;
+      relay.sentEvents.length = 0;
+      // Prime the permission mapping
+      await (manager as any).handleSSEEvent({
+        type: 'permission.asked',
+        properties: {
+          id: 'perm-fail',
+          permission: 'Bash',
+          sessionID: 'oc-session-fail',
+          metadata: { command: 'rm -rf /' },
+          time: { created: Date.now() },
+        },
+      });
+
       const originalFetch = globalThis.fetch;
       globalThis.fetch = vi.fn(async () => ({ status: 500, ok: false } as Response)) as any;
       try {
-        await (manager as any).handleSSEEvent({
-          type: 'permission.asked',
-          properties: {
-            id: 'perm-fail',
-            permission: 'Bash',
-            sessionID: 'oc-session-fail',
-            metadata: { command: 'rm -rf /' },
-            time: { created: Date.now() },
-          },
-        });
-
         await manager.handleApprovalForward('oc-perm:perm-fail', 'approve');
 
         // dump relay.sent for debugging if assertion fails
@@ -299,9 +331,11 @@ describe('OpenCodeSessionManager event handling', () => {
     });
 
     it('accepts permissionId/permission_id field names for requestID (defense vs OpenCode schema changes)', async () => {
-      // OpenCode renamed the requestID field in newer versions. Make sure
-      // we still extract a valid id from permissionId / permission_id and
-      // produce a bridge-level pending approval for the phone to see.
+      await registerOCSession(manager, 'oc-session-camel', 'server-oc-session-camel');
+      await registerOCSession(manager, 'oc-session-snake', 'server-oc-session-snake');
+      relay.sent.length = 0;
+      relay.sentEvents.length = 0;
+
       await (manager as any).handleSSEEvent({
         type: 'permission.asked',
         properties: {
@@ -329,6 +363,10 @@ describe('OpenCodeSessionManager event handling', () => {
     });
 
     it('clears local pending approval on permission.replied SSE', async () => {
+      await registerOCSession(manager, 'oc-session-replied', 'server-oc-session-replied');
+      relay.sent.length = 0;
+      relay.sentEvents.length = 0;
+
       await (manager as any).handleSSEEvent({
         type: 'permission.asked',
         properties: {
@@ -399,19 +437,8 @@ describe('OpenCodeSessionManager event handling', () => {
     });
 
     it('cleans up session on session.deleted', async () => {
-      // First register a session via permission
-      await (manager as any).handleSSEEvent({
-        type: 'permission.updated',
-        properties: {
-          id: 'perm-789',
-          type: 'Bash',
-          sessionID: 'oc-session-4',
-          messageID: 'msg-4',
-          title: 'Test',
-          metadata: {},
-          time: { created: Date.now() },
-        },
-      });
+      // First register a session via attachSession
+      await registerOCSession(manager, 'oc-session-4', 'server-oc-session-4');
       expect(manager.ownsSession('server-oc-session-4')).toBe(true);
 
       // Now delete it
@@ -690,21 +717,8 @@ describe('OpenCodeSessionManager event handling', () => {
 
   describe('message.part.updated', () => {
     it('forwards text part content to relay', async () => {
-      // First register session
-      await (manager as any).handleSSEEvent({
-        type: 'permission.updated',
-        properties: {
-          id: 'perm-text',
-          type: 'Bash',
-          sessionID: 'oc-session-5',
-          messageID: 'msg-5',
-          title: 'Test',
-          metadata: {},
-          time: { created: Date.now() },
-        },
-      });
-
-      relay.sent.length = 0; // Clear sent messages
+      await registerOCSession(manager, 'oc-session-5', 'server-oc-session-5');
+      relay.sent.length = 0;
       relay.sentEvents.length = 0;
 
       await (manager as any).handleSSEEvent({
@@ -730,19 +744,7 @@ describe('OpenCodeSessionManager event handling', () => {
     });
 
     it('forwards desktop user text parts as user_prompt, not agent task_complete', async () => {
-      await (manager as any).handleSSEEvent({
-        type: 'permission.updated',
-        properties: {
-          id: 'perm-user-part',
-          type: 'Bash',
-          sessionID: 'oc-session-user-part',
-          messageID: 'msg-user-part',
-          title: 'Test',
-          metadata: {},
-          time: { created: Date.now() },
-        },
-      });
-
+      await registerOCSession(manager, 'oc-session-user-part', 'server-oc-session-user-part');
       relay.sent.length = 0;
       relay.sentEvents.length = 0;
 
@@ -793,19 +795,7 @@ describe('OpenCodeSessionManager event handling', () => {
     });
 
     it('deduplicates same part ID', async () => {
-      await (manager as any).handleSSEEvent({
-        type: 'permission.updated',
-        properties: {
-          id: 'perm-dedup',
-          type: 'Bash',
-          sessionID: 'oc-session-6',
-          messageID: 'msg-6',
-          title: 'Test',
-          metadata: {},
-          time: { created: Date.now() },
-        },
-      });
-
+      await registerOCSession(manager, 'oc-session-6', 'server-oc-session-6');
       relay.sent.length = 0;
       relay.sentEvents.length = 0;
 
@@ -835,19 +825,7 @@ describe('OpenCodeSessionManager event handling', () => {
 
   describe('session.idle', () => {
     it('sends task_complete on session idle', async () => {
-      await (manager as any).handleSSEEvent({
-        type: 'permission.updated',
-        properties: {
-          id: 'perm-idle',
-          type: 'Bash',
-          sessionID: 'oc-session-7',
-          messageID: 'msg-7',
-          title: 'Test',
-          metadata: {},
-          time: { created: Date.now() },
-        },
-      });
-
+      await registerOCSession(manager, 'oc-session-7', 'server-oc-session-7');
       relay.sent.length = 0;
       relay.sentEvents.length = 0;
 
@@ -867,19 +845,7 @@ describe('OpenCodeSessionManager event handling', () => {
 
     it('surfaces error info from session.idle props as an error event', async () => {
       // Register a session mapping so onSessionIdle can resolve it.
-      await (manager as any).handleSSEEvent({
-        type: 'permission.updated',
-        properties: {
-          id: 'perm-idle-err',
-          type: 'Bash',
-          sessionID: 'oc-session-7e',
-          messageID: 'msg-7e',
-          title: 'Test',
-          metadata: {},
-          time: { created: Date.now() },
-        },
-      });
-
+      await registerOCSession(manager, 'oc-session-7e', 'server-oc-session-7e');
       relay.sent.length = 0;
       relay.sentEvents.length = 0;
 
@@ -963,20 +929,8 @@ describe('OpenCodeSessionManager event handling', () => {
 
   describe('message.part.updated — phone-sent text echo', () => {
     it('does NOT forward the echoed phone prompt as agent text', async () => {
-      // Register session mapping via permission event.
-      await (manager as any).handleSSEEvent({
-        type: 'permission.updated',
-        properties: {
-          id: 'perm-echo',
-          type: 'Bash',
-          sessionID: 'oc-session-echo',
-          messageID: 'msg-echo',
-          title: 'Test',
-          metadata: {},
-          time: { created: Date.now() },
-        },
-      });
-
+      // Register session mapping.
+      await registerOCSession(manager, 'oc-session-echo', 'server-oc-session-echo');
       relay.sent.length = 0;
       relay.sentEvents.length = 0;
 
@@ -1011,19 +965,7 @@ describe('OpenCodeSessionManager event handling', () => {
     });
 
     it('still forwards genuine agent text even after a phone command', async () => {
-      await (manager as any).handleSSEEvent({
-        type: 'permission.updated',
-        properties: {
-          id: 'perm-genuine',
-          type: 'Bash',
-          sessionID: 'oc-session-genuine',
-          messageID: 'msg-genuine',
-          title: 'Test',
-          metadata: {},
-          time: { created: Date.now() },
-        },
-      });
-
+      await registerOCSession(manager, 'oc-session-genuine', 'server-oc-session-genuine');
       relay.sent.length = 0;
       relay.sentEvents.length = 0;
 
@@ -1055,19 +997,7 @@ describe('OpenCodeSessionManager event handling', () => {
       // Regression guard: when message.part.updated fires before
       // message.updated for the same user input, the part handler must
       // not delete the entry that the message handler also needs.
-      await (manager as any).handleSSEEvent({
-        type: 'permission.updated',
-        properties: {
-          id: 'perm-multi',
-          type: 'Bash',
-          sessionID: 'oc-session-multi',
-          messageID: 'msg-multi',
-          title: 'Test',
-          metadata: {},
-          time: { created: Date.now() },
-        },
-      });
-
+      await registerOCSession(manager, 'oc-session-multi', 'server-oc-session-multi');
       relay.sent.length = 0;
       relay.sentEvents.length = 0;
 
@@ -1213,19 +1143,7 @@ describe('OpenCodeSessionManager event handling', () => {
     // "Session idle" task_complete with no summary.
 
     it('forwards the real text when the first text-part event is empty', async () => {
-      await (manager as any).handleSSEEvent({
-        type: 'permission.updated',
-        properties: {
-          id: 'perm-stream-empty',
-          type: 'Bash',
-          sessionID: 'oc-session-stream-empty',
-          messageID: 'msg-stream-empty',
-          title: 'Test',
-          metadata: {},
-          time: { created: Date.now() },
-        },
-      });
-
+      await registerOCSession(manager, 'oc-session-stream-empty', 'server-oc-session-stream-empty');
       relay.sent.length = 0;
       relay.sentEvents.length = 0;
 
@@ -1269,19 +1187,7 @@ describe('OpenCodeSessionManager event handling', () => {
     });
 
     it('forwards each streaming text chunk (different text per update)', async () => {
-      await (manager as any).handleSSEEvent({
-        type: 'permission.updated',
-        properties: {
-          id: 'perm-stream-chunks',
-          type: 'Bash',
-          sessionID: 'oc-session-stream-chunks',
-          messageID: 'msg-stream-chunks',
-          title: 'Test',
-          metadata: {},
-          time: { created: Date.now() },
-        },
-      });
-
+      await registerOCSession(manager, 'oc-session-stream-chunks', 'server-oc-session-stream-chunks');
       relay.sent.length = 0;
       relay.sentEvents.length = 0;
 
@@ -1318,19 +1224,7 @@ describe('OpenCodeSessionManager event handling', () => {
       // task_complete. We changed the dedup key to (partID, text)
       // so this is the explicit check that the new key still
       // suppresses exact duplicates.
-      await (manager as any).handleSSEEvent({
-        type: 'permission.updated',
-        properties: {
-          id: 'perm-dup-text',
-          type: 'Bash',
-          sessionID: 'oc-session-dup-text',
-          messageID: 'msg-dup-text',
-          title: 'Test',
-          metadata: {},
-          time: { created: Date.now() },
-        },
-      });
-
+      await registerOCSession(manager, 'oc-session-dup-text', 'server-oc-session-dup-text');
       relay.sent.length = 0;
       relay.sentEvents.length = 0;
 
@@ -1395,20 +1289,7 @@ describe('OpenCodeSessionManager event handling', () => {
 
   describe('input_required from message.part.updated with options', () => {
     it('creates input_required card when part.input has options', async () => {
-      // Setup: create a session via permission.updated first
-      await (manager as any).handleSSEEvent({
-        type: 'permission.updated',
-        properties: {
-          id: 'perm-oc-options',
-          type: 'Bash',
-          sessionID: 'oc-session-oc-options',
-          messageID: 'msg-oc-options',
-          title: 'Test',
-          metadata: {},
-          time: { created: Date.now() },
-        },
-      });
-
+      await registerOCSession(manager, 'oc-session-oc-options', 'server-oc-session-oc-options');
       relay.sent.length = 0;
       relay.sentEvents.length = 0;
 
@@ -1448,19 +1329,7 @@ describe('OpenCodeSessionManager event handling', () => {
     });
 
     it('creates input_required card when part.params has options (tool_use format)', async () => {
-      await (manager as any).handleSSEEvent({
-        type: 'permission.updated',
-        properties: {
-          id: 'perm-oc-tool',
-          type: 'Bash',
-          sessionID: 'oc-session-oc-tool',
-          messageID: 'msg-oc-tool',
-          title: 'Test',
-          metadata: {},
-          time: { created: Date.now() },
-        },
-      });
-
+      await registerOCSession(manager, 'oc-session-oc-tool', 'server-oc-session-oc-tool');
       relay.sent.length = 0;
       relay.sentEvents.length = 0;
 

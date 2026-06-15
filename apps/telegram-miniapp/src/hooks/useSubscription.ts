@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { userRequest } from '../api/client';
+import { UnboundDeviceError, userRequest } from '../api/client';
 import type { SubscriptionStatus } from '../api/types';
 
 export function useSubscription(enabled: boolean) {
@@ -14,7 +14,12 @@ export function useSubscription(enabled: boolean) {
     try {
       setSubscription(await userRequest<SubscriptionStatus>('/api/v1/subscription'));
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load subscription');
+      // /subscription is user-scoped (no clientToken needed), so an
+      // UnboundDeviceError here is unexpected — but if the worker proxy
+      // ever wraps it, treat as silent like the other hooks.
+      if (!(err instanceof UnboundDeviceError)) {
+        setError(err instanceof Error ? err.message : 'Failed to load subscription');
+      }
     } finally {
       setLoading(false);
     }

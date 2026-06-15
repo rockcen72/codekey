@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { randomUUID, createHash } from 'node:crypto';
 import { get as httpGet } from 'node:http';
 import { createEventStreamParser } from './sse-parser.js';
 import { ApprovalBridge } from './handler.js';
@@ -512,7 +512,11 @@ export class OpenCodeSessionManager {
     // Skip subagent sessions — their permissions belong to the parent session.
     if (this._subagentSessions.has(sessionID)) return;
 
-    const serverSessionId = await this.ensureRelaySession(sessionID);
+    const serverSessionId = this.opencodeSessionToRelayId.get(sessionID);
+    if (!serverSessionId) {
+      console.error('[opencode] permission event ignored for unsynced session %s', sessionID);
+      return;
+    }
 
     const command = permissionToCommand(permissionType, metadata);
     const rawRisk = this.bridge.evaluateRisk(command);
@@ -805,30 +809,17 @@ export class OpenCodeSessionManager {
     if (!sessionID || !messageID) return;
     let serverSessionId = this.opencodeSessionToRelayId.get(sessionID);
 
-    // Check for input_required BEFORE the unmapped-session gate — approvals
-    // need to auto-register (same as CC's handleApproval), but regular
-    // text/tool events for unmapped sessions must NOT create new relay
-    // sessions. Without this check, every assistant reply on any local
-    // OpenCode session would appear as a new session on the phone.
+    // Unmapped sessions must not create relay sessions. OpenCode is opt-in:
+    // the user must click Sync before any chat, permission, or input event
+    // leaves the desktop.
     const key = `part:${partID}`;
     const inputCard = tryFormatInputRequiredEvent(part, 'opencode')
       || tryFormatInputRequiredEvent(props, 'opencode');
 
     if (!serverSessionId) {
       if (inputCard && !this._subagentSessions.has(sessionID)) {
-        // Auto-register for approval events only — matches CC pattern
-        console.error('[opencode] onMessagePartUpdated: auto-registering session %s for input_required', sessionID);
-        this.ensureRelaySession(sessionID).then((sid) => {
-          this.bridge.sendEventToRelay(sid, {
-            clientEventId: inputCard.requestId || `oc-input:${partID || messageID}`,
-            sessionId: sid,
-            agent: 'opencode',
-            eventType: 'input_required',
-            data: inputCard,
-          }, "approval");
-        }).catch(() => {});
+        console.error('[opencode] input_required ignored for unsynced session %s', sessionID);
       }
-      // Skip all other events for unmapped sessions (text, tool, etc.)
       return;
     }
 
@@ -887,7 +878,7 @@ export class OpenCodeSessionManager {
       // in case OpenCode didn't include role in the part SSE event.
       const messageRole = getOpenCodeMessageRole(props, part)
         || this._messageRoles.get(messageID) as 'user' | 'assistant' | undefined;
-      console.error('[opencode] onMessagePartUpdated: role=%s text=%s', messageRole || 'unknown', text.slice(0, 80).replace(/\n/g, '\\n'));
+      console.error('[opencode] onMessagePartUpdated: role=%s len=%d hash=%s', messageRole || 'unknown', text.length, createHash('sha256').update(text).digest('hex').slice(0, 8));
       if (messageRole === 'user') {
         if (this._isRecentPhoneCommand(sessionID, text)) return;
         // Use info.time.created (cached from onMessageUpdated) when available

@@ -78,14 +78,7 @@
     <button class="unbind-btn" bindtap="unbindDevice">解绑设备</button>
   </view>
 
-  <view class="section about">
-    <text class="section-title">关于</text>
-    <text class="about-text">CodeKey v0.1.0</text>
-    <text class="about-text">AI 远程控制工具</text>
-    <text class="about-link" bindtap="goCryptoTest">加密验证 →</text>
-  </view>
-
-    <view class="section">
+  <view class="section">
     <text class="section-title">端到端加密</text>
     <view class="info-row">
       <text class="label">加密状态</text>
@@ -96,11 +89,11 @@
     <view wx:if="{{e2eStatus === 'stale'}}" class="e2e-hint stale-hint">
       <text>桌面端密钥已更新，请在电脑上重新配对手机以继续使用加密功能。</text>
     </view>
-    <block wx:if="{{debugScan}}">
-      <view style="margin-top:8px;padding:8px;background:#f5f5f5;font-family:monospace;font-size:11px;white-space:pre-wrap;word-break:break-all;color:#333">
-        <text>Last scan (debug):
-{{debugScan}}</text>
-      </view>
-    </block>
+  </view>
+
+  <view class="section about">
+    <text class="section-title">关于</text>
+    <text class="about-text">CodeKey v1.1.6</text>
+    <text class="about-text">AI 远程控制工具</text>
   </view>
 </view>

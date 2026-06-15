@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { randomUUID, createHash } from 'node:crypto';
 import { RelayClient } from './relay-client.js';
 import { CommandQueue } from './command-queue.js';
 import {
@@ -443,7 +443,7 @@ export class ApprovalBridge {
       this.sessions.set(localSessionId, knownServerSessionId);
     }
     const serverSessionId = existingServerSessionId
-      ?? await this.ensureSession(localSessionId, undefined, 'opencode', { agentType: 'opencode', runtime: 'opencode', title });
+      ?? await this.ensureSession(localSessionId, undefined, 'opencode_attach', { agentType: 'opencode', runtime: 'opencode', title });
     if (existingServerSessionId) {
       this.relay.sendRaw(JSON.stringify({
         type: 'attach_session',
@@ -1759,6 +1759,9 @@ export class ApprovalBridge {
       if (resolved === null) {
         if (payload.sealed_command) {
           console.error('[bridge] sealed_command decrypt failed for sessionId=%s', payload.sessionId);
+          if (payload.sessionId) {
+            this.sendErrorToRelay(payload.sessionId, 'E2E key mismatch — re-pair phone from desktop sidebar');
+          }
         }
         return;
       }
@@ -1827,7 +1830,7 @@ export class ApprovalBridge {
 
       // Resolve cwd so command-relay can launch CC in the correct project directory
       const cwd = claudeSessionId ? resolveTranscriptCwd(claudeSessionId) ?? undefined : undefined;
-      console.error('[bridge] command queued: sessionId=%s claudeSessionId=%s cwd=%s text=%s', payload.sessionId, claudeSessionId, cwd, payload.data);
+      console.error('[bridge] command queued: sessionId=%s claudeSessionId=%s cwd=%s len=%d hash=%s', payload.sessionId, claudeSessionId, cwd, payload.data.length, createHash('sha256').update(payload.data).digest('hex').slice(0, 8));
       this.commandQueue.push({
         id: randomUUID(),
         sessionId: payload.sessionId,
@@ -2319,7 +2322,7 @@ export class ApprovalBridge {
         for (const csid of this._opencodeAttachedIds) {
           if (!this.sessions.has(csid)) {
             console.error('[bridge] reconcile: re-registering opencode session %s', csid);
-            this.ensureSession(csid, undefined, 'opencode', { agentType: 'opencode', runtime: 'opencode' }).then((ssid) => {
+            this.ensureSession(csid, undefined, 'opencode_attach', { agentType: 'opencode', runtime: 'opencode' }).then((ssid) => {
               this._onOpenCodeRegistered?.(csid, ssid);
             }).catch((err) => {
               console.error('[bridge] reconcile: opencode re-register failed for %s: %s', csid, err);

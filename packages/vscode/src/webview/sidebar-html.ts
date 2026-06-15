@@ -383,7 +383,7 @@ function renderPrivacy(state: SidebarState): string {
 }
 
 const HISTORY_AGENTS: { key: string; label: string; labelZh: string }[] = [
-  { key: '*', label: 'Default (All agents)', labelZh: '默认（所有助手）' },
+  { key: '*', label: 'All agents', labelZh: '全局策略' },
   { key: 'claude-code-hook', label: 'Claude Code', labelZh: 'Claude Code' },
   { key: 'codex', label: 'Codex', labelZh: 'Codex' },
   { key: 'opencode', label: 'OpenCode', labelZh: 'OpenCode' },
@@ -400,10 +400,11 @@ export function renderHistoryPolicyContent(state: SidebarState): string {
     sanitized: i18n(state.lang, 'Summary', '任务摘要'),
   };
   const opts = ['off', 'recent', 'sanitized'];
+  const defaultPolicy = lookup.get('*')?.policy || 'off';
 
   return HISTORY_AGENTS.map(({ key, label, labelZh }) => {
     const entry = lookup.get(key);
-    const current = entry?.policy || 'off';
+    const current = key === '*' ? (entry?.policy || 'off') : (entry?.policy || defaultPolicy);
     const labelText = i18n(state.lang, label, labelZh);
     return `<div class="hp-row" data-hp-key="${key}">
       <span class="hp-label">${labelText}</span>
@@ -1294,6 +1295,13 @@ ${renderSubscribe(state)}
       var key = row ? row.dataset.hpKey : '';
       if (!key) return;
       var policy = target.value;
+      if (key === '*') {
+        document.querySelectorAll('.hp-select').forEach(function(select) {
+          if (select instanceof HTMLSelectElement && select.dataset.hpKey !== '*') {
+            select.value = policy;
+          }
+        });
+      }
       api.postMessage({ action: 'setHistoryPolicy', key: key, policy: policy });
       return;
     }
@@ -1681,7 +1689,6 @@ body{
 .redeem-status.err{color:var(--vscode-terminal-ansiRed,#e74c3c)}
 .redeem-hint{text-align:center;font-size:10px;color:var(--vscode-descriptionForeground,#888);margin-bottom:6px;line-height:1.4}
 .redeem-input:disabled{opacity:0.4;cursor:not-allowed}
-.redeem-btn:disabled{opacity:0.4;cursor:not-allowed}
 .qq-group-row{display:flex;align-items:center;justify-content:center;gap:4px;font-size:10px;margin-bottom:3px;color:var(--vscode-descriptionForeground,#888)}
 .qq-icon{font-size:9px;font-weight:600;background:var(--vscode-badge-background,#333);color:var(--vscode-badge-foreground,#fff);padding:0 3px;border-radius:2px;line-height:1.4}
 .qq-number{color:var(--vscode-descriptionForeground,#888)}

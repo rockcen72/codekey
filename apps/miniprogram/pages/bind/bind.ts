@@ -29,13 +29,10 @@ Page({
       if (keyId && contentKey) {
         saveContentKey(contentKey, keyId);
       }
-      // Bind this newly-paired device to the logged-in user. If the
-      // user hasn't logged in to WeChat yet (e.g. mini program opened
-      // first time on the bind page), ensureUserToken will run
-      // wx.login + claim-device in sequence. Non-fatal on failure:
-      // the user can still use the app, the next /api/subscription
-      // call will trigger a re-attempt.
-      ensureUserToken().catch((err) => {
+      // Wait for user/device binding before leaving this page. Subscription
+      // state is merged during claim-device; redirecting earlier can make the
+      // next page briefly render the old/free entitlement.
+      await ensureUserToken().catch((err) => {
         console.warn('[bind] ensureUserToken failed:', err);
       });
       app.destroyWs();

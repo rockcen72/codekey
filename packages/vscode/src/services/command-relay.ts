@@ -1,6 +1,6 @@
 import * as path from 'node:path';
 import * as fs from 'node:fs';
-import { execSync, spawn } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import * as vscode from 'vscode';
 import { classifyTerminal } from '../commands/start-claude.js';
 import { findCli } from '../cli.js';

@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { SessionCard } from '../components/SessionCard';
 import { SubscriptionPill } from '../components/SubscriptionPill';
 import { RedeemCode } from '../components/RedeemCode';
-import { userRequest } from '../api/client';
+import { UnboundDeviceError, userRequest } from '../api/client';
 import type { UserDevice } from '../api/types';
 import type { AuthState } from '../hooks/useAuth';
 import { useDevices } from '../hooks/useDevices';
@@ -41,9 +41,18 @@ export function SessionsPage({ auth }: Props) {
     try {
       await userRequest(`/api/v1/user/devices/${unbindTarget.id}`, { method: 'DELETE' });
       setUnbindTarget(null);
+      auth.clearBinding();
       await Promise.all([devices.refresh(), sessions.refresh()]);
     } catch (err) {
-      setUnbindError(err instanceof Error ? err.message : 'Unbind failed');
+      // The device is already unbound on the server (another platform
+      // took over, or the desktop unpaired) — clear local state and
+      // close the dialog without surfacing a noisy error.
+      if (err instanceof UnboundDeviceError) {
+        setUnbindTarget(null);
+        auth.clearBinding();
+      } else {
+        setUnbindError(err instanceof Error ? err.message : 'Unbind failed');
+      }
     } finally {
       setUnbindBusy(false);
     }

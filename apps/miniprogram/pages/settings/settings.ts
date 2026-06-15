@@ -1,4 +1,4 @@
-import { getDeviceId, clearAuth, getUserToken, getContentKey, getE2EStatus } from '../../services/storage';
+import { getDeviceId, clearAuth, getUserToken, getClientToken, getContentKey, getE2EStatus, getServerUrl } from '../../services/storage';
 import {
   getSubscription,
   redeemCode,
@@ -37,7 +37,6 @@ interface PageData {
   loaded: boolean;
   hasE2EKey: boolean;
   e2eStatus: 'enabled' | 'stale' | 'disabled';
-  debugScan: string;
 }
 
 Page({
@@ -56,22 +55,13 @@ Page({
     loaded: false,
     hasE2EKey: false,
     e2eStatus: 'disabled',
-    debugScan: '',
   } as PageData,
 
   onShow() {
-    let debugScan = '';
-    try {
-      const raw = wx.getStorageSync('CODEKEY_DEBUG_LAST_SCAN');
-      if (raw) debugScan = JSON.stringify(JSON.parse(raw), null, 2);
-    } catch (e) {
-      debugScan = '(parse error)';
-    }
     this.setData({
       deviceId: getDeviceId() || '',
       hasE2EKey: !!getContentKey(),
       e2eStatus: getE2EStatus(),
-      debugScan,
     });
     this.refreshSubscription();
   },
@@ -89,22 +79,44 @@ Page({
     wx.navigateBack();
   },
 
-  goCryptoTest() {
-    wx.navigateTo({ url: '/pages/crypto-test/crypto-test' });
-  },
-
   unbindDevice() {
     wx.showModal({
       title: '解绑设备',
       content: '确定要解绑此设备吗？',
       success: (res) => {
         if (res.confirm) {
-          // Local-only unbind: mini program uses clientToken which the
-          // server's DELETE /devices/:id endpoint does not accept.
-          // Clear local auth and disconnect WS.
-          clearAuth();
-          app.destroyWs();
-          wx.reLaunch({ url: '/pages/login/login' });
+          const deviceId = this.data.deviceId || getDeviceId();
+          const token = getUserToken();
+          const clientToken = getClientToken();
+          if (!deviceId || !token) {
+            wx.showToast({ title: '未登录', icon: 'none' });
+            return;
+          }
+          const base = getServerUrl();
+          const api = base.endsWith('/api/v1') ? base : `${base}/api/v1`;
+          wx.request({
+            method: 'DELETE',
+            url: `${api}/user/devices/${deviceId}`,
+            timeout: 10000,
+            header: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${token}`,
+              ...(clientToken ? { 'X-Codekey-Client-Token': clientToken } : {}),
+            },
+            success: (resp: any) => {
+              if (resp.statusCode >= 400) {
+                const message = resp.data?.error || '解绑失败';
+                wx.showToast({ title: message, icon: 'none' });
+                return;
+              }
+              clearAuth();
+              app.destroyWs();
+              wx.reLaunch({ url: '/pages/login/login' });
+            },
+            fail: () => {
+              wx.showToast({ title: '网络错误，解绑失败', icon: 'none' });
+            },
+          });
         }
       },
     });

@@ -1,14 +1,57 @@
 import { createApi } from '../../services/api';
-import { getServerUrl, getContentKey, getKeyId, getDeviceId, setE2EStatus } from '../../services/storage';
+import { getServerUrl, getContentKey, getKeyId, getDeviceId, getE2EStatus, getE2EState, setE2EStatus, setE2EState } from '../../services/storage';
 import { getSubscription, type UsageSnapshot } from '../../services/subscription';
+import { ensureUserToken } from '../../services/auth';
 import { decryptEventPayload, encryptCommandPayload, generateUUID } from '../../utils/crypto';
 
 const app = getApp<any>();
+
+interface LocalCommandMessage {
+  id: string;
+  content: string;
+  createdAt: string;
+}
 
 /** Module-level cache for decrypted event bodies. Decryption is deterministic
  *  + idempotent, so caching across re-polls is safe. */
 const decryptedEventCache = new Map<string, Record<string, any>>();
 const decryptionFailureLogged = new Set<string>();
+const localCommandCacheBySession = new Map<string, LocalCommandMessage[]>();
+let fetchDetailSeq = 0;
+
+function localCommandStorageKey(sessionId: string): string {
+  return `codekey_local_commands_${sessionId}`;
+}
+
+function loadLocalCommandMessages(sessionId: string): LocalCommandMessage[] {
+  if (!sessionId) return [];
+  const cached = localCommandCacheBySession.get(sessionId);
+  if (cached) return cached;
+  try {
+    const stored = wx.getStorageSync(localCommandStorageKey(sessionId));
+    if (Array.isArray(stored)) {
+      const messages = stored
+        .filter((item: any) => item && typeof item.id === 'string' && typeof item.content === 'string' && typeof item.createdAt === 'string')
+        .slice(-50);
+      localCommandCacheBySession.set(sessionId, messages);
+      return messages;
+    }
+  } catch (err) {
+    console.warn('[session-detail] load local commands failed:', err);
+  }
+  return [];
+}
+
+function saveLocalCommandMessages(sessionId: string, messages: LocalCommandMessage[]): void {
+  if (!sessionId) return;
+  const trimmed = messages.slice(-50);
+  localCommandCacheBySession.set(sessionId, trimmed);
+  try {
+    wx.setStorageSync(localCommandStorageKey(sessionId), trimmed);
+  } catch (err) {
+    console.warn('[session-detail] save local commands failed:', err);
+  }
+}
 
 /** Decrypt all encrypted events in-place. Mirrors Telegram SessionDetailPage's
  *  decryptEvents — see plan §5.3 / §5.4.
@@ -280,6 +323,7 @@ Page({
     session: null as any,
     events: [] as any[],
     chatMessages: [] as ChatMessage[],
+    localCommandMessages: [] as LocalCommandMessage[],
     replyTexts: {} as Record<string, string>,
     commandText: '',
     canSendCommand: false,
@@ -510,6 +554,7 @@ Page({
     // stays hidden, which is correct (we can't show a quota for
     // paid/trial when we don't know the tier).
     try {
+      await ensureUserToken();
       const sub = await getSubscription();
       const usage = sub.tier === 'free' ? sub.usage : null;
       const quotaState: 'hidden' | 'normal' | 'approaching' | 'exhausted' = !usage
@@ -529,6 +574,7 @@ Page({
   },
 
   async fetchDetail(options?: { scrollToEventId?: string }) {
+    const seq = ++fetchDetailSeq;
     try {
       const api = createApi(getServerUrl());
       const [session, rawEventsRaw] = await Promise.all([
@@ -539,21 +585,27 @@ Page({
       // Plan §5.3 / §5.4: decrypt sealed_payload events before downstream
       // logic touches them. Legacy plaintext events pass through untouched.
       const rawEvents = await decryptRawEvents(rawEventsRaw);
+      if (seq !== fetchDetailSeq) return;
 
       // Phase 4C: compute E2E status from the latest sealed event only.
       // Old historical events with a prior keyId do NOT pollute the status.
       {
         const ck = getContentKey();
         let status: 'enabled' | 'stale' | 'disabled';
+        let latestSealed: any;
         if (!ck) { status = 'disabled'; }
         else {
-          const latestSealed = rawEvents
+          latestSealed = rawEvents
             .filter((ev: any) => ev.sealed_payload)
             .sort((a: any, b: any) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())[0];
           status = latestSealed && latestSealed.data?.e2eKeyStale === true ? 'stale' : 'enabled';
         }
         this.setData({ e2eStatus: status });
-        setE2EStatus(status); // persist for Settings page
+        if (status === 'stale') {
+          setE2EState({ state: 'stale', localKeyId: getKeyId(), lastServerKeyId: latestSealed?.key_id ?? null });
+        } else {
+          setE2EStatus(status);
+        }
       }
 
       // Detect stale pending events: if a previously-pending event is no longer
@@ -600,7 +652,27 @@ Page({
 
   buildChatMessages(rawEvents: any[], scrollToEventId?: string) {
     // Keep relay insertion order so prompt replay stays before the approval it triggered.
-    const sorted = [...rawEvents].sort((a, b) => {
+    const cachedLocalCommands = loadLocalCommandMessages(this.data.sessionId);
+    if ((this.data.localCommandMessages || []).length !== cachedLocalCommands.length) {
+      this.setData({ localCommandMessages: cachedLocalCommands });
+    }
+    const localCommandMap = new Map<string, LocalCommandMessage>();
+    for (const message of cachedLocalCommands) localCommandMap.set(message.id, message);
+    for (const message of (this.data.localCommandMessages || [])) localCommandMap.set(message.id, message);
+    const localEvents = Array.from(localCommandMap.values())
+      .map((message: LocalCommandMessage) => ({
+        id: message.id,
+        type: 'user_prompt',
+        created_at: message.createdAt,
+        data: {
+          type: 'user_prompt',
+          prompt: message.content,
+          summary: message.content,
+          timestamp: message.createdAt,
+          localOnly: true,
+        },
+      }));
+    const sorted = [...rawEvents, ...localEvents].sort((a, b) => {
       if (a.created_at !== b.created_at) {
         return a.created_at < b.created_at ? -1 : 1;
       }
@@ -639,7 +711,7 @@ Page({
         // allowlist fields. Render placeholder instead of empty bubble.
         const placeholder = getEncryptedPlaceholder(e.data);
         const prompt = placeholder ?? (e.data?.prompt || e.data?.summary || '');
-        if (prompt === lastUserPrompt) continue;
+        if (prompt === lastUserPrompt && e.data?.localOnly !== true) continue;
         lastUserPrompt = prompt;
         const displayTime = e.data?.timestamp
           ? this.formatTime(e.data.timestamp)
@@ -913,6 +985,7 @@ Page({
     }
 
     flushPendingCommandStarted();
+    this.appendMissingLocalCommands(messages);
     if (messages.length > 0) {
       const pushedIdx = scrollToEventId
         ? messages.findIndex((m: ChatMessage) => m.eventId === scrollToEventId && m.type === 'ai')
@@ -956,6 +1029,40 @@ Page({
       }
     } else {
       this.setData({ chatMessages: messages, primaryPendingEvent: null, hasPrimaryPendingEvent: false });
+    }
+  },
+
+  appendMissingLocalCommands(messages: ChatMessage[]) {
+    const cachedLocalCommands = loadLocalCommandMessages(this.data.sessionId);
+    const localCommands = [...cachedLocalCommands, ...(this.data.localCommandMessages || [])];
+    if (localCommands.length === 0) return;
+
+    const existingIds = new Set(messages.map((message) => message.id));
+
+    for (const local of localCommands) {
+      if (existingIds.has(local.id)) continue;
+      messages.push({
+        id: local.id,
+        type: 'user',
+        side: 'right',
+        content: local.content,
+        displayTime: this.formatTime(local.createdAt),
+        typeLabel: '',
+        isTaskComplete: false,
+        command: '',
+        summary: local.content,
+        risk_level: '',
+        riskText: '',
+        pending: false,
+        decision: '',
+        decisionText: '',
+        canApprove: false,
+        eventId: local.id,
+        accent: 'neutral',
+        agentClass: 'unknown',
+        kindBadge: '',
+        senderName: '你',
+      });
     }
   },
 
@@ -1292,11 +1399,23 @@ Page({
     const keyId = getKeyId();
     const deviceId = getDeviceId();
 
+    const sentAt = new Date().toISOString();
+    const commandId = generateUUID();
+    const localCommandId = `local-command-${commandId}`;
     let payload: Record<string, unknown>;
 
     if (contentKeyHex && keyId && deviceId) {
+      const e2eState = getE2EState();
+      if (e2eState.state === 'stale') {
+        const sameSession = e2eState.lastToastSessionId === this.data.sessionId;
+        if (sameSession && Date.now() - e2eState.lastToastAt < 30_000) {
+          return;
+        }
+        setE2EState({ state: 'stale', localKeyId: keyId, lastToastAt: Date.now(), lastToastSessionId: this.data.sessionId });
+        wx.showToast({ title: 'E2E 密钥已过期，请在电脑上重新配对', icon: 'none' });
+        return;
+      }
       try {
-        const commandId = generateUUID();
         const envelope = await encryptCommandPayload(
           text, contentKeyHex, keyId, deviceId, this.data.sessionId, commandId,
         );
@@ -1322,31 +1441,36 @@ Page({
       payload,
     });
 
-    const localStatusId = 'local-command-status-' + Date.now();
+    const localCommandMessages = [
+      ...loadLocalCommandMessages(this.data.sessionId),
+      { id: localCommandId, content: text, createdAt: sentAt },
+    ].slice(-50);
+    saveLocalCommandMessages(this.data.sessionId, localCommandMessages);
     const messages = [...this.data.chatMessages, {
-      id: localStatusId,
-      type: 'system',
-      side: 'left',
-      content: '已发送，等待电脑端接收...',
-      displayTime: this.formatTime(new Date().toISOString()),
+      id: localCommandId,
+      type: 'user',
+      side: 'right',
+      content: text,
+      displayTime: this.formatTime(sentAt),
       typeLabel: '',
       isTaskComplete: false,
       command: '',
-      summary: '',
+      summary: text,
       risk_level: '',
       riskText: '',
       pending: false,
       decision: '',
       decisionText: '',
       canApprove: false,
-      eventId: localStatusId,
+      eventId: localCommandId,
       accent: 'neutral',
       agentClass: 'unknown',
       kindBadge: '',
-      senderName: '',
+      senderName: '你',
     } as ChatMessage];
 
     this.setData({
+      localCommandMessages,
       commandText: '',
       canSendCommand: false,
       chatMessages: messages,
@@ -1354,7 +1478,7 @@ Page({
       scrollToId: '',
     }, () => {
       this.setData({
-        scrollToId: 'msg-' + localStatusId,
+        scrollToId: 'msg-' + localCommandId,
         scrollTop: Date.now(),
       });
     });

@@ -9,6 +9,31 @@ const KEYS = {
   E2E_STATUS: 'CODEKEY_E2E_STATUS',
 };
 
+export interface E2EState {
+  state: 'enabled' | 'stale' | 'disabled';
+  lastServerKeyId: string | null;
+  localKeyId: string | null;
+  at: number;
+  lastToastAt: number;
+  lastToastSessionId: string | null;
+}
+
+const DEFAULT_E2E_STATE: E2EState = {
+  state: 'disabled',
+  lastServerKeyId: null,
+  localKeyId: null,
+  at: 0,
+  lastToastAt: 0,
+  lastToastSessionId: null,
+};
+
+function parseE2EState(raw: unknown): E2EState {
+  if (!raw) return { ...DEFAULT_E2E_STATE };
+  if (typeof raw === 'object') return { ...DEFAULT_E2E_STATE, ...raw as any };
+  try { return { ...DEFAULT_E2E_STATE, ...JSON.parse(raw as string) }; }
+  catch { return { state: raw as any || 'disabled', lastServerKeyId: null, localKeyId: null, at: Date.now(), lastToastAt: 0, lastToastSessionId: null }; }
+}
+
 export function saveAuth(clientToken: string, deviceId: string): void {
   wx.setStorageSync(KEYS.CLIENT_TOKEN, clientToken);
   wx.setStorageSync(KEYS.DEVICE_ID, deviceId);
@@ -25,7 +50,14 @@ export function getDeviceId(): string | null {
 export function saveContentKey(contentKeyHex: string, keyId: string): void {
   wx.setStorageSync(KEYS.CONTENT_KEY, contentKeyHex);
   wx.setStorageSync(KEYS.KEY_ID, keyId);
-  if (contentKeyHex) setE2EStatus('enabled'); // re-pair resets stale → enabled
+  if (contentKeyHex) {
+    const current = getE2EState();
+    current.state = 'enabled';
+    current.localKeyId = keyId || current.localKeyId;
+    current.lastServerKeyId = keyId || current.lastServerKeyId;
+    current.at = Date.now();
+    wx.setStorageSync(KEYS.E2E_STATUS, current);
+  }
 }
 
 export function getContentKey(): string | null {
@@ -37,11 +69,24 @@ export function getKeyId(): string | null {
 }
 
 export function getE2EStatus(): 'enabled' | 'stale' | 'disabled' {
-  return (wx.getStorageSync(KEYS.E2E_STATUS) as 'enabled' | 'stale' | 'disabled') || 'disabled';
+  return getE2EState().state;
 }
 
 export function setE2EStatus(status: 'enabled' | 'stale' | 'disabled'): void {
-  wx.setStorageSync(KEYS.E2E_STATUS, status);
+  const current = getE2EState();
+  current.state = status;
+  current.at = Date.now();
+  wx.setStorageSync(KEYS.E2E_STATUS, current);
+}
+
+export function getE2EState(): E2EState {
+  return parseE2EState(wx.getStorageSync(KEYS.E2E_STATUS));
+}
+
+export function setE2EState(partial: Partial<E2EState> & { state: 'enabled' | 'stale' | 'disabled' }): void {
+  const current = getE2EState();
+  Object.assign(current, partial, { at: Date.now() });
+  wx.setStorageSync(KEYS.E2E_STATUS, current);
 }
 
 export function clearContentKey(): void {

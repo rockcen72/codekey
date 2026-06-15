@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { userRequest } from '../api/client';
+import { UnboundDeviceError, userRequest } from '../api/client';
 import type { UserDevice } from '../api/types';
 import type { AuthState } from '../hooks/useAuth';
 import { useDevices } from '../hooks/useDevices';
@@ -31,9 +31,16 @@ export function SettingsPage({ auth }: Props) {
     try {
       await userRequest(`/api/v1/user/devices/${unbindTarget.id}`, { method: 'DELETE' });
       setUnbindTarget(null);
+      auth.clearBinding();
       await devices.refresh();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unbind failed');
+      // Already unbound on the server — clear local state silently.
+      if (err instanceof UnboundDeviceError) {
+        setUnbindTarget(null);
+        auth.clearBinding();
+      } else {
+        setError(err instanceof Error ? err.message : 'Unbind failed');
+      }
     } finally {
       setBusy(false);
     }

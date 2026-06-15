@@ -1,6 +1,7 @@
 import { type Session, createApi } from '../../services/api';
 import { getServerUrl } from '../../services/storage';
 import { getSubscription, type UsageSnapshot } from '../../services/subscription';
+import { ensureUserToken } from '../../services/auth';
 
 const app = getApp<any>();
 
@@ -284,6 +285,7 @@ Page({
     // exhausted cutoffs. Silently no-ops on auth/network failure
     // — the pill just stays hidden, which is correct.
     try {
+      await ensureUserToken();
       const sub = await getSubscription();
       const tier = sub.tier;
       const daysRemaining = sub.expiresAt
