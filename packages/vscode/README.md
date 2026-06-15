@@ -4,7 +4,7 @@
 
 **AI coding remote control for your phone**
 
-Remote control for AI agents, with E2E-protected prompts and local-first privacy controls.
+Remote control for AI agents, with E2E-protected prompts, commands, task summaries, and local-first privacy controls.
 
 ---
 
@@ -17,7 +17,7 @@ CodeKey moves those waiting points from your desktop to your phone.
 - Send follow-up prompts from your phone
 - Manage local Claude Code, Codex, and OpenCode sessions in one VS Code sidebar
 - Control history sharing per agent
-- Protect user prompts and phone-to-desktop commands with E2E encryption when paired
+- Protect user prompts, phone-to-desktop commands, and task completion summaries with E2E encryption when paired
 - Redact secrets and block sensitive paths before anything leaves your machine
 
 ## At a glance
@@ -58,7 +58,7 @@ CodeKey moves those waiting points from your desktop to your phone.
 | Remote prompts | Type a prompt on mobile and your local VS Code agent continues the task. |
 | Session sync | View local agent sessions by runtime, status, and recent activity. |
 | VS Code control panel | Pair devices, manage sync, inspect local sessions, and watch approval cards from the sidebar. |
-| E2E encryption | User-entered prompts and phone-to-desktop commands are encrypted before they pass through the relay. |
+| E2E encryption | User-entered prompts, phone-to-desktop commands, and task completion summaries are encrypted before they pass through the relay. |
 | Mobile apps | Works with WeChat Mini Program and Telegram Mini App. |
 
 ## Privacy protection
@@ -67,12 +67,12 @@ CodeKey combines end-to-end encryption with a local privacy pipeline before
 anything is forwarded to the relay server. You decide how much session history,
 if any, is visible on mobile.
 
-When E2E is enabled, user-entered prompt bodies and phone-to-desktop command
-text are sealed with AES-GCM on the sending device. Telegram pairing derives the
-shared content key with ECDH; WeChat QR pairing carries the content key directly
-to the phone. The relay forwards encrypted envelopes (`sealed_payload` /
-`sealed_command`) and routing metadata, but it does not receive the raw prompt or
-command text for those protected paths.
+When E2E is enabled, user-entered prompt bodies, phone-to-desktop command text,
+and task completion summaries/results are sealed with AES-GCM on the sending
+device. Telegram pairing derives the shared content key with ECDH; WeChat QR
+pairing carries the content key directly to the phone. The relay forwards
+encrypted envelopes (`sealed_payload` / `sealed_command`) and routing metadata,
+but it does not receive the raw text for those protected paths.
 
 | Mode | What mobile can see | Best for |
 | --- | --- | --- |
@@ -82,7 +82,7 @@ command text for those protected paths.
 
 Privacy controls include:
 
-- End-to-end encryption: protect user prompts and mobile commands from relay-side plaintext storage
+- End-to-end encryption: protect user prompts, mobile commands, and task completion summaries from relay-side plaintext storage
 - Secret scanning: redact API keys, tokens, passwords, and similar sensitive values locally
 - Blocklist / `.codekeyignore`: prevent selected files and paths from being forwarded
 - Field projection: Summary mode keeps only safe event type, state, and summary fields
@@ -93,7 +93,7 @@ Privacy controls include:
 Important boundaries:
 
 - Approval and input cards still send the content required for you to approve, deny, or reply from mobile.
-- E2E currently protects user prompt / command bodies. Agent output and broader history visibility still depend on your Off / Summary / Full policy.
+- E2E currently protects user prompt bodies, mobile command bodies, and task completion summaries/results. Intermediate agent streaming output and broader history visibility still depend on your Off / Summary / Full policy.
 - Summary mode reduces history detail with safe summaries and field projection.
 - Full mode is intended for convenience and observability; do not enable it for repositories where remote history visibility is not acceptable.
 

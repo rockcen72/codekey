@@ -380,11 +380,11 @@
           <h1>Code<span>Key</span></h1>
           <p class="lead lang-en">
             Approve, monitor, and continue Claude Code, Codex, and OpenCode from your phone.
-            Your desktop agent keeps working, while E2E-protected prompts and history sharing stay under your control.
+            Your desktop agent keeps working, while E2E-protected prompts, commands, task summaries, and history sharing stay under your control.
           </p>
           <p class="lead lang-zh">
             在手机上审批、查看和接续 Claude Code、Codex、OpenCode。
-            桌面端继续执行，用户 prompt 的 E2E 加密、历史同步和隐私策略都由你控制。
+            桌面端继续执行，用户 prompt、手机命令、任务总结的 E2E 加密，以及历史同步和隐私策略都由你控制。
           </p>
           <div class="hero-actions">
             <a class="button primary lang-en" href="#quick-start">Get started</a>
@@ -395,7 +395,7 @@
           <div class="proof">
             <div><strong>3</strong><span>agent integrations</span></div>
             <div><strong>Off / Summary / Full</strong><span>history policies</span></div>
-            <div><strong>E2E</strong><span>prompt and command sealing</span></div>
+            <div><strong>E2E</strong><span>prompt, command, and summary sealing</span></div>
           </div>
         </div>
         <div class="device-stack">
@@ -451,8 +451,8 @@
           <div class="feature accent-green">
             <b class="lang-en">E2E protected content</b>
             <b class="lang-zh">E2E 内容保护</b>
-            <p class="lang-en">User prompts and phone-to-desktop commands are encrypted before relay forwarding.</p>
-            <p class="lang-zh">用户 prompt 和手机发往电脑的命令会先加密，再经过 relay 转发。</p>
+            <p class="lang-en">User prompts, phone-to-desktop commands, and task summaries are encrypted before relay forwarding.</p>
+            <p class="lang-zh">用户 prompt、手机发往电脑的命令、任务总结会先加密，再经过 relay 转发。</p>
           </div>
         </div>
       </section>
@@ -462,11 +462,11 @@
           <h2 class="lang-en">Privacy is a product feature, not a slogan</h2>
           <h2 class="lang-zh">隐私保护是产品能力，不是标语</h2>
           <p class="lang-en">
-            Remote control requires relay forwarding. CodeKey encrypts user prompt and command bodies,
+            Remote control requires relay forwarding. CodeKey encrypts user prompt bodies, command bodies, and task summaries,
             projects safe summaries, and blocks sensitive events locally before sharing the history level you choose.
           </p>
           <p class="lang-zh">
-            远程控制需要 relay 转发消息，但 CodeKey 会先加密用户 prompt 和命令正文，
+            远程控制需要 relay 转发消息，但 CodeKey 会先加密用户 prompt、命令正文和任务总结，
             再在本机做安全摘要、策略判断、脱敏和拦截，最后只按你选择的历史级别同步。
           </p>
         </div>
@@ -489,41 +489,41 @@
                 </tr>
                 <tr>
                   <td><strong>Summary</strong></td>
-                  <td class="lang-en">Safe status summaries. Raw user prompts stay sealed when E2E is enabled.</td>
-                  <td class="lang-zh">同步安全摘要和状态；启用 E2E 时原始用户 prompt 保持密文。</td>
+                  <td class="lang-en">Safe status summaries. Raw user prompts and task completion content stay sealed when E2E is enabled.</td>
+                  <td class="lang-zh">同步安全摘要和状态；启用 E2E 时原始用户 prompt 和任务完成内容保持密文。</td>
                 </tr>
                 <tr>
                   <td><strong>Full</strong></td>
-                  <td class="lang-en">Richer history after local scanning. User prompt and mobile command bodies remain encrypted on protected paths.</td>
-                  <td class="lang-zh">同步更完整的会话历史；受保护路径中的用户 prompt 和手机命令正文仍保持加密。</td>
+                  <td class="lang-en">Richer history after local scanning. User prompts, mobile commands, and task summaries remain encrypted on protected paths.</td>
+                  <td class="lang-zh">同步更完整的会话历史；受保护路径中的用户 prompt、手机命令和任务总结仍保持加密。</td>
                 </tr>
               </tbody>
             </table>
           </div>
           <div class="steps">
             <ul class="lang-en">
-              <li>E2E envelopes seal user prompt bodies and phone-to-desktop command text with AES-GCM.</li>
+              <li>E2E envelopes seal user prompt bodies, phone-to-desktop command text, and task completion summaries/results with AES-GCM.</li>
               <li>Telegram pairing uses ECDH key exchange; WeChat QR pairing transfers the content key directly to the phone.</li>
-              <li>The relay forwards encrypted payloads and routing metadata; it does not need raw prompt or command text for protected paths.</li>
+              <li>The relay forwards encrypted payloads and routing metadata; it does not need raw protected text for protected paths.</li>
               <li>Secret scanning redacts API keys, tokens, passwords, and similar values locally.</li>
               <li>Blocklist / .codekeyignore prevents selected files and paths from being forwarded.</li>
               <li>Field projection keeps Summary mode limited to safe event type, state, and summary fields.</li>
               <li>Audit panel shows forwarded, blocked, and sanitized event counts in the sidebar.</li>
               <li>Per-agent policy lets Claude Code, Codex, and OpenCode use different history modes.</li>
               <li>Stale-key detection warns the phone when it needs to re-pair after key rotation.</li>
-              <li>Agent output and broader history visibility still follow the Off / Summary / Full policy you choose.</li>
+              <li>Intermediate agent streaming output and broader history visibility still follow the Off / Summary / Full policy you choose.</li>
             </ul>
             <ul class="lang-zh">
-              <li>E2E envelope：用户 prompt 正文、手机发往电脑的命令正文使用 AES-GCM 加密。</li>
+              <li>E2E envelope：用户 prompt 正文、手机发往电脑的命令正文、任务完成总结/结果使用 AES-GCM 加密。</li>
               <li>Telegram 配对使用 ECDH 交换密钥；微信扫码配对把 content key 直接交给手机。</li>
-              <li>Relay 只转发密文和路由 metadata，受保护路径不需要看到原始 prompt 或命令正文。</li>
+              <li>Relay 只转发密文和路由 metadata，受保护路径不需要看到原始受保护正文。</li>
               <li>Secret scanning：API key、token、password 等敏感字段先脱敏。</li>
               <li>Blocklist / .codekeyignore：指定路径和文件不会被转发。</li>
               <li>Field projection：Summary 模式只保留类型、状态和安全摘要。</li>
               <li>Audit panel：侧栏展示 forwarded、blocked、sanitized 的统计和原因。</li>
               <li>Per-agent policy：每个 agent 可独立设置历史同步模式。</li>
               <li>Stale-key 检测：密钥轮换后，手机端会提示需要重新配对。</li>
-              <li>Agent 输出和更广泛的历史可见性仍由 Off / Summary / Full 策略控制。</li>
+              <li>过程中的 agent 流式输出和更广泛的历史可见性仍由 Off / Summary / Full 策略控制。</li>
             </ul>
           </div>
         </div>
