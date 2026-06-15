@@ -4,6 +4,7 @@ import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { ApprovalBridge } from '../bridge/handler.js';
+import { decryptEventPayload } from '../bridge/event-envelope.js';
 import { discoverLocalOpenCodeSessions, OpenCodeSessionManager } from '../bridge/opencode-session-manager.js';
 import { HistorySharePolicy, setConfig } from '../bridge/history-policy.js';
 
@@ -1522,6 +1523,90 @@ describe('OpenCodeSessionManager event handling', () => {
       } finally {
         globalThis.fetch = originalFetch;
       }
+    });
+  });
+
+  describe('task_complete E2E encryption (live paths)', () => {
+    const TEST_KEY = 'a'.repeat(64);
+    const TEST_KEY_ID = 'keyid-tc-oc-test';
+    const TEST_DEVICE = 'device-tc-oc-test';
+
+    it('encrypts task_complete from real-time assistant text part (L921)', async () => {
+      await registerOCSession(manager, 'oc-session-tc-rt', 'server-oc-session-tc-rt');
+      bridge.setContentKey(TEST_KEY, TEST_KEY_ID, TEST_DEVICE);
+      relay.sent.length = 0;
+      relay.sentEvents.length = 0;
+
+      await (manager as any).handleSSEEvent({
+        type: 'message.part.updated',
+        properties: {
+          part: {
+            id: 'part-rt-1',
+            sessionID: 'oc-session-tc-rt',
+            messageID: 'msg-rt-1',
+            type: 'text',
+            text: 'Secret agent output',
+          },
+        },
+      });
+
+      const events = relay.sentEvents as any[];
+      const tc = events.find((e: any) => e.payload?.eventType === 'task_complete');
+      expect(tc).toBeDefined();
+      expect(tc.payload.sealed_payload).toBeDefined();
+      expect(typeof tc.payload.sealed_payload).toBe('string');
+      expect(tc.payload.data.encrypted).toBe(true);
+      // Plaintext must not leak in raw bytes
+      const raw = relay.sent.find((s: string) => s.includes('server-oc-session-tc-rt'));
+      expect(raw).toBeDefined();
+      expect(raw).not.toContain('Secret agent output');
+    });
+
+    it('encrypts task_complete from session idle (L651)', async () => {
+      await registerOCSession(manager, 'oc-session-tc-idle', 'server-oc-session-tc-idle');
+      bridge.setContentKey(TEST_KEY, TEST_KEY_ID, TEST_DEVICE);
+      relay.sent.length = 0;
+      relay.sentEvents.length = 0;
+
+      await (manager as any).handleSSEEvent({
+        type: 'session.idle',
+        properties: { sessionID: 'oc-session-tc-idle' },
+      });
+
+      const events = relay.sentEvents as any[];
+      const tc = events.find((e: any) => e.payload?.eventType === 'task_complete');
+      expect(tc).toBeDefined();
+      expect(tc.payload.sealed_payload).toBeDefined();
+      expect(typeof tc.payload.sealed_payload).toBe('string');
+      expect(tc.payload.data.encrypted).toBe(true);
+    });
+
+    it('encrypts task_complete from tool complete (L946)', async () => {
+      await registerOCSession(manager, 'oc-session-tc-tool', 'server-oc-session-tc-tool');
+      bridge.setContentKey(TEST_KEY, TEST_KEY_ID, TEST_DEVICE);
+      relay.sent.length = 0;
+      relay.sentEvents.length = 0;
+
+      await (manager as any).handleSSEEvent({
+        type: 'message.part.updated',
+        properties: {
+          part: {
+            id: 'part-tool-1',
+            sessionID: 'oc-session-tc-tool',
+            messageID: 'msg-tool-1',
+            type: 'tool',
+            tool: 'Bash',
+            state: { status: 'completed', title: 'Bash: echo secret' },
+          },
+        },
+      });
+
+      const events = relay.sentEvents as any[];
+      const tc = events.find((e: any) => e.payload?.eventType === 'task_complete');
+      expect(tc).toBeDefined();
+      expect(tc.payload.sealed_payload).toBeDefined();
+      expect(typeof tc.payload.sealed_payload).toBe('string');
+      expect(tc.payload.data.encrypted).toBe(true);
     });
   });
 });

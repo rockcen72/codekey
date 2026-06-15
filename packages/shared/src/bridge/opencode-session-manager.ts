@@ -648,15 +648,17 @@ export class OpenCodeSessionManager {
       }
     }
 
-    const idleRaw = JSON.stringify({ type: 'event', payload: {
+    const idleEncrypted = this.bridge.encryptOutboundPayload({
       sessionId: serverSessionId,
+      clientEventId: `oc-idle:${sessionID}:${Date.now()}`,
       agent: 'opencode',
       eventType: 'task_complete',
       data: {
         type: 'task_complete',
         summary: errorObj ? (errorObj.message as string) || 'Session idle with error' : 'Session idle',
       },
-    }});
+    });
+    const idleRaw = JSON.stringify({ type: 'event', payload: idleEncrypted });
     const idleProjected = projectHistoryEventForPolicy(idleRaw, policy);
     if (idleProjected !== null) {
       this.bridge.privacyCheckAndSend('transcript', idleProjected, undefined, undefined);
@@ -918,7 +920,7 @@ export class OpenCodeSessionManager {
         const taskTs = taskCreatedMs !== undefined
           ? new Date(taskCreatedMs).toISOString()
           : new Date().toISOString();
-        const raw = JSON.stringify({ type: 'event', payload: {
+        const encryptedPayload = this.bridge.encryptOutboundPayload({
           clientEventId: `oc-part:${partID}:${Date.now()}`,
           sessionId: serverSessionId,
           agent: 'opencode',
@@ -930,7 +932,8 @@ export class OpenCodeSessionManager {
             output: text,
           },
           ts: taskTs,
-        }});
+        });
+        const raw = JSON.stringify({ type: 'event', payload: encryptedPayload });
         const projected = projectHistoryEventForPolicy(raw, policy);
         if (projected !== null) {
           this.bridge.privacyCheckAndSend('transcript', projected, undefined, undefined);
@@ -943,15 +946,17 @@ export class OpenCodeSessionManager {
         const title = (state.title as string) || (part.tool as string) || 'Tool completed';
         const policy = checkHistoryPolicy(sessionID, 'opencode');
         if (!policy.allowed) return;
-        const rawTool = JSON.stringify({ type: 'event', payload: {
+        const toolEncrypted = this.bridge.encryptOutboundPayload({
           sessionId: serverSessionId,
+          clientEventId: `oc-tool:${sessionID}:${partID || 'unknown'}:${Date.now()}`,
           agent: 'opencode',
           eventType: 'task_complete',
           data: {
             type: 'task_complete',
             summary: title,
           },
-        }});
+        });
+        const rawTool = JSON.stringify({ type: 'event', payload: toolEncrypted });
         const projectedTool = projectHistoryEventForPolicy(rawTool, policy);
         if (projectedTool !== null) {
           this.bridge.privacyCheckAndSend('transcript', projectedTool, undefined, undefined);

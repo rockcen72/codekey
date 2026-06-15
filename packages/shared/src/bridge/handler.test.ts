@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ApprovalBridge } from './handler.js';
+import { decryptEventPayload } from './event-envelope.js';
 import { OpenCodeSessionManager } from './opencode-session-manager.js';
 import { HistorySharePolicy, setConfig } from './history-policy.js';
 
@@ -1606,7 +1607,7 @@ describe('outbound encryption invariants', () => {
     expect(parsed.payload.data.prompt).toBe('plaintext ok');
   });
 
-  it('non-encryptable event types (task_complete) pass through unchanged when key is set', () => {
+  it('task_complete events from sendEventToRelay get encrypted when content key is set', () => {
     const relay = new FakeRelay();
     const bridge = new ApprovalBridge(relay as any);
     bridge.setContentKey(TEST_KEY, TEST_KEY_ID, TEST_DEVICE);
@@ -1623,9 +1624,15 @@ describe('outbound encryption invariants', () => {
     const sent = relay.sent.find((s) => s.includes('cevt:tc:1'));
     expect(sent).toBeDefined();
     const parsed = JSON.parse(sent!);
-    // task_complete is NOT in ENCRYPTABLE_EVENT_TYPES (Phase 4 scope = user_prompt only)
-    expect(parsed.payload.sealed_payload).toBeUndefined();
-    expect(parsed.payload.data.summary).toBe('done');
+    // task_complete is now in ENCRYPTABLE_EVENT_TYPES
+    expect(parsed.payload.sealed_payload).toBeDefined();
+    expect(typeof parsed.payload.sealed_payload).toBe('string');
+    expect(parsed.payload.key_id).toBe(TEST_KEY_ID);
+    expect(parsed.payload.encryption_version).toBe(1);
+    expect(parsed.payload.data).toMatchObject({ type: 'task_complete', encrypted: true, safe_summary: 'Task complete' });
+    // Secret must not leak
+    expect(sent).not.toContain('done');
+    expect(sent).not.toContain('all good');
   });
 
   it('encryptOutboundPayload public hook mirrors private path (used by external session managers)', () => {
@@ -1768,5 +1775,112 @@ describe('outbound encryption invariants', () => {
     expect((out as any).data.prompt).toBe('plaintext ok');
     expect((out as any).sealed_payload).toBeUndefined();
     expect((out as any).encryption_error).toBeUndefined();
+  });
+
+  it('task_complete roundtrip: decrypt matches input', () => {
+    const relay = new FakeRelay();
+    const bridge = new ApprovalBridge(relay as any);
+    bridge.setContentKey(TEST_KEY, TEST_KEY_ID, TEST_DEVICE);
+
+    const INPUT_DATA = { type: 'task_complete', summary: 'Roundtrip test', output: 'complete' };
+    bridge.sendEventToRelay('srv-rt', {
+      clientEventId: 'cevt:rt:1',
+      sessionId: 'srv-rt',
+      agent: 'opencode',
+      eventType: 'task_complete',
+      data: INPUT_DATA,
+      ts: '2026-06-14T00:00:00.000Z',
+    }, 'transcript');
+
+    const sent = relay.sent.find((s) => s.includes('cevt:rt:1'));
+    expect(sent).toBeDefined();
+    const parsed = JSON.parse(sent!);
+
+    const decrypted = decryptEventPayload(
+      parsed.payload.sealed_payload as string,
+      parsed.payload.data as Record<string, unknown>,
+      TEST_KEY,
+      {
+        v: 1,
+        keyId: TEST_KEY_ID,
+        deviceId: TEST_DEVICE,
+        sessionId: 'srv-rt',
+        eventId: 'cevt:rt:1',
+        eventType: 'task_complete',
+      },
+    );
+    expect(decrypted.summary).toBe('Roundtrip test');
+    expect(decrypted.output).toBe('complete');
+  });
+
+  it('task_complete without safe_summary gets it auto-injected after encryption', () => {
+    const relay = new FakeRelay();
+    const bridge = new ApprovalBridge(relay as any);
+    bridge.setContentKey(TEST_KEY, TEST_KEY_ID, TEST_DEVICE);
+
+    bridge.sendEventToRelay('srv-si', {
+      clientEventId: 'cevt:si:1',
+      sessionId: 'srv-si',
+      agent: 'opencode',
+      eventType: 'task_complete',
+      data: { type: 'task_complete', output: 'no summary field' },
+      ts: '2026-06-14T00:00:00.000Z',
+    }, 'transcript');
+
+    const sent = relay.sent.find((s) => s.includes('cevt:si:1'));
+    expect(sent).toBeDefined();
+    const parsed = JSON.parse(sent!);
+    expect(parsed.payload.data.safe_summary).toBe('Task complete');
+    expect(parsed.payload.data.encrypted).toBe(true);
+  });
+
+  it('AAD eventType isolation: task_complete AAD differs from user_prompt AAD', () => {
+    const relay = new FakeRelay();
+    const bridge = new ApprovalBridge(relay as any);
+    bridge.setContentKey(TEST_KEY, TEST_KEY_ID, TEST_DEVICE);
+
+    bridge.sendEventToRelay('srv-aad', {
+      clientEventId: 'cevt:aad:1',
+      sessionId: 'srv-aad',
+      agent: 'opencode',
+      eventType: 'task_complete',
+      data: { type: 'task_complete', summary: 'aad test payload' },
+      ts: '2026-06-14T00:00:00.000Z',
+    }, 'transcript');
+
+    const sent = relay.sent.find((s) => s.includes('cevt:aad:1'));
+    expect(sent).toBeDefined();
+    const parsed = JSON.parse(sent!);
+
+    // Decrypt with correct AAD succeeds
+    const ok = decryptEventPayload(
+      parsed.payload.sealed_payload as string,
+      parsed.payload.data as Record<string, unknown>,
+      TEST_KEY,
+      {
+        v: 1,
+        keyId: TEST_KEY_ID,
+        deviceId: TEST_DEVICE,
+        sessionId: 'srv-aad',
+        eventId: 'cevt:aad:1',
+        eventType: 'task_complete',
+      },
+    );
+    expect(ok.summary).toBe('aad test payload');
+
+    // Decrypt with user_prompt AAD fails (GCM auth tag mismatch)
+    expect(() => decryptEventPayload(
+      parsed.payload.sealed_payload as string,
+      parsed.payload.data as Record<string, unknown>,
+      TEST_KEY,
+      {
+        v: 1,
+        keyId: TEST_KEY_ID,
+        deviceId: TEST_DEVICE,
+        sessionId: 'srv-aad',
+        eventId: 'cevt:aad:1',
+        eventType: 'user_prompt',
+      },
+    )).toThrow();
   });
 });

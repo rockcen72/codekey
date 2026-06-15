@@ -16,6 +16,8 @@ import { discoverLocalSessions, loadCodexConversation, normalizeCodexSessionTitl
 import { CodexResumeManager } from '../bridge/codex-resume-manager.js';
 import { CodexTranscriptWatcher, type TranscriptEvent } from '../bridge/codex-transcript-watcher.js';
 import { HistorySharePolicy, setConfig } from '../bridge/history-policy.js';
+import { ApprovalBridge } from '../bridge/handler.js';
+import { decryptEventPayload } from '../bridge/event-envelope.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -572,6 +574,61 @@ describe('Codex real transcript format', () => {
           }),
         }),
       ]));
+    });
+  });
+
+  describe('Codex _forwardEvent task_complete encryption', () => {
+    const TEST_KEY = 'b'.repeat(64);
+    const TEST_KEY_ID = 'keyid-codex-tc';
+    const TEST_DEVICE = 'device-codex-tc';
+
+    it('encrypts task_complete when _forwardEvent runs through ApprovalBridge', () => {
+      class FakeCodexRelay extends EventEmitter {
+        sentRaw: string[] = [];
+        sendRaw(value: string) { this.sentRaw.push(value); }
+        sendCheckedPayload(p: { raw: string }) { this.sendRaw(p.raw); }
+      }
+      const relay = new FakeCodexRelay() as any;
+      const bridge = new ApprovalBridge(relay as any);
+      bridge.setContentKey(TEST_KEY, TEST_KEY_ID, TEST_DEVICE);
+      setConfig('*', { policy: HistorySharePolicy.Recent, updatedAt: Date.now() });
+
+      const manager = new CodexResumeManager(relay, new Set(), bridge);
+
+      (manager as any).sessions.set('srv-codex-tc', {
+        localSession: { sessionId: 'codex-local-tc', title: 'test' },
+        forwardedTextKeys: new Set<string>(),
+        runtime: null,
+        watcher: null,
+      });
+
+      (manager as any)._forwardEvent('srv-codex-tc', {
+        type: 'event',
+        payload: {
+          clientEventId: 'cevt:codex-tc:1',
+          sessionId: 'srv-codex-tc',
+          agent: 'codex',
+          eventType: 'task_complete',
+          data: {
+            type: 'task_complete',
+            summary: 'SECRET CODEX OUTPUT',
+            output: 'do not leak this',
+          },
+        },
+      });
+
+      const raw = relay.sentRaw.find((s: string) => s.includes('cevt:codex-tc:1'));
+      expect(raw).toBeDefined();
+      const parsed = JSON.parse(raw!);
+      // Verify encryption envelope
+      expect(parsed.payload.sealed_payload).toBeDefined();
+      expect(typeof parsed.payload.sealed_payload).toBe('string');
+      expect(parsed.payload.key_id).toBe(TEST_KEY_ID);
+      expect(parsed.payload.encryption_version).toBe(1);
+      expect(parsed.payload.data.encrypted).toBe(true);
+      // Plaintext must not leak
+      expect(raw).not.toContain('SECRET CODEX OUTPUT');
+      expect(raw).not.toContain('do not leak this');
     });
   });
 });
