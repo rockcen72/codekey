@@ -25,6 +25,7 @@ docs/superpowers/
 
 # Tooling caches
 .codegraph/
+.codegraphignore
 .superpowers/
 .codex/
 
@@ -41,6 +42,7 @@ data/
 # Temp / PoC
 tmp/
 .tmp/
+.tmp-deploy/
 
 # Pre-deploy server backups (timestamped snapshots, see docs/server-deployment.md)
 backups/
