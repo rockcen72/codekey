@@ -202,7 +202,15 @@ describe('ApprovalBridge canonical sessions', () => {
 
     expect(started).toBeDefined();
     expect(started.payload.sessionId).toBe(serverSession);
-    expect(started.payload.data).toEqual({ type: 'command_started', command: 'phone prompt' });
+    // Audit r2 P0-A: command_started is a status event — body is stripped, not echoed.
+    // The actual user input lives in the user_prompt event (encrypted when key is set).
+    expect(started.payload.data).toEqual({
+      type: 'command_started',
+      safe_summary: 'Command sent',
+      preview_label: 'command_started',
+    });
+    expect(started.payload.data).not.toHaveProperty('command');
+    expect(started.payload.data).not.toHaveProperty('prompt');
     expect(events.some((m: any) => m.payload.eventType === 'task_complete')).toBe(false);
   });
 
@@ -1502,5 +1510,262 @@ describe('sendErrorToRelay privacy pipeline', () => {
     expect(checked).toBeDefined();
     expect(checked).toContain('sk-ant-***');
     expect(checked).not.toContain('sk-ant-ABCDEF0123456789abcdef01234567');
+  });
+});
+
+// ── Audit r2 P0-A + P0-B: outbound user_prompt encryption + command_started sanitization ──
+describe('outbound encryption invariants', () => {
+  const TEST_KEY = 'a'.repeat(64);
+  const TEST_KEY_ID = 'keyid-test-aabbcc';
+  const TEST_DEVICE = 'device-test-1234567890abcdef';
+
+  it('command_started events NEVER contain user input fields (command/prompt/text/summary body)', async () => {
+    const relay = new FakeRelay();
+    const bridge = new ApprovalBridge(relay as any);
+    const serverSession = await bridge.ensureSession('claude-leak-test');
+
+    const SECRET_PROMPT = 'my secret password is hunter2';
+    bridge.listenRelayCommands();
+    relay.emit('command', { sessionId: serverSession, action: 'write_stdin', data: SECRET_PROMPT });
+
+    const [cmd] = bridge.commandQueue.peek();
+    bridge.recordClaimedPhoneCommand(cmd.sessionId, cmd.text);
+
+    const startedEvents = relay.sent
+      .map((m) => JSON.parse(m))
+      .filter((m: any) => m.type === 'event' && m.payload.eventType === 'command_started');
+
+    expect(startedEvents.length).toBeGreaterThan(0);
+    for (const evt of startedEvents) {
+      const data = evt.payload.data;
+      // Sanitization contract — body fields MUST be absent
+      expect(data).not.toHaveProperty('command');
+      expect(data).not.toHaveProperty('prompt');
+      expect(data).not.toHaveProperty('text');
+      expect(data).not.toHaveProperty('summary');
+      expect(data).not.toHaveProperty('summaryShort');
+      expect(data).not.toHaveProperty('output');
+      // Only allowlist markers remain
+      expect(data).toHaveProperty('safe_summary');
+      expect(data).toHaveProperty('preview_label');
+      // The serialized event must not contain the secret anywhere
+      const serialized = JSON.stringify(evt);
+      expect(serialized).not.toContain('hunter2');
+      expect(serialized).not.toContain('secret password');
+    }
+  });
+
+  it('user_prompt events from sendEventToRelay get encrypted when content key is set', () => {
+    const relay = new FakeRelay();
+    const bridge = new ApprovalBridge(relay as any);
+    bridge.setContentKey(TEST_KEY, TEST_KEY_ID, TEST_DEVICE);
+
+    const SECRET = 'audit-leak-canary-9f3a';
+    bridge.sendEventToRelay('srv-x', {
+      clientEventId: 'cevt:audit:1',
+      sessionId: 'srv-x',
+      agent: 'opencode',
+      eventType: 'user_prompt',
+      data: { type: 'user_prompt', prompt: SECRET, summary: SECRET },
+      ts: '2026-06-14T00:00:00.000Z',
+    }, 'history');
+
+    const sent = relay.sent.find((s) => s.includes('cevt:audit:1'));
+    expect(sent).toBeDefined();
+    const parsed = JSON.parse(sent!);
+
+    // sealed_payload populated, allowlist data only
+    expect(parsed.payload.sealed_payload).toBeDefined();
+    expect(typeof parsed.payload.sealed_payload).toBe('string');
+    expect(parsed.payload.key_id).toBe(TEST_KEY_ID);
+    expect(parsed.payload.encryption_version).toBe(1);
+    expect(parsed.payload.data).toEqual({ type: 'user_prompt', encrypted: true, safe_summary: 'User prompt' });
+    // Secret must not leak anywhere in the outbound bytes
+    expect(sent).not.toContain(SECRET);
+  });
+
+  it('user_prompt without a content key passes through plaintext (legacy backward-compat)', () => {
+    const relay = new FakeRelay();
+    const bridge = new ApprovalBridge(relay as any);
+    // No setContentKey() — pre-pairing / legacy state
+
+    bridge.sendEventToRelay('srv-y', {
+      clientEventId: 'cevt:nokey:1',
+      sessionId: 'srv-y',
+      agent: 'opencode',
+      eventType: 'user_prompt',
+      data: { type: 'user_prompt', prompt: 'plaintext ok', summary: 'plaintext ok' },
+      ts: '2026-06-14T00:00:00.000Z',
+    }, 'history');
+
+    const sent = relay.sent.find((s) => s.includes('cevt:nokey:1'));
+    expect(sent).toBeDefined();
+    const parsed = JSON.parse(sent!);
+    expect(parsed.payload.sealed_payload).toBeUndefined();
+    expect(parsed.payload.data.prompt).toBe('plaintext ok');
+  });
+
+  it('non-encryptable event types (task_complete) pass through unchanged when key is set', () => {
+    const relay = new FakeRelay();
+    const bridge = new ApprovalBridge(relay as any);
+    bridge.setContentKey(TEST_KEY, TEST_KEY_ID, TEST_DEVICE);
+
+    bridge.sendEventToRelay('srv-z', {
+      clientEventId: 'cevt:tc:1',
+      sessionId: 'srv-z',
+      agent: 'opencode',
+      eventType: 'task_complete',
+      data: { type: 'task_complete', summary: 'done', output: 'all good' },
+      ts: '2026-06-14T00:00:00.000Z',
+    }, 'transcript');
+
+    const sent = relay.sent.find((s) => s.includes('cevt:tc:1'));
+    expect(sent).toBeDefined();
+    const parsed = JSON.parse(sent!);
+    // task_complete is NOT in ENCRYPTABLE_EVENT_TYPES (Phase 4 scope = user_prompt only)
+    expect(parsed.payload.sealed_payload).toBeUndefined();
+    expect(parsed.payload.data.summary).toBe('done');
+  });
+
+  it('encryptOutboundPayload public hook mirrors private path (used by external session managers)', () => {
+    const relay = new FakeRelay();
+    const bridge = new ApprovalBridge(relay as any);
+    bridge.setContentKey(TEST_KEY, TEST_KEY_ID, TEST_DEVICE);
+
+    const out = bridge.encryptOutboundPayload({
+      clientEventId: 'cevt:hook:1',
+      sessionId: 'srv-hook',
+      agent: 'codex',
+      eventType: 'user_prompt',
+      data: { type: 'user_prompt', prompt: 'codex hook secret' },
+      ts: '2026-06-14T00:00:00.000Z',
+    });
+
+    expect(out).toHaveProperty('sealed_payload');
+    expect((out as any).data).toEqual({ type: 'user_prompt', encrypted: true });
+    expect(JSON.stringify(out)).not.toContain('codex hook secret');
+  });
+
+  it('fail-closed: when encryption throws, emits placeholder with encryption_error=true and NO plaintext', () => {
+    const relay = new FakeRelay();
+    const bridge = new ApprovalBridge(relay as any);
+    // Set an invalid key (wrong length — keyFromHex will throw in encryptEventPayload)
+    bridge.setContentKey('not-a-valid-hex-key', TEST_KEY_ID, TEST_DEVICE);
+
+    // Suppress the expected error log
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const SECRET = 'leak-canary-fc-9999';
+    bridge.sendEventToRelay('srv-fc', {
+      clientEventId: 'cevt:fc:1',
+      sessionId: 'srv-fc',
+      agent: 'opencode',
+      eventType: 'user_prompt',
+      data: { type: 'user_prompt', prompt: SECRET, summary: SECRET },
+      ts: '2026-06-14T00:00:00.000Z',
+    }, 'history');
+
+    errSpy.mockRestore();
+
+    const sent = relay.sent.find((s) => s.includes('cevt:fc:1'));
+    expect(sent).toBeDefined();
+    const parsed = JSON.parse(sent!);
+
+    // fail-closed contract:
+    expect(parsed.payload.data).toEqual({
+      type: 'user_prompt',
+      encryption_error: true,
+      safe_summary: 'Encryption failed',
+      preview_label: 'encryption_error',
+    });
+    expect(parsed.payload.sealed_payload).toBeNull();
+    // Secret MUST NOT appear anywhere in the outbound bytes
+    expect(sent).not.toContain(SECRET);
+  });
+
+  it('fail-closed: when key is set but AAD fields missing (no clientEventId), emits placeholder NOT plaintext (audit r3 P1)', () => {
+    const relay = new FakeRelay();
+    const bridge = new ApprovalBridge(relay as any);
+    bridge.setContentKey(TEST_KEY, TEST_KEY_ID, TEST_DEVICE);
+
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const SECRET = 'leak-canary-aad-7777';
+
+    // user_prompt with key set but NO clientEventId (programming error)
+    bridge.encryptOutboundPayload({
+      sessionId: 'srv-aad',
+      agent: 'opencode',
+      eventType: 'user_prompt',
+      data: { type: 'user_prompt', prompt: SECRET, summary: SECRET },
+      ts: '2026-06-14T00:00:00.000Z',
+    }) as any;
+
+    errSpy.mockRestore();
+
+    // Now exercise the public path (sendEventToRelay) which serializes & sends
+    const errSpy2 = vi.spyOn(console, 'error').mockImplementation(() => {});
+    bridge.sendEventToRelay('srv-aad2', {
+      // missing clientEventId — should fail-closed
+      sessionId: 'srv-aad2',
+      agent: 'opencode',
+      eventType: 'user_prompt',
+      data: { type: 'user_prompt', prompt: SECRET, summary: SECRET },
+      ts: '2026-06-14T00:00:00.000Z',
+    }, 'history');
+    errSpy2.mockRestore();
+
+    const sent = relay.sent.find((s) => s.includes('srv-aad2'));
+    expect(sent).toBeDefined();
+    const parsed = JSON.parse(sent!);
+    expect(parsed.payload.data).toEqual({
+      type: 'user_prompt',
+      encryption_error: true,
+      safe_summary: 'Encryption failed',
+      preview_label: 'encryption_error',
+    });
+    expect(parsed.payload.sealed_payload).toBeNull();
+    expect(sent).not.toContain(SECRET);
+  });
+
+  it('fail-closed: when key is set but data field missing, emits placeholder', () => {
+    const bridge = new ApprovalBridge(new FakeRelay() as any);
+    bridge.setContentKey(TEST_KEY, TEST_KEY_ID, TEST_DEVICE);
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const out = bridge.encryptOutboundPayload({
+      clientEventId: 'cevt:nodata:1',
+      sessionId: 'srv-nodata',
+      agent: 'opencode',
+      eventType: 'user_prompt',
+      // data missing
+      ts: '2026-06-14T00:00:00.000Z',
+    });
+
+    errSpy.mockRestore();
+    expect((out as any).data).toEqual({
+      type: 'user_prompt',
+      encryption_error: true,
+      safe_summary: 'Encryption failed',
+      preview_label: 'encryption_error',
+    });
+    expect((out as any).sealed_payload).toBeNull();
+  });
+
+  it('no-key path: missing AAD fields still pass-through (legacy backward-compat)', () => {
+    const bridge = new ApprovalBridge(new FakeRelay() as any);
+    // No setContentKey() — pre-pairing state, plaintext allowed
+
+    const out = bridge.encryptOutboundPayload({
+      sessionId: 'srv-legacy',
+      agent: 'opencode',
+      eventType: 'user_prompt',
+      data: { type: 'user_prompt', prompt: 'plaintext ok', summary: 'plaintext ok' },
+      ts: '2026-06-14T00:00:00.000Z',
+    });
+
+    // Should pass through unchanged — no fail-closed when key is not configured
+    expect((out as any).data.prompt).toBe('plaintext ok');
+    expect((out as any).sealed_payload).toBeUndefined();
+    expect((out as any).encryption_error).toBeUndefined();
   });
 });

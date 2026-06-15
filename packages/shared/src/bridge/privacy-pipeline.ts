@@ -62,6 +62,10 @@ export interface PrivacyDecision {
   /** Which rules applied */
   blockedByCodekeyIgnore: boolean;
   blockedByDefault: boolean;
+  /** Audit r5: transcript event had blocked paths redacted (replaced with
+   *  [blocked path]) rather than being fully blocked. True when the event
+   *  was sent with path tokens sanitized. */
+  redactedDueToBlockedPath?: boolean;
 }
 
 /** Branded payload for sendCheckedPayload — only produced by toCheckedPayload(). */
@@ -86,12 +90,48 @@ export function toCheckedPayload(decision: PrivacyDecision): PrivacyCheckedPaylo
   };
 }
 
+/** Default safe_summary for each event type — injected into every outbound
+ *  event payload that doesn't already have one. Short, neutral, leak-free.
+ *  §9 fallback removal: server must no longer fall back to data.summary/command. */
+export const DEFAULT_SAFE_SUMMARIES: Record<string, string> = {
+  user_prompt: 'User prompt',
+  task_complete: 'Task complete',
+  approval_required: 'Approval required',
+  input_required: 'Input required',
+  error: 'Error',
+  command_started: 'Command sent',
+  info: 'Info',
+};
+
+/** Inject safe_summary into event payloads that lack one, so downstream
+ *  consumers (event_push, Telegram notification) never fall back to
+ *  data.summary/data.command which may contain sensitive plaintext.
+ *  Call BEFORE runPrivacyPipeline so the injected field survives projection.
+ *  §9 fallback fix. */
+export function ensureSafeSummary(rawPayload: string): string {
+  try {
+    const root = JSON.parse(rawPayload) as Record<string, unknown>;
+    const payload = root.payload as Record<string, unknown> | undefined;
+    if (!payload || typeof payload !== 'object') return rawPayload;
+    const eventType = payload.eventType as string | undefined;
+    const data = payload.data as Record<string, unknown> | undefined;
+    if (!eventType || !data || typeof data !== 'object') return rawPayload;
+    if (data.safe_summary) return rawPayload; // already has one
+    const fallback = DEFAULT_SAFE_SUMMARIES[eventType];
+    if (!fallback) return rawPayload; // unknown eventType, leave as-is
+    data.safe_summary = fallback;
+    return JSON.stringify(root);
+  } catch {
+    return rawPayload;
+  }
+}
+
 export interface AuditEntry {
   timestamp: string;
   source: SourceType;
   agent?: string;
   sessionId?: string;
-  action: 'forwarded' | 'rejected' | 'blocked' | 'sanitized';
+  action: 'forwarded' | 'rejected' | 'blocked' | 'sanitized' | 'redacted_path';
   sanitized: boolean;
   blocked: boolean;
   payloadPreview: string;
@@ -133,6 +173,7 @@ export class PrivacyAuditCollector {
       }
       if (entry.action === 'blocked') this._blocked++;
       else if (entry.action === 'sanitized') this._sanitized++;
+      else if (entry.action === 'redacted_path') this._sanitized++;
       else this._forwarded++;
       this._totalFindings += entry.findingCount;
     };
@@ -486,26 +527,61 @@ export function runPrivacyPipeline(
 
   // ── 4. Decision ──
   let action: PrivacyDecision['action'] = 'send';
+  let redactedDueToBlockedPath = false;
   if (dedupedBlocked.length > 0 && ctx.source === 'approval') {
     action = 'require_confirmation';
   }
   if (ctx.source === 'transcript' && dedupedBlocked.length > 0) {
-    action = 'block';
+    // Audit r5: transcript events that merely MENTION a blocked path
+    // (e.g. "check ~/.codekey/credentials.json") should NOT be silently
+    // dropped — that makes the phone miss assistant replies for no good
+    // reason. The actual file READ or WRITE to a blocked path shows up
+    // as an approval_required event (source='approval'), which goes
+    // through require_confirmation — that's the real security boundary.
+    //
+    // However, transcript that appears to DUMP file content (key=value
+    // pairs, JSON objects, credential field names) is still blocked.
+    // Heuristic: if the raw payload contains `=` or `:` patterns on 2+
+    // lines (multi-line config), OR a JSON object, OR sensitive field
+    // names like token/secret/password/key/credential — treat it as a
+    // content leak and block. A bare mention like "check credentials.json"
+    // won't trigger any of these.
+    const lines = ctx.rawPayload.split('\n').filter(l => l.trim());
+    const configLines = lines.filter(l => /[=:]\s*\S/.test(l));
+    const hasJson = /[\[{]\s*"[^"]+"\s*:/.test(ctx.rawPayload);
+    const hasSensitiveField = /(?:^|[\s{,])["']?[A-Za-z0-9_.-]*(?:token|secret|password|key|credential)[A-Za-z0-9_.-]*["']?\s*[:=]/i.test(ctx.rawPayload);
+    if (configLines.length >= 2 || hasJson || hasSensitiveField) {
+      action = 'block';
+    } else {
+      action = 'send';
+      redactedDueToBlockedPath = true;
+    }
+  }
+
+  // ── 4b. Path redaction (transcript only) — replace blocked path tokens
+  // with [blocked path] so the phone still gets the message content.
+  let redactedPayload = trimmedPayload;
+  if (ctx.source === 'transcript' && dedupedBlocked.length > 0 && action === 'send') {
+    for (const p of dedupedBlocked) {
+      const escaped = p.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      redactedPayload = redactedPayload.replace(new RegExp(escaped, 'g'), '[blocked path]');
+    }
   }
 
   const decision: PrivacyDecision = {
     action,
-    sanitizedPayload: trimmedPayload,
+    sanitizedPayload: redactedPayload,
     blockedPaths: dedupedBlocked,
     sanitizedFindings: findings,
     truncated,
     blockedByCodekeyIgnore: blockedByCodekeyIgnore.length > 0,
     blockedByDefault: blockedByDefault.length > 0,
+    redactedDueToBlockedPath,
   };
 
   // ── 5. Audit ──
   if (sink) {
-    const preview = auditPreviewForPayload(trimmedPayload, !!ctx.allowedFields);
+    const preview = auditPreviewForPayload(redactedPayload, !!ctx.allowedFields);
     sink({
       timestamp: new Date().toISOString(),
       source: ctx.source,
@@ -513,12 +589,14 @@ export function runPrivacyPipeline(
       sessionId: ctx.sessionId,
       action: findings.length > 0
         ? 'sanitized'
-        : action === 'block'
-          ? 'blocked'
-          : 'forwarded',
+        : redactedDueToBlockedPath
+          ? 'redacted_path'
+          : action === 'block'
+            ? 'blocked'
+            : 'forwarded',
       sanitized: findings.length > 0,
       blocked: action === 'block',
-      payloadPreview: trimmedPayload.slice(0, 200),
+      payloadPreview: redactedPayload.slice(0, 200),
       ...preview,
       findingCount: findings.length,
       payloadLength: ctx.rawPayload.length,

@@ -1,5 +1,5 @@
 import type { RelayClient } from './relay-client.js';
-import { runPrivacyPipeline, toCheckedPayload } from './privacy-pipeline.js';
+import { runPrivacyPipeline, toCheckedPayload, ensureSafeSummary } from './privacy-pipeline.js';
 import type { AuditSink } from './privacy-pipeline.js';
 
 export class CodexRelay {
@@ -150,7 +150,7 @@ export class CodexRelay {
 
   private _pushApproval(correlationId: string, command: string, risk: string): void {
     if (!this.sessionId) return;
-    const rawPayload = JSON.stringify({
+    const rawPayload = ensureSafeSummary(JSON.stringify({
       type: 'event',
       payload: {
         sessionId: this.sessionId,
@@ -159,7 +159,7 @@ export class CodexRelay {
         risk,
         clientEventId: correlationId,
       },
-    });
+    }));
     const decision = runPrivacyPipeline({ source: 'approval', rawPayload }, undefined, this._auditSink);
     if (decision.action === 'block') return;
     this.pendingByCorrelationId.set(correlationId, { type: 'approval', command, risk, createdAt: Date.now() });
@@ -173,10 +173,10 @@ export class CodexRelay {
       ? data.requestId
       : undefined;
     const source: 'approval' | 'transcript' = eventType === 'input_required' ? 'approval' : 'transcript';
-    const rawPayload = JSON.stringify({
+    const rawPayload = ensureSafeSummary(JSON.stringify({
       type: 'event',
       payload: { sessionId: this.sessionId, eventType, data, ...(requestId ? { clientEventId: requestId } : {}) },
-    });
+    }));
     const decision = runPrivacyPipeline({ source, rawPayload }, undefined, this._auditSink);
     if (decision.action === 'block') return;
     if (eventType === 'input_required' && requestId) {

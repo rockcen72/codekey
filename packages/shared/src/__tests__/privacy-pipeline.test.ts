@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
-import { runPrivacyPipeline, toCheckedPayload, truncateSafe, PrivacyAuditCollector } from '../bridge/privacy-pipeline.js';
+import { runPrivacyPipeline, toCheckedPayload, truncateSafe, PrivacyAuditCollector, projectAllowedFields, projectHistoryEventForPolicy } from '../bridge/privacy-pipeline.js';
+import { SANITIZED_ALLOWED_FIELDS } from '../bridge/history-policy.js';
 
 describe('privacy-pipeline', () => {
   describe('runPrivacyPipeline', () => {
@@ -26,14 +27,57 @@ describe('privacy-pipeline', () => {
       expect(result.action).toBe('skip');
     });
 
-    it('blocks transcript with blocked paths by default', () => {
+    it('redacts blocked paths in transcript mentions (audit r5)', () => {
       const result = runPrivacyPipeline({
         source: 'transcript',
-        rawPayload: 'read .env file',
+        rawPayload: 'check ~/.codekey/credentials.json',
+        structuredPayload: { file_path: 'credentials.json' },
+      });
+      expect(result.blockedByDefault).toBe(true);
+      expect(result.blockedPaths).toContain('credentials.json');
+      // Bare mention — no config content pattern, so it gets redacted and sent
+      expect(result.action).toBe('send');
+      expect(result.redactedDueToBlockedPath).toBe(true);
+      expect(result.sanitizedPayload).toContain('[blocked path]');
+      expect(result.sanitizedPayload).not.toContain('credentials.json');
+    });
+
+    it('blocks transcript that dumps config file content (key=value lines)', () => {
+      const result = runPrivacyPipeline({
+        source: 'transcript',
+        rawPayload: 'cat .env\nDB_PASSWORD=secret\nAPI_KEY=12345',
         structuredPayload: { file_path: '.env' },
       });
       expect(result.blockedByDefault).toBe(true);
       expect(result.blockedPaths).toContain('.env');
+      // Config content detected (2+ lines with = or :) — block
+      expect(result.action).toBe('block');
+      expect(result.redactedDueToBlockedPath).toBeFalsy();
+    });
+
+    it('blocks transcript with single-line JSON credentials dump (audit r6 P1)', () => {
+      const result = runPrivacyPipeline({
+        source: 'transcript',
+        rawPayload: 'credentials.json {"deviceToken":"abc123","deviceSecret":"xyz789"}',
+        structuredPayload: { file_path: 'credentials.json' },
+      });
+      expect(result.blockedByDefault).toBe(true);
+      expect(result.blockedPaths).toContain('credentials.json');
+      // Single-line JSON with credential field names — block
+      expect(result.action).toBe('block');
+      expect(result.redactedDueToBlockedPath).toBeFalsy();
+    });
+
+    it('blocks transcript with sensitive field name (token/secret/password/key/credential)', () => {
+      const result = runPrivacyPipeline({
+        source: 'transcript',
+        rawPayload: 'here is your password: abc123def456',
+        structuredPayload: { file_path: 'credentials.json' },
+      });
+      expect(result.blockedByDefault).toBe(true);
+      expect(result.blockedPaths).toContain('credentials.json');
+      // Sensitive field name in text — block
+      expect(result.action).toBe('block');
     });
 
     it('requires confirmation for approval with .codekeyignore hit', () => {
@@ -138,14 +182,22 @@ describe('privacy-pipeline', () => {
       expect(checked!.checkedAt).toBeGreaterThan(0);
     });
 
-    it('returns null for "block" decisions', () => {
+    it('redacts blocked paths in transcript instead of blocking (audit r5)', () => {
       const decision = runPrivacyPipeline({
         source: 'transcript',
         rawPayload: 'cat .env',
         structuredPayload: { file_path: '.env' },
       });
+      expect(decision.blockedByDefault).toBe(true);
+      expect(decision.blockedPaths).toContain('.env');
+      // Audit r5: transcript events that MENTION a blocked path should NOT be
+      // silently dropped — the path is replaced with [blocked path] and sent.
+      expect(decision.action).toBe('send');
+      expect(decision.sanitizedPayload).toContain('[blocked path]');
+      expect(decision.sanitizedPayload).not.toContain('.env');
       const checked = toCheckedPayload(decision);
-      expect(checked).toBeNull();
+      expect(checked).not.toBeNull();
+      expect(checked!.raw).toContain('[blocked path]');
     });
 
     it('produces a checked payload for "require_confirmation" decisions', () => {
@@ -298,6 +350,88 @@ describe('privacy-pipeline', () => {
       expect(stats.summary.sanitized).toBe(0);
       expect(stats.summary.totalFindings).toBe(0);
       expect(stats.recentEntries).toEqual([]);
+    });
+  });
+
+  // ── Audit r2 P1-B: Sanitized projection MUST preserve encryption envelope markers ──
+  describe('encryption envelope survives Sanitized projection', () => {
+    function makeEncryptedRaw(): string {
+      return JSON.stringify({
+        type: 'event',
+        payload: {
+          clientEventId: 'cevt:claude-a:7',
+          sessionId: 'sess-1',
+          agent: 'claude-code-hook',
+          eventType: 'user_prompt',
+          data: {
+            type: 'user_prompt',
+            encrypted: true,
+            safe_summary: 'User prompt',
+            preview_label: 'user_prompt',
+            // sensitive — must NOT survive projection
+            prompt: 'leaky body should not be in projection',
+          },
+          sealed_payload: 'AbCdEf...==',
+          key_id: 'keyid-abc',
+          encryption_version: 1,
+          ts: '2026-06-14T00:00:00.000Z',
+        },
+      });
+    }
+
+    it('projectAllowedFields keeps encrypted/safe_summary/preview_label and drops prompt', () => {
+      const projected = projectAllowedFields(makeEncryptedRaw(), SANITIZED_ALLOWED_FIELDS);
+      const root = JSON.parse(projected);
+      const data = root.payload.data;
+      expect(data).toHaveProperty('encrypted', true);
+      expect(data).toHaveProperty('safe_summary', 'User prompt');
+      expect(data).toHaveProperty('preview_label', 'user_prompt');
+      expect(data).not.toHaveProperty('prompt');
+    });
+
+    it('projectAllowedFields preserves outer envelope sealed_payload/key_id/encryption_version', () => {
+      const projected = projectAllowedFields(makeEncryptedRaw(), SANITIZED_ALLOWED_FIELDS);
+      const root = JSON.parse(projected);
+      const payload = root.payload;
+      expect(payload.sealed_payload).toBe('AbCdEf...==');
+      expect(payload.key_id).toBe('keyid-abc');
+      expect(payload.encryption_version).toBe(1);
+    });
+
+    it('projectHistoryEventForPolicy with Sanitized policy preserves envelope + drops prompt', () => {
+      const projected = projectHistoryEventForPolicy(
+        makeEncryptedRaw(),
+        { allowed: true, allowedFields: SANITIZED_ALLOWED_FIELDS },
+      );
+      expect(projected).not.toBeNull();
+      const root = JSON.parse(projected!);
+      const data = root.payload.data;
+      expect(data).toHaveProperty('encrypted', true);
+      expect(data).not.toHaveProperty('prompt');
+      expect(root.payload.sealed_payload).toBe('AbCdEf...==');
+    });
+
+    it('encryption_error placeholder survives projection', () => {
+      const raw = JSON.stringify({
+        type: 'event',
+        payload: {
+          clientEventId: 'cevt:err:1',
+          sessionId: 'sess-1',
+          eventType: 'user_prompt',
+          data: {
+            type: 'user_prompt',
+            encryption_error: true,
+            safe_summary: 'Encryption failed',
+            preview_label: 'encryption_error',
+          },
+          ts: '2026-06-14T00:00:00.000Z',
+        },
+      });
+      const projected = projectAllowedFields(raw, SANITIZED_ALLOWED_FIELDS);
+      const root = JSON.parse(projected);
+      expect(root.payload.data).toHaveProperty('encryption_error', true);
+      expect(root.payload.data).toHaveProperty('safe_summary', 'Encryption failed');
+      expect(root.payload.data).toHaveProperty('preview_label', 'encryption_error');
     });
   });
 });
