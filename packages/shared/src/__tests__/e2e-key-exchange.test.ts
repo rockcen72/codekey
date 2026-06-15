@@ -3,7 +3,7 @@ import {
   generateEcdhKeyPair,
   computeSharedSecret,
   deriveKeyMaterial,
-} from '../bridge/e2e-key-exchange';
+} from '../bridge/e2e-key-exchange.js';
 
 describe('ECDH key exchange', () => {
   it('desktop and phone derive the same shared secret', () => {

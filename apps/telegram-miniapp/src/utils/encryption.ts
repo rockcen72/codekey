@@ -205,6 +205,40 @@ export async function decrypt(
   return new TextDecoder().decode(decrypted);
 }
 
+// ── Event Envelope decrypt (mirrors packages/shared/src/bridge/event-envelope.ts) ──
+
+/**
+ * Decrypt a sealed_payload event envelope and merge the decrypted fields back
+ * into the allowlist data. Mirrors the Node-side decryptEventPayload() — same
+ * AAD format and sealed_payload wire format, just async because Web Crypto.
+ *
+ * Returns the merged data object: { ...allowlistData, ...decrypted }.
+ *
+ * Throws on:
+ *   - Invalid key hex
+ *   - sealed_payload too short or malformed base64
+ *   - GCM auth failure (wrong key, tampered ciphertext, AAD mismatch)
+ *   - Decrypted payload not valid JSON
+ *
+ * Caller MUST validate `encryption_version` before calling this.
+ */
+export async function decryptEventPayload(
+  sealedPayloadB64: string,
+  allowlistData: Record<string, unknown>,
+  contentKeyHex: string,
+  aadFields: AadFields,
+): Promise<Record<string, unknown>> {
+  const aad = buildAad(aadFields);
+  const decryptedJson = await decrypt(sealedPayloadB64, contentKeyHex, aad);
+  const decrypted = JSON.parse(decryptedJson) as Record<string, unknown>;
+  // Strip envelope markers — once decryption succeeds the data is plaintext;
+  // leaving `encrypted: true` confuses downstream getEncryptedPlaceholder().
+  // preview_label / safe_summary / encryption_error are also envelope-only.
+  const { encrypted: _e, preview_label: _p, safe_summary: _s, encryption_error: _err, ...allowlistRest } = allowlistData;
+  void _e; void _p; void _s; void _err;
+  return { ...allowlistRest, ...decrypted };
+}
+
 // ── Internal helpers ───────────────────────────────────────
 
 async function importKey(keyHex: string): Promise<CryptoKey> {
