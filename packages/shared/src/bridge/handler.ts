@@ -223,8 +223,7 @@ export class ApprovalBridge {
   }
 
   /** Event types whose `data` body must be encrypted into `sealed_payload`
-   *  before reaching relay. Phase 4 scope: only user_prompt — see plan
-   *  §6 (user_prompt Vertical Slice). */
+   *  before reaching relay. user_prompt + task_complete are both encryptable. */
   private static readonly ENCRYPTABLE_EVENT_TYPES = new Set<string>(['user_prompt', 'task_complete']);
 
   /** Build a fail-closed placeholder payload when encryption blows up.
