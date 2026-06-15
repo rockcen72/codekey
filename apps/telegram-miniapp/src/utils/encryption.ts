@@ -205,6 +205,50 @@ export async function decrypt(
   return new TextDecoder().decode(decrypted);
 }
 
+// ── Command Envelope encrypt (mirrors packages/shared/src/bridge/command-envelope.ts) ──
+
+/**
+ * Encrypt a command text into a sealed_command envelope.
+ *
+ * AAD discriminator: eventType='command' ensures command AAD never collides
+ * with event envelope AAD (which uses eventType='user_prompt' etc.).
+ *
+ * Returns fields that should be sent in place of the plaintext `text`:
+ *   { sealed_command, command_id, key_id, encryption_version }
+ *
+ * The relay server cannot decrypt the sealed_command — it forwards it
+ * opaquely to the PC bridge.
+ */
+export async function encryptCommandPayload(
+  text: string,
+  contentKeyHex: string,
+  keyId: string,
+  deviceId: string,
+  sessionId: string,
+  commandId: string,
+): Promise<{
+  sealed_command: string;
+  command_id: string;
+  key_id: string;
+  encryption_version: number;
+}> {
+  const aad = buildAad({
+    v: 1,
+    keyId,
+    deviceId,
+    sessionId,
+    eventId: commandId,
+    eventType: 'command',
+  });
+  const sealed_command = await encrypt(text, contentKeyHex, aad);
+  return {
+    sealed_command,
+    command_id: commandId,
+    key_id: keyId,
+    encryption_version: 1,
+  };
+}
+
 // ── Event Envelope decrypt (mirrors packages/shared/src/bridge/event-envelope.ts) ──
 
 /**

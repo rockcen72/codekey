@@ -674,12 +674,16 @@ a {
 .e2e-key-row .label { font-size: 14px; color: var(--muted); }
 .e2e-ok { font-size: 14px; color: #16a34a; font-weight: 600; }
 .e2e-missing { font-size: 14px; color: var(--muted); }
+.e2e-stale { font-size: 14px; color: #d97706; font-weight: 600; }
 
 .e2e-help {
   margin: 8px 2px 0;
   color: var(--muted);
   font-size: 12px;
   line-height: 1.5;
+}
+.e2e-help.stale-help {
+  color: #92400e;
 }
 
 .danger-button {
@@ -1301,6 +1305,32 @@ a {
 .detail-notice {
   margin: 0 14px 8px;
   flex-shrink: 0;
+}
+
+.e2e-banner {
+  margin: 0 14px 8px;
+  padding: 10px 14px;
+  border-radius: 8px;
+  font-size: 13px;
+  line-height: 1.4;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.e2e-banner.stale {
+  background: #fef3c7;
+  border: 1px solid #f59e0b;
+  color: #92400e;
+}
+.e2e-banner .link-btn {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  color: #0369a1;
+  text-decoration: underline;
+  cursor: pointer;
 }
 
 .timeline {

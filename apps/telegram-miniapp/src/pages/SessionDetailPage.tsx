@@ -5,8 +5,8 @@ import type { ApprovalResponseResult, UserEvent, UserSession } from '../api/type
 import type { AuthState } from '../hooks/useAuth';
 import { compactMarkdownWhitespace, markdownToHtml } from '../utils/markdown';
 import { agentChatName, agentColorClass, agentLabel } from '../utils/session-display';
-import { decryptEventPayload } from '../utils/encryption';
-import { getContentKey, getDeviceId } from '../auth/device-storage';
+import { decryptEventPayload, encryptCommandPayload } from '../utils/encryption';
+import { getContentKey, getKeyId, getDeviceId, setE2EStatus } from '../auth/device-storage';
 
 const POLL_INTERVAL = 5_000;
 
@@ -134,11 +134,22 @@ async function decryptEvents(events: UserEvent[]): Promise<UserEvent[]> {
   const deviceId = getDeviceId();
   if (!contentKey || !deviceId) return events;
 
+  const storedKeyId = getKeyId();
   const tasks: Promise<void>[] = [];
   const out = events.map((event) => ({ ...event }));
 
   for (const event of out) {
     if (!event.sealed_payload || !event.key_id) continue;
+
+    // Phase 4C: detect keyId mismatch — PC rotated keys, phone has stale key
+    if (storedKeyId && event.key_id !== storedKeyId) {
+      if (!decryptionFailureLogged.has(event.id)) {
+        console.warn('[session-detail] stale keyId: event.key_id=', event.key_id, 'stored=', storedKeyId);
+        decryptionFailureLogged.add(event.id);
+      }
+      event.data = { ...(event.data ?? {}), e2eKeyStale: true };
+      continue;
+    }
     if (event.encryption_version !== 1) {
       if (!decryptionFailureLogged.has(event.id)) {
         console.warn('[session-detail] unknown encryption_version', event.encryption_version, 'for event', event.id);
@@ -177,7 +188,7 @@ async function decryptEvents(events: UserEvent[]): Promise<UserEvent[]> {
             console.error('[session-detail] decrypt failed for event', event.id, err);
             decryptionFailureLogged.add(event.id);
           }
-          // Leave event.data as-is (allowlist only) — UI will show preview_label
+          event.data = { ...(event.data ?? {}), e2eKeyStale: true };
         }),
     );
   }
@@ -187,6 +198,8 @@ async function decryptEvents(events: UserEvent[]): Promise<UserEvent[]> {
 }
 
 function getEncryptedPlaceholder(data: Record<string, unknown>): string | null {
+  // Phase 4C: key rotated on desktop, phone needs re-pair
+  if (data.e2eKeyStale === true) return 'Encrypted content unavailable (keys updated, please re-pair)';
   // PC fail-closed event — actual prompt couldn't be encrypted
   if (data.encryption_error === true) return 'Encrypted content unavailable (encryption failed on desktop)';
   // Phone-side: still encrypted because key missing or decrypt blew up
@@ -650,6 +663,7 @@ export function SessionDetailPage({ auth }: Props) {
   const [session, setSession] = useState<UserSession | null>(null);
   const [events, setEvents] = useState<UserEvent[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [e2eStatus, setE2eStatus] = useState<'enabled' | 'stale' | 'disabled'>('disabled');
   const [resolvedMap, setResolvedMap] = useState<Map<string, string>>(new Map());
   const [promptText, setPromptText] = useState('');
   const [promptBusy, setPromptBusy] = useState(false);
@@ -672,6 +686,22 @@ export function SessionDetailPage({ auth }: Props) {
       // get their data field populated with decrypted body; legacy plaintext
       // events pass through untouched.
       const nextEvents = await decryptEvents(rawEvents);
+
+      // Phase 4C: compute E2E status from the latest sealed event only.
+      // Old historical events with a prior keyId do NOT pollute the status.
+      {
+        const ck = getContentKey();
+        let status: 'enabled' | 'stale' | 'disabled';
+        if (!ck) { status = 'disabled'; }
+        else {
+          const latestSealed = nextEvents
+            .filter((ev) => ev.sealed_payload)
+            .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())[0];
+          status = latestSealed && getEventData(latestSealed).e2eKeyStale === true ? 'stale' : 'enabled';
+        }
+        setE2eStatus(status);
+        setE2EStatus(status); // persist for Settings page
+      }
 
       nextEvents.sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
 
@@ -809,9 +839,24 @@ export function SessionDetailPage({ auth }: Props) {
     if (!promptText.trim() || !id) return;
     setPromptBusy(true);
     try {
+      const contentKeyHex = getContentKey();
+      const keyId = getKeyId();
+      const deviceId = getDeviceId();
+      let body: Record<string, unknown>;
+
+      if (contentKeyHex && keyId && deviceId) {
+        const commandId = crypto.randomUUID();
+        const envelope = await encryptCommandPayload(
+          promptText.trim(), contentKeyHex, keyId, deviceId, id, commandId,
+        );
+        body = { ...envelope };
+      } else {
+        body = { text: promptText.trim() };
+      }
+
       await userRequest(`/api/v1/user/sessions/${id}/command`, {
         method: 'POST',
-        body: JSON.stringify({ text: promptText.trim() }),
+        body: JSON.stringify(body),
       });
       setPromptText('');
       showToast('Sent to desktop');
@@ -841,6 +886,13 @@ export function SessionDetailPage({ auth }: Props) {
       </header>
 
       {error ? <div className="notice error-text detail-notice">{error}</div> : null}
+
+      {e2eStatus === 'stale' ? (
+        <div className="e2e-banner stale">
+          <span className="e2e-banner-icon">⚠️</span>
+          <span>E2E keys updated on desktop. <button className="link-btn" type="button" onClick={() => navigate('/')}>Re-pair phone</button> to send encrypted commands.</span>
+        </div>
+      ) : null}
 
       <section className="timeline" ref={scrollRef} onScroll={handleScroll}>
         {messages.length === 0 ? (

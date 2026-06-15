@@ -6,7 +6,7 @@ import type { AuthState } from '../hooks/useAuth';
 import { useDevices } from '../hooks/useDevices';
 import { DeviceBadge } from '../components/DeviceBadge';
 import { formatDate } from '../utils/format';
-import { getContentKey } from '../auth/device-storage';
+import { getContentKey, getE2EStatus } from '../auth/device-storage';
 import { getTelegramStartParam, parsePairingStartParam } from '../auth/pairing-start-param';
 
 interface Props {
@@ -21,6 +21,7 @@ export function SettingsPage({ auth }: Props) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const contentKey = getContentKey();
+  const e2eStatus = getE2EStatus();
   const startParam = getTelegramStartParam(new URLSearchParams(window.location.search));
   const startParamHasKey = !!parsePairingStartParam(startParam)?.contentKey;
   async function confirmUnbind() {
@@ -78,15 +79,23 @@ export function SettingsPage({ auth }: Props) {
         <span className="e2e-section-title">E2E Encryption</span>
         <div className="e2e-key-row">
           <span className="label">Status</span>
-          <span className={contentKey ? 'e2e-ok' : 'e2e-missing'}>
-            {contentKey ? '✓ Enabled' : '○ Not enabled'}
-          </span>
+          {e2eStatus === 'stale' ? (
+            <span className="e2e-stale">⚠ Re-pair needed</span>
+          ) : e2eStatus === 'enabled' ? (
+            <span className="e2e-ok">✓ Enabled</span>
+          ) : (
+            <span className="e2e-missing">○ Not enabled</span>
+          )}
         </div>
-        {!contentKey ? (
+        {e2eStatus === 'disabled' ? (
           <div className="e2e-help">
             {startParamHasKey
               ? 'Encryption key was received but not saved. Please bind again from the QR code.'
               : 'Manual code binding does not transfer an encryption key. Scan the QR code from VS Code to enable E2E.'}
+          </div>
+        ) : e2eStatus === 'stale' ? (
+          <div className="e2e-help stale-help">
+            The E2E key has been rotated on your desktop. Re-pair your phone to restore encrypted commands.
           </div>
         ) : null}
       </div>

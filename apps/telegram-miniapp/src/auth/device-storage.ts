@@ -2,6 +2,7 @@ const DEVICE_ID_KEY = 'CODEKEY_TG_DEVICE_ID';
 const CLIENT_TOKEN_KEY = 'CODEKEY_TG_CLIENT_TOKEN';
 const CONTENT_KEY_KEY = 'CODEKEY_TG_CONTENT_KEY';
 const KEY_ID_KEY = 'CODEKEY_TG_KEY_ID';
+const E2E_STATUS_KEY = 'CODEKEY_TG_E2E_STATUS';
 
 function getStoredValue(key: string): string | null {
   return sessionStorage.getItem(key) || localStorage.getItem(key);
@@ -41,11 +42,21 @@ export function getKeyId(): string | null {
 export function setContentKey(contentKeyHex: string, keyId: string): void {
   if (contentKeyHex) setStoredValue(CONTENT_KEY_KEY, contentKeyHex);
   if (keyId) setStoredValue(KEY_ID_KEY, keyId);
+  if (contentKeyHex) setE2EStatus('enabled'); // re-pair resets stale → enabled
+}
+
+export function getE2EStatus(): 'enabled' | 'stale' | 'disabled' {
+  return (getStoredValue(E2E_STATUS_KEY) as 'enabled' | 'stale' | 'disabled') || 'disabled';
+}
+
+export function setE2EStatus(status: 'enabled' | 'stale' | 'disabled'): void {
+  setStoredValue(E2E_STATUS_KEY, status);
 }
 
 export function clearContentKey(): void {
   removeStoredValue(CONTENT_KEY_KEY);
   removeStoredValue(KEY_ID_KEY);
+  removeStoredValue(E2E_STATUS_KEY);
 }
 
 export function clearDeviceCredentials(): void {
