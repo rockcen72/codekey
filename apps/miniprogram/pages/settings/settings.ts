@@ -36,6 +36,7 @@ interface PageData {
   redeemBusy: boolean;
   loaded: boolean;
   hasE2EKey: boolean;
+  debugScan: string;
 }
 
 Page({
@@ -53,12 +54,21 @@ Page({
     redeemBusy: false,
     loaded: false,
     hasE2EKey: false,
+    debugScan: '',
   } as PageData,
 
   onShow() {
+    let debugScan = '';
+    try {
+      const raw = wx.getStorageSync('CODEKEY_DEBUG_LAST_SCAN');
+      if (raw) debugScan = JSON.stringify(JSON.parse(raw), null, 2);
+    } catch (e) {
+      debugScan = '(parse error)';
+    }
     this.setData({
       deviceId: getDeviceId() || '',
       hasE2EKey: !!getContentKey(),
+      debugScan,
     });
     this.refreshSubscription();
   },

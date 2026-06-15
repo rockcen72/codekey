@@ -41,6 +41,22 @@ Page({
           if (keyIdMatch) keyId = keyIdMatch[1];
           if (contentKeyMatch) contentKey = contentKeyMatch[1];
         }
+        // Diagnostic: persist raw scan + parse result so settings page can show it.
+        try {
+          wx.setStorageSync('CODEKEY_DEBUG_LAST_SCAN', JSON.stringify({
+            at: new Date().toISOString(),
+            rawLen: raw.length,
+            rawHead: raw.slice(0, 40),
+            scheme: raw.startsWith('codekey://') ? 'codekey' : raw.startsWith('http') ? 'http' : 'other',
+            urlMatched: !!urlMatch,
+            code,
+            hasKeyId: !!keyId,
+            hasContentKey: !!contentKey,
+            contentKeyHead: contentKey ? contentKey.slice(0, 8) : '',
+          }));
+        } catch (e) {
+          // noop
+        }
         if (code.length === 8 && /^[A-Z2-9]+$/.test(code)) {
           let url = `/pages/bind/bind?code=${code}`;
           if (keyId) url += `&key_id=${encodeURIComponent(keyId)}`;

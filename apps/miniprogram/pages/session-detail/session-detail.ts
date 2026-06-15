@@ -1,8 +1,87 @@
 import { createApi } from '../../services/api';
-import { getServerUrl } from '../../services/storage';
+import { getServerUrl, getContentKey, getDeviceId } from '../../services/storage';
 import { getSubscription, type UsageSnapshot } from '../../services/subscription';
+import { decryptEventPayload } from '../../utils/crypto';
 
 const app = getApp<any>();
+
+/** Module-level cache for decrypted event bodies. Decryption is deterministic
+ *  + idempotent, so caching across re-polls is safe. */
+const decryptedEventCache = new Map<string, Record<string, any>>();
+const decryptionFailureLogged = new Set<string>();
+
+/** Decrypt all encrypted events in-place. Mirrors Telegram SessionDetailPage's
+ *  decryptEvents — see plan §5.3 / §5.4.
+ *
+ *  Behavior:
+ *    - sealed_payload missing                  → leave event untouched (legacy plaintext)
+ *    - data.encryption_error === true          → leave as-is (PC fail-closed placeholder)
+ *    - encryption_version unknown              → leave + log once
+ *    - no contentKey / deviceId                → leave + log once
+ *    - decrypt throws                          → leave + log once
+ *    - decrypt succeeds                        → merge decrypted body into event.data
+ */
+async function decryptRawEvents(events: any[]): Promise<any[]> {
+  const contentKey = getContentKey();
+  const deviceId = getDeviceId();
+  if (!contentKey || !deviceId) return events;
+
+  const out = events.map((event) => ({ ...event }));
+  const tasks: Promise<void>[] = [];
+
+  for (const event of out) {
+    if (!event.sealed_payload || !event.key_id) continue;
+    if (event.encryption_version !== 1) {
+      if (!decryptionFailureLogged.has(event.id)) {
+        console.warn('[session-detail] unknown encryption_version', event.encryption_version, 'for event', event.id);
+        decryptionFailureLogged.add(event.id);
+      }
+      continue;
+    }
+    const data = (event.data ?? {}) as Record<string, any>;
+    if (data.encryption_error === true) continue;
+
+    const cached = decryptedEventCache.get(event.id);
+    if (cached) {
+      event.data = cached;
+      continue;
+    }
+
+    const sealed = event.sealed_payload as string;
+    const aadFields = {
+      v: 1,
+      keyId: event.key_id as string,
+      deviceId,
+      sessionId: event.session_id as string,
+      eventId: (data.clientEventId as string) || (event.id as string),
+      eventType: event.type as string,
+    };
+
+    tasks.push(
+      decryptEventPayload(sealed, data, contentKey, aadFields)
+        .then((merged) => {
+          decryptedEventCache.set(event.id, merged);
+          event.data = merged;
+        })
+        .catch((err) => {
+          if (!decryptionFailureLogged.has(event.id)) {
+            console.error('[session-detail] decrypt failed for event', event.id, err);
+            decryptionFailureLogged.add(event.id);
+          }
+        }),
+    );
+  }
+
+  if (tasks.length > 0) await Promise.all(tasks);
+  return out;
+}
+
+/** Returns a localized placeholder for events whose body the phone can't read. */
+function getEncryptedPlaceholder(data: any): string | null {
+  if (data?.encryption_error === true) return '加密内容不可用（桌面端加密失败）';
+  if (data?.encrypted === true) return '加密内容不可用';
+  return null;
+}
 
 function escapeHtml(str: string): string {
   return str
@@ -438,10 +517,14 @@ Page({
   async fetchDetail(options?: { scrollToEventId?: string }) {
     try {
       const api = createApi(getServerUrl());
-      const [session, rawEvents] = await Promise.all([
+      const [session, rawEventsRaw] = await Promise.all([
         api.getSession(this.data.sessionId),
         api.getSessionEvents(this.data.sessionId),
       ]);
+
+      // Plan §5.3 / §5.4: decrypt sealed_payload events before downstream
+      // logic touches them. Legacy plaintext events pass through untouched.
+      const rawEvents = await decryptRawEvents(rawEventsRaw);
 
       // Detect stale pending events: if a previously-pending event is no longer
       // pending in the fresh data (desktop approved, timeout, etc.), mark it
@@ -522,7 +605,10 @@ Page({
       // Dedup consecutive user_prompt events with identical content
       if (effectiveType === 'user_prompt') {
         lastCommandStarted = false;
-        const prompt = e.data?.prompt || e.data?.summary || '';
+        // Plan §5.3: when sealed_payload couldn't be decrypted, data only has
+        // allowlist fields. Render placeholder instead of empty bubble.
+        const placeholder = getEncryptedPlaceholder(e.data);
+        const prompt = placeholder ?? (e.data?.prompt || e.data?.summary || '');
         if (prompt === lastUserPrompt) continue;
         lastUserPrompt = prompt;
         const displayTime = e.data?.timestamp
