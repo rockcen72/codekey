@@ -1,7 +1,7 @@
 import { createApi } from '../../services/api';
-import { getServerUrl, getContentKey, getDeviceId } from '../../services/storage';
+import { getServerUrl, getContentKey, getKeyId, getDeviceId, setE2EStatus } from '../../services/storage';
 import { getSubscription, type UsageSnapshot } from '../../services/subscription';
-import { decryptEventPayload } from '../../utils/crypto';
+import { decryptEventPayload, encryptCommandPayload, generateUUID } from '../../utils/crypto';
 
 const app = getApp<any>();
 
@@ -26,11 +26,22 @@ async function decryptRawEvents(events: any[]): Promise<any[]> {
   const deviceId = getDeviceId();
   if (!contentKey || !deviceId) return events;
 
+  const storedKeyId = getKeyId();
   const out = events.map((event) => ({ ...event }));
   const tasks: Promise<void>[] = [];
 
   for (const event of out) {
     if (!event.sealed_payload || !event.key_id) continue;
+
+    // Phase 4C: detect keyId mismatch — PC rotated keys, phone has stale key
+    if (storedKeyId && event.key_id !== storedKeyId) {
+      if (!decryptionFailureLogged.has(event.id)) {
+        console.warn('[session-detail] stale keyId: event.key_id=', event.key_id, 'stored=', storedKeyId);
+        decryptionFailureLogged.add(event.id);
+      }
+      event.data = { ...(event.data ?? {}), e2eKeyStale: true };
+      continue;
+    }
     if (event.encryption_version !== 1) {
       if (!decryptionFailureLogged.has(event.id)) {
         console.warn('[session-detail] unknown encryption_version', event.encryption_version, 'for event', event.id);
@@ -68,6 +79,7 @@ async function decryptRawEvents(events: any[]): Promise<any[]> {
             console.error('[session-detail] decrypt failed for event', event.id, err);
             decryptionFailureLogged.add(event.id);
           }
+          event.data = { ...(event.data ?? {}), e2eKeyStale: true };
         }),
     );
   }
@@ -78,6 +90,7 @@ async function decryptRawEvents(events: any[]): Promise<any[]> {
 
 /** Returns a localized placeholder for events whose body the phone can't read. */
 function getEncryptedPlaceholder(data: any): string | null {
+  if (data?.e2eKeyStale === true) return '加密内容不可用（密钥已更新，请重新配对手机）';
   if (data?.encryption_error === true) return '加密内容不可用（桌面端加密失败）';
   if (data?.encrypted === true) return '加密内容不可用';
   return null;
@@ -300,6 +313,7 @@ Page({
       strong: 'font-weight:800',
       em: 'font-style:italic',
     },
+    e2eStatus: 'disabled' as 'enabled' | 'stale' | 'disabled',
     quotaState: 'hidden' as 'hidden' | 'normal' | 'approaching' | 'exhausted',
     quotaPercent: 0,
     usage: null as UsageSnapshot | null,
@@ -525,6 +539,22 @@ Page({
       // Plan §5.3 / §5.4: decrypt sealed_payload events before downstream
       // logic touches them. Legacy plaintext events pass through untouched.
       const rawEvents = await decryptRawEvents(rawEventsRaw);
+
+      // Phase 4C: compute E2E status from the latest sealed event only.
+      // Old historical events with a prior keyId do NOT pollute the status.
+      {
+        const ck = getContentKey();
+        let status: 'enabled' | 'stale' | 'disabled';
+        if (!ck) { status = 'disabled'; }
+        else {
+          const latestSealed = rawEvents
+            .filter((ev: any) => ev.sealed_payload)
+            .sort((a: any, b: any) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())[0];
+          status = latestSealed && latestSealed.data?.e2eKeyStale === true ? 'stale' : 'enabled';
+        }
+        this.setData({ e2eStatus: status });
+        setE2EStatus(status); // persist for Settings page
+      }
 
       // Detect stale pending events: if a previously-pending event is no longer
       // pending in the fresh data (desktop approved, timeout, etc.), mark it
@@ -1239,7 +1269,7 @@ Page({
     this.setData({ commandText: val, canSendCommand: val.trim() !== '' });
   },
 
-  sendCommand() {
+  async sendCommand() {
     const text = this.data.commandText.trim();
     if (!text) {
       wx.showToast({ title: '请输入指令', icon: 'none' });
@@ -1258,9 +1288,38 @@ Page({
       return;
     }
 
+    const contentKeyHex = getContentKey();
+    const keyId = getKeyId();
+    const deviceId = getDeviceId();
+
+    let payload: Record<string, unknown>;
+
+    if (contentKeyHex && keyId && deviceId) {
+      try {
+        const commandId = generateUUID();
+        const envelope = await encryptCommandPayload(
+          text, contentKeyHex, keyId, deviceId, this.data.sessionId, commandId,
+        );
+        payload = {
+          sessionId: this.data.sessionId,
+          action: 'write_stdin',
+          sealed_command: envelope.sealed_command,
+          command_id: envelope.command_id,
+          key_id: envelope.key_id,
+          encryption_version: envelope.encryption_version,
+        };
+      } catch (err) {
+        console.error('[sendCommand] encryption failed, dropping command:', err);
+        wx.showToast({ title: '加密失败，无法发送指令', icon: 'none' });
+        return;
+      }
+    } else {
+      payload = { sessionId: this.data.sessionId, action: 'write_stdin', data: text };
+    }
+
     app.sendWs({
       type: 'command',
-      payload: { sessionId: this.data.sessionId, action: 'write_stdin', data: text },
+      payload,
     });
 
     const localStatusId = 'local-command-status-' + Date.now();

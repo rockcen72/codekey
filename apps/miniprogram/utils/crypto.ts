@@ -222,6 +222,51 @@ export async function decryptEventPayload(
   return { ...allowlistRest, ...decrypted };
 }
 
+// ── Command Envelope encrypt (mirrors packages/shared/src/bridge/command-envelope.ts) ──
+
+/**
+ * Encrypt a command text into a sealed_command envelope.
+ *
+ * AAD discriminator: eventType='command' ensures command AAD never collides
+ * with event envelope AAD (which uses eventType='user_prompt' etc.).
+ *
+ * Returns fields that should be sent in place of the plaintext `data`:
+ *   { sealed_command, command_id, key_id, encryption_version }
+ *
+ * The relay server cannot decrypt the sealed_command — it forwards it
+ * opaquely to the PC bridge.
+ */
+export async function encryptCommandPayload(
+  text: string,
+  contentKeyHex: string,
+  keyId: string,
+  deviceId: string,
+  sessionId: string,
+  commandId: string,
+): Promise<{
+  sealed_command: string;
+  command_id: string;
+  key_id: string;
+  encryption_version: number;
+}> {
+  const keyBytes = keyFromHex(contentKeyHex);
+  const aad = buildAad({
+    v: 1,
+    keyId,
+    deviceId,
+    sessionId,
+    eventId: commandId,
+    eventType: 'command',
+  });
+  const sealed_command = await encrypt(text, keyBytes, aad);
+  return {
+    sealed_command,
+    command_id: commandId,
+    key_id: keyId,
+    encryption_version: 1,
+  };
+}
+
 // ── Internal helpers ───────────────────────────────────────
 
 function bytesToHex(bytes: Uint8Array): string {
@@ -268,7 +313,7 @@ function base64ToBytes(b64: string): Uint8Array {
   return bytes;
 }
 
-function generateUUID(): string {
+export function generateUUID(): string {
   // Fallback UUID v4 for WeChat (no crypto.randomUUID)
   const hex = '0123456789abcdef';
   let uuid = '';

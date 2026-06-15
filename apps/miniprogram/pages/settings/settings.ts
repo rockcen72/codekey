@@ -1,4 +1,4 @@
-import { getDeviceId, clearAuth, getUserToken, getContentKey } from '../../services/storage';
+import { getDeviceId, clearAuth, getUserToken, getContentKey, getE2EStatus } from '../../services/storage';
 import {
   getSubscription,
   redeemCode,
@@ -36,6 +36,7 @@ interface PageData {
   redeemBusy: boolean;
   loaded: boolean;
   hasE2EKey: boolean;
+  e2eStatus: 'enabled' | 'stale' | 'disabled';
   debugScan: string;
 }
 
@@ -54,6 +55,7 @@ Page({
     redeemBusy: false,
     loaded: false,
     hasE2EKey: false,
+    e2eStatus: 'disabled',
     debugScan: '',
   } as PageData,
 
@@ -68,6 +70,7 @@ Page({
     this.setData({
       deviceId: getDeviceId() || '',
       hasE2EKey: !!getContentKey(),
+      e2eStatus: getE2EStatus(),
       debugScan,
     });
     this.refreshSubscription();

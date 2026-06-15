@@ -34,3 +34,6 @@
 .about-link { display: inline-block; margin-top: 12rpx; font-size: 26rpx; color: var(--ck-primary); font-weight: 600; }
 .e2e-ok { color: #16a34a; font-weight: 700; }
 .e2e-missing { color: var(--ck-muted); }
+.e2e-stale { color: #d97706; font-weight: 700; }
+.e2e-hint { margin-top: 8rpx; font-size: 22rpx; line-height: 1.5; padding: 8rpx 0; }
+.e2e-hint.stale-hint { color: #92400e; }

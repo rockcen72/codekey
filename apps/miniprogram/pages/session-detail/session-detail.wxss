@@ -94,6 +94,22 @@
 .quota-label-approaching { color: var(--ck-warning); }
 .quota-label-exhausted { color: var(--ck-danger); }
 
+/* ── E2E stale key banner ── */
+.e2e-banner {
+  margin: 0 24rpx 14rpx;
+  padding: 16rpx 20rpx;
+  border-radius: 12rpx;
+  font-size: 24rpx;
+  line-height: 1.5;
+  display: flex;
+  align-items: center;
+}
+.e2e-banner.stale {
+  background: #fef3c7;
+  border: 2rpx solid #f59e0b;
+  color: #92400e;
+}
+
 /* ── Timeline ── */
 
 .timeline {
