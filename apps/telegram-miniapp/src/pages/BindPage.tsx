@@ -3,7 +3,7 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import { publicRequest, userRequest } from '../api/client';
 import type { AuthState } from '../hooks/useAuth';
 import type { ClaimResult, ConfirmResult } from '../api/types';
-import { setDeviceCredentials, setContentKey } from '../auth/device-storage';
+import { setDeviceCredentials, setContentKey, clearContentKey } from '../auth/device-storage';
 import { getTelegramStartParam, parsePairingStartParam } from '../auth/pairing-start-param';
 import { generateEcdhKeyPair, deriveKeyMaterial } from '../utils/encryption';
 
@@ -39,29 +39,39 @@ export function BindPage({ auth }: Props) {
 
       const confirm = await publicRequest<ConfirmResult>('/api/v1/devices/confirm', {
         method: 'POST',
-        body: JSON.stringify({ code, platform: 'telegram', phonePublicKeyHex: ecdhKeyPair.publicKeyHex }),
+        body: JSON.stringify({ code, platform: 'telegram', phonePublicKeyHex: ecdhKeyPair.publicKeyHex, e2eKeyReceived: hasE2EKey }),
       });
+
+      // Phase 2: derive E2E key material BEFORE claim-device, persist AFTER.
+      // If derivation fails, the binding is aborted cleanly.
+      let ecdhDerived = false;
+      let contentKey: string | undefined;
+      let keyId: string | undefined;
+      if (confirm.e2eAvailable && confirm.desktopPublicKeyHex) {
+        const material = await deriveKeyMaterial(ecdhKeyPair.privateKey, confirm.desktopPublicKeyHex);
+        contentKey = material.contentKeyHex;
+        keyId = material.keyId;
+        ecdhDerived = true;
+      } else if (confirm.e2eAvailable) {
+        throw new Error('Server reports E2E available but no desktop key was returned');
+      }
+
+      // Phase 1 fallback: QR-embedded key
+      if (!ecdhDerived && hasE2EKey) {
+        contentKey = urlContentKey;
+        keyId = urlKeyId;
+      }
+
+      // Claim device + persist everything atomically (E2E key + credentials)
       await userRequest<ClaimResult>('/api/v1/auth/claim-device', {
         method: 'POST',
         body: JSON.stringify({ clientToken: confirm.clientToken }),
       });
       setDeviceCredentials(confirm.deviceId, confirm.clientToken);
-
-      // Phase 2: derive E2E key via ECDH when desktop provides its public key
-      let ecdhDerived = false;
-      if (confirm.desktopPublicKeyHex) {
-        try {
-          const material = await deriveKeyMaterial(ecdhKeyPair.privateKey, confirm.desktopPublicKeyHex);
-          setContentKey(material.contentKeyHex, material.keyId);
-          ecdhDerived = true;
-        } catch (err) {
-          console.error('[CodeKey] ECDH key derivation failed:', err);
-        }
-      }
-
-      // Phase 1 fallback: save E2E key from QR-embedded payload
-      if (!ecdhDerived && hasE2EKey) {
-        setContentKey(urlContentKey, urlKeyId);
+      if (contentKey && keyId) {
+        setContentKey(contentKey, keyId);
+      } else {
+        clearContentKey();
       }
 
       setConfirmEcdh(ecdhDerived);

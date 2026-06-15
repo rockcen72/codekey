@@ -43,9 +43,13 @@ export function setContentKey(contentKeyHex: string, keyId: string): void {
   if (keyId) setStoredValue(KEY_ID_KEY, keyId);
 }
 
+export function clearContentKey(): void {
+  removeStoredValue(CONTENT_KEY_KEY);
+  removeStoredValue(KEY_ID_KEY);
+}
+
 export function clearDeviceCredentials(): void {
   removeStoredValue(DEVICE_ID_KEY);
   removeStoredValue(CLIENT_TOKEN_KEY);
-  removeStoredValue(CONTENT_KEY_KEY);
-  removeStoredValue(KEY_ID_KEY);
+  clearContentKey();
 }

@@ -34,6 +34,12 @@ export interface UserEvent {
   pending: boolean;
   decision: string | null;
   created_at: string;
+  // E2E encryption envelope (Phase 4+) — server passes through sealed_payload/key_id/encryption_version
+  // when PC encrypted the event. data on encrypted events only carries allowlist fields
+  // (type, encrypted, safe_summary, preview_label) — actual body is in sealed_payload.
+  sealed_payload?: string | null;
+  key_id?: string | null;
+  encryption_version?: number | null;
 }
 
 export interface SubscriptionStatus {

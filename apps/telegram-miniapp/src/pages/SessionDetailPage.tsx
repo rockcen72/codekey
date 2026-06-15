@@ -5,6 +5,8 @@ import type { ApprovalResponseResult, UserEvent, UserSession } from '../api/type
 import type { AuthState } from '../hooks/useAuth';
 import { compactMarkdownWhitespace, markdownToHtml } from '../utils/markdown';
 import { agentChatName, agentColorClass, agentLabel } from '../utils/session-display';
+import { decryptEventPayload } from '../utils/encryption';
+import { getContentKey, getDeviceId } from '../auth/device-storage';
 
 const POLL_INTERVAL = 5_000;
 
@@ -111,6 +113,87 @@ function getEventData(event: UserEvent): Record<string, unknown> {
   return (event.data ?? {}) as Record<string, unknown>;
 }
 
+/** Module-level cache for decrypted event bodies, keyed by event id.
+ *  Decryption is deterministic + idempotent, so caching across re-polls is
+ *  safe and avoids re-running Web Crypto on every 5s tick. */
+const decryptedEventCache = new Map<string, Record<string, unknown>>();
+const decryptionFailureLogged = new Set<string>();
+
+/** Decrypt all encrypted events in-place (mutates the event.data field).
+ *
+ *  Behavior matrix (mirrors PC plan §5.3):
+ *    - sealed_payload missing                  → leave event untouched (legacy plaintext)
+ *    - data.encryption_error === true          → leave event as-is (PC failed encryption, show placeholder)
+ *    - encryption_version unknown              → leave + log once (treat as undecryptable placeholder)
+ *    - no contentKey / no deviceId stored      → leave + log once (user not paired with E2E)
+ *    - decrypt throws                          → leave + log once
+ *    - decrypt succeeds                        → merge decrypted body into event.data
+ */
+async function decryptEvents(events: UserEvent[]): Promise<UserEvent[]> {
+  const contentKey = getContentKey();
+  const deviceId = getDeviceId();
+  if (!contentKey || !deviceId) return events;
+
+  const tasks: Promise<void>[] = [];
+  const out = events.map((event) => ({ ...event }));
+
+  for (const event of out) {
+    if (!event.sealed_payload || !event.key_id) continue;
+    if (event.encryption_version !== 1) {
+      if (!decryptionFailureLogged.has(event.id)) {
+        console.warn('[session-detail] unknown encryption_version', event.encryption_version, 'for event', event.id);
+        decryptionFailureLogged.add(event.id);
+      }
+      continue;
+    }
+    const data = (event.data ?? {}) as Record<string, unknown>;
+    if (data.encryption_error === true) continue; // PC fail-closed placeholder — render as-is
+
+    const cached = decryptedEventCache.get(event.id);
+    if (cached) {
+      event.data = cached;
+      continue;
+    }
+
+    const sealed = event.sealed_payload;
+    const allowlist = data;
+    const aadFields = {
+      v: 1,
+      keyId: event.key_id,
+      deviceId,
+      sessionId: event.session_id,
+      eventId: (data.clientEventId as string) || event.id, // Phase 4 AAD = clientEventId; fall back to server id only for legacy events
+      eventType: event.type,
+    };
+
+    tasks.push(
+      decryptEventPayload(sealed, allowlist, contentKey, aadFields)
+        .then((merged) => {
+          decryptedEventCache.set(event.id, merged);
+          event.data = merged;
+        })
+        .catch((err) => {
+          if (!decryptionFailureLogged.has(event.id)) {
+            console.error('[session-detail] decrypt failed for event', event.id, err);
+            decryptionFailureLogged.add(event.id);
+          }
+          // Leave event.data as-is (allowlist only) — UI will show preview_label
+        }),
+    );
+  }
+
+  if (tasks.length > 0) await Promise.all(tasks);
+  return out;
+}
+
+function getEncryptedPlaceholder(data: Record<string, unknown>): string | null {
+  // PC fail-closed event — actual prompt couldn't be encrypted
+  if (data.encryption_error === true) return 'Encrypted content unavailable (encryption failed on desktop)';
+  // Phone-side: still encrypted because key missing or decrypt blew up
+  if (data.encrypted === true) return 'Encrypted content unavailable';
+  return null;
+}
+
 function isUserPromptEvent(event: UserEvent, data: Record<string, unknown>): boolean {
   return event.type === 'user_prompt'
     || data.type === 'user_prompt'
@@ -198,7 +281,12 @@ function buildChatMessages(events: UserEvent[], session: UserSession | null, res
 
     if (isUserPrompt) {
       lastCommandStarted = false;
-      const prompt = String(data.prompt || data.summary || rawSummary || '');
+      // Plan §5.3: when sealed_payload couldn't be decrypted, data only has
+      // allowlist fields (encrypted=true / encryption_error=true). Render a
+      // placeholder string instead of empty to keep the bubble visible.
+      const placeholder = getEncryptedPlaceholder(data);
+      const prompt = placeholder
+        ?? String(data.prompt || data.summary || rawSummary || '');
       if (!prompt || prompt === lastUserPrompt) continue;
       lastUserPrompt = prompt;
       messages.push({
@@ -574,10 +662,16 @@ export function SessionDetailPage({ auth }: Props) {
     if (!auth.token || !id || loadingRef.current) return;
     loadingRef.current = true;
     try {
-      const [nextSession, nextEvents] = await Promise.all([
+      const [nextSession, rawEvents] = await Promise.all([
         userRequest<UserSession>(`/api/v1/user/sessions/${id}`),
         userRequest<UserEvent[]>(`/api/v1/user/sessions/${id}/events`),
       ]);
+
+      // Decrypt encrypted events before sorting/dedup so downstream logic sees
+      // the merged plaintext data. Plan §5.3 / §5.4 — sealed_payload events
+      // get their data field populated with decrypted body; legacy plaintext
+      // events pass through untouched.
+      const nextEvents = await decryptEvents(rawEvents);
 
       nextEvents.sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
 
