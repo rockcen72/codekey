@@ -1,5 +1,5 @@
 import { RelayClient, ApprovalBridge, startBridgeServer, CodexResumeManager, OpenCodeSessionManager, whichBinary, discoverOpenCodePort } from '@codekey/shared/bridge';
-import { clearCredentials } from './auth/credentials.js';
+import { clearCredentials, loadCredentials } from './auth/credentials.js';
 import { createAuditSink } from './services/audit-log.js';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
@@ -52,6 +52,11 @@ async function main(): Promise<void> {
   const isPairing = args.includes('--pairing');
   const relay = new RelayClient(deviceId, token, relayUrl, isPairing);
   const bridge = new ApprovalBridge(relay, { auditSink: createAuditSink() });
+  // Load E2E encryption key from credentials and plug into bridge
+  const creds = loadCredentials();
+  if (creds?.contentKeyHex && creds?.keyId) {
+    bridge.setContentKey(creds.contentKeyHex, creds.keyId, deviceId);
+  }
 
   bridge.listenRelayCommands();
 

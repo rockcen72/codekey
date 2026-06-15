@@ -429,10 +429,13 @@ describe('Codex real transcript format', () => {
       expect(userPrompt).toBeDefined();
       expect(started).toBeDefined();
       expect(started?.payload?.sessionId).toBe('server-codex');
+      // Audit r2 P0-A: command_started is a status event — body stripped, not echoed.
       expect(started?.payload?.data).toEqual({
         type: 'command_started',
-        command: '继续排查这个 bug',
+        safe_summary: 'Command sent',
+        preview_label: 'command_started',
       });
+      expect(started?.payload?.data).not.toHaveProperty('command');
     });
   });
 

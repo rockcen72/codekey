@@ -198,7 +198,14 @@ export class CodexResumeManager {
         sessionId: serverSessionId,
         agent: 'codex',
         eventType: 'command_started',
-        data: { type: 'command_started', command: prompt },
+        // Plan §5.1 + audit r2 P0-A: command_started is a status event. The
+        // user prompt body lives in the user_prompt event above (encrypted).
+        // Storing it here verbatim would bypass encryption.
+        data: {
+          type: 'command_started',
+          safe_summary: 'Command sent',
+          preview_label: 'command_started',
+        },
         ts: new Date().toISOString(),
       },
     }, 'phone-originated');
@@ -540,6 +547,17 @@ export class CodexResumeManager {
    * Uses RelayClient.sendEvent which sends pre-serialized.
    */
   private _forwardEvent(serverSessionId: string, msg: Record<string, unknown>, contentPolicy: ContentPolicy = 'enforce'): void {
+    // Audit r2 P0-B: unified outbound encryption. Encrypt the inner payload
+    // BEFORE serializing + projection — encryption only fires for event types
+    // in the encryptable set (see ApprovalBridge.ENCRYPTABLE_EVENT_TYPES) and
+    // returns the input unchanged otherwise, so non-encryptable Codex events
+    // (command_started, task_complete, error, etc.) pass through untouched.
+    if (this.approvalBridge && msg.type === 'event' && msg.payload && typeof msg.payload === 'object') {
+      const encryptedPayload = this.approvalBridge.encryptOutboundPayload(
+        msg.payload as Record<string, unknown>,
+      );
+      msg = { ...msg, payload: encryptedPayload };
+    }
     const raw = JSON.stringify(msg);
     const state = this.sessions.get(serverSessionId);
     const localSessionId = state?.localSession.sessionId ?? '';

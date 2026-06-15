@@ -320,6 +320,7 @@ export function renderPrivacyDetailContent(state: SidebarState, filter: string):
     forwarded: i18n(state.lang, 'Forwarded', '已发'),
     blocked: i18n(state.lang, 'Blocked', '已拦截'),
     sanitized: i18n(state.lang, 'Sanitized', '已脱敏'),
+    redacted_path: i18n(state.lang, 'Path Redacted', '路径已擦除'),
   };
   const sourceLabels: Record<string, string> = {
     approval: i18n(state.lang, 'Approval', '审批'),
@@ -848,7 +849,13 @@ ${renderSubscribe(state)}
           var payload = msg.payload || {};
           var token = payload.deviceToken || msg.deviceToken || msg.token;
           var deviceId = payload.deviceId || msg.deviceId;
-          api.postMessage({ action: 'pairedDevice', token: token, deviceId: deviceId });
+          api.postMessage({
+            action: 'pairedDevice',
+            token: token,
+            deviceId: deviceId,
+            phonePublicKeyHex: payload.phonePublicKeyHex,
+            e2eKeyReceived: payload.e2eKeyReceived
+          });
           ws.close(); _pairingWs = null;
           var ps = document.getElementById('pairingStatus');
           if (ps) { ps.textContent = 'Paired successfully!'; ps.className = 'pairing-status success'; }
@@ -1790,6 +1797,7 @@ body{
 .privacy-tag.forwarded{background:#86efac22;color:#86efac}
 .privacy-tag.blocked{background:#f74d4d22;color:#f74d4d}
 .privacy-tag.sanitized{background:#f59e0b22;color:#f59e0b}
+.privacy-tag.redacted_path{background:#f59e0b22;color:#f59e0b}
 .privacy-source{color:var(--vscode-descriptionForeground,#7878a0)}
 .privacy-len{margin-left:auto;color:var(--vscode-descriptionForeground,#50506e)}
 .privacy-preview{font-size:10px;color:var(--vscode-descriptionForeground,#7878a0);margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:monospace}

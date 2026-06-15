@@ -3,7 +3,7 @@ import * as path from 'node:path';
 import * as crypto from 'node:crypto';
 import * as os from 'node:os';
 import WebSocket from 'ws';
-import { loadCredentials, clearCredentials, loadDesktopInstallId } from '../auth/credentials.js';
+import { loadCredentials, clearCredentials, loadDesktopInstallId, type Credentials } from '../auth/credentials.js';
 import { createApi, ApiError, type SessionResponse, type EventResponse, type SubscriptionResponse } from '../api/client.js';
 import { getAgents } from '../agents/registry.js';
 import { BridgeStatusService } from '../services/bridge-status.js';
@@ -110,6 +110,22 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
   private _pairingWs?: WebSocket;
   private _pairingTimeout?: ReturnType<typeof setTimeout>;
   private _ecdhPrivateKey?: Buffer;
+  /** Pending credentials staged during pairing — held in memory only.
+   *  We must NOT write to disk until _handlePairingComplete() succeeds, otherwise:
+   *   1. an aborted pairing leaves disk in a half-initialized state (deviceSecret
+   *      rotated, deviceToken/contentKeyHex missing) — bridge can no longer auth
+   *      and existing phone clients lose their server-side binding;
+   *   2. the still-running bridge for an existing pairing keeps using the old
+   *      contentKeyHex anyway, so the in-flight new pairing has no reason to
+   *      replace it pre-completion. */
+  private _pendingPairing?: {
+    deviceId: string;
+    deviceSecret: string;
+    relayUrl: string;
+    contentKeyHex: string;
+    keyId: string;
+    usedFreshDevice: boolean;
+  };
   private _claudeAttachInFlight = new Set<string>();
   private _opencodeAttachInFlight = new Set<string>();
   private _codexStaleStopInFlight = new Set<string>();
@@ -1382,7 +1398,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         this._handlePairingGenerate();
         break;
       case 'pairedDevice':
-        this._handlePairingComplete(msg.token, msg.deviceId);
+        this._handlePairingComplete(msg.token, msg.deviceId, msg.phonePublicKeyHex, msg.e2eKeyReceived);
         break;
       case 'redeemCode':
         this._handleRedeemCode(msg.code);
@@ -1473,9 +1489,12 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     const desktopInstallId = loadDesktopInstallId();
     let deviceSecret = existingCreds?.deviceSecret || crypto.randomUUID();
 
-    // Generate ECDH keypair for E2E encryption
+    // Generate ECDH keypair for E2E encryption. Hold privateKey in the
+    // local `ecdhKeyPair` closure for now; we only assign it to the
+    // instance field (this._ecdhPrivateKey) AFTER _closePairingSocket()
+    // has run later in this function — otherwise _closePairingSocket would
+    // wipe it out before the phone responds.
     const ecdhKeyPair = generateEcdhKeyPair();
-    this._ecdhPrivateKey = ecdhKeyPair.privateKey;
 
     const requestPair = (deviceId?: string) => {
       const deviceSecretHash = crypto.createHash('sha256').update(deviceSecret).digest('hex');
@@ -1494,11 +1513,17 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     };
     try {
       let resp = await requestPair(existingCreds?.deviceId);
+      let usedFreshDevice = false;
       if ((resp.status === 403 || resp.status === 404) && existingCreds?.deviceId) {
         log(`pairing existing device rejected (${resp.status}); creating a fresh device`);
+        // Server has authoritatively rejected our deviceId — the old binding
+        // is gone, the old deviceToken is dead, and the old contentKey points
+        // at a device that no longer exists. Wiping disk here is correct
+        // (unlike the generate-time wipe we removed below).
         clearCredentials();
         deviceSecret = crypto.randomUUID();
         resp = await requestPair();
+        usedFreshDevice = true;
       }
       if (!resp.ok) {
         const detail = await resp.text().catch(() => '');
@@ -1511,17 +1536,61 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
 
       const platform = this._pairingState?.platform || this._selectedPairingPlatform;
       // E2E key generation: WeChat (QR carries key via codekey:// URL),
-      // Telegram (user manually enters key). Feishu not in scope yet.
-      const contentKeyHex = platform !== 'feishu' ? crypto.randomBytes(32).toString('hex') : '';
-      const keyId = contentKeyHex ? contentKeyHex.slice(0, 16) : '';
+      // Telegram (ECDH key exchange, key embedded only as Phase 1 fallback).
+      // Reuse existing contentKey when re-pairing the same desktop install
+      // so phones that already have the key cached don't fall out of sync —
+      // every fresh randomBytes() invalidates whatever the phone stored.
+      // Only generate a new key when the user has no contentKey on disk yet
+      // (truly first-time pair on this machine).
+      let contentKeyHex = '';
+      let keyId = '';
+      if (platform !== 'feishu') {
+        if (!usedFreshDevice && existingCreds?.contentKeyHex && existingCreds?.keyId) {
+          contentKeyHex = existingCreds.contentKeyHex;
+          keyId = existingCreds.keyId;
+        } else {
+          contentKeyHex = crypto.randomBytes(32).toString('hex');
+          keyId = contentKeyHex.slice(0, 16);
+        }
+      }
       let pairUrl = result.pairUrl || '';
       if (platform === 'wechat') {
         pairUrl = `codekey://pair?code=${result.code}&key_id=${keyId}&content_key=${contentKeyHex}&v=1`;
       }
+      log('[CodeKey] pair QR generated:', JSON.stringify({
+        platform,
+        urlScheme: pairUrl.startsWith('codekey://') ? 'codekey' : 'http(s)',
+        hasContentKeyParam: pairUrl.includes('content_key='),
+        urlLen: pairUrl.length,
+        reusedKey: !usedFreshDevice && !!(existingCreds?.contentKeyHex && existingCreds?.keyId),
+      }));
 
-      const { saveCredentials } = await import('../auth/credentials.js');
-      saveCredentials({ deviceId: result.deviceId, deviceSecret, relayUrl });
-      await BridgeStatusService.getInstance().stop({ force: true });
+      // Tear down any previous in-flight pairing socket BEFORE we stage new
+      // pending state. _closePairingSocket() wipes _pendingPairing /
+      // _ecdhPrivateKey, so the order here matters: close-first, then stage,
+      // then open. _openPairingSocket() no longer self-closes (see its
+      // doc-comment) precisely so this ordering is safe.
+      this._closePairingSocket();
+
+      // Re-stage ECDH private key after the close (close also wipes it).
+      this._ecdhPrivateKey = ecdhKeyPair.privateKey;
+
+      // Stage credentials in memory; do NOT touch disk or stop the running
+      // bridge until the user actually completes pairing. See _pendingPairing
+      // doc above. We still need the WS connection (deviceId + secret) to
+      // hear back from the phone — but the WS auth uses the in-memory secret,
+      // not what's on disk.
+      this._pendingPairing = {
+        deviceId: result.deviceId,
+        deviceSecret,
+        relayUrl,
+        contentKeyHex,
+        keyId,
+        usedFreshDevice,
+      };
+      // saveCredentials NOT called here — moved to _handlePairingComplete().
+      // BridgeStatusService.stop NOT called here — old bridge keeps serving
+      // existing phones throughout the pairing-code-display window.
       this._openPairingSocket(result.deviceId, deviceSecret, relayUrl);
       this._pairingState = {
         code: String(result.code),
@@ -1555,10 +1624,22 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       this._pairingWs = undefined;
       try { ws.close(); } catch {}
     }
+    // Drop staged credentials and ECDH private key whenever we tear down the
+    // pairing flow without a successful completion. _handlePairingComplete()
+    // takes ownership before this point on the success path; here we only
+    // wipe leftovers so the next "Generate" click starts clean.
+    this._pendingPairing = undefined;
+    this._ecdhPrivateKey = undefined;
   }
 
   private _openPairingSocket(deviceId: string, deviceSecret: string, relayUrl: string): void {
-    this._closePairingSocket();
+    // Caller is responsible for invoking _closePairingSocket() beforehand if
+    // they want to tear down a previous in-flight pairing. We do NOT call it
+    // here because _closePairingSocket() also wipes _pendingPairing /
+    // _ecdhPrivateKey — and the only call site that opens a fresh socket
+    // (_handlePairingGenerate) sets those fields immediately before this
+    // call. Calling close from inside open would erase them on every
+    // generate.
     const wsUrl = `${relayUrl.replace(/^http/, 'ws')}/ws?device_id=${encodeURIComponent(deviceId)}&device_secret=${encodeURIComponent(deviceSecret)}`;
     const ws = new WebSocket(wsUrl, { rejectUnauthorized: false });
     this._pairingWs = ws;
@@ -1582,7 +1663,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       try {
         const msg = JSON.parse(raw.toString()) as {
           type?: string;
-          payload?: { deviceToken?: string; deviceId?: string; phonePublicKeyHex?: string; e2eAvailable?: boolean };
+          payload?: { deviceToken?: string; deviceId?: string; phonePublicKeyHex?: string; e2eAvailable?: boolean; e2eKeyReceived?: boolean };
           deviceToken?: string;
           token?: string;
           deviceId?: string;
@@ -1605,7 +1686,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         if (msg.type === 'device_token') {
           const token = msg.payload?.deviceToken || msg.deviceToken || msg.token;
           const nextDeviceId = msg.payload?.deviceId || msg.deviceId;
-          this._handlePairingComplete(token, nextDeviceId, msg.payload?.phonePublicKeyHex);
+          this._handlePairingComplete(token, nextDeviceId, msg.payload?.phonePublicKeyHex, msg.payload?.e2eKeyReceived);
         }
       } catch (err) {
         log(`Pairing socket message parse failed: ${err}`);
@@ -1623,7 +1704,12 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     });
   }
 
-  private async _handlePairingComplete(token?: string, deviceId?: string, phonePublicKeyHex?: string): Promise<void> {
+  private async _handlePairingComplete(token?: string, deviceId?: string, phonePublicKeyHex?: string, e2eKeyReceived?: boolean): Promise<void> {
+    // Take ownership of the staged state BEFORE _closePairingSocket() wipes it.
+    const pending = this._pendingPairing;
+    const ecdhPrivateKey = this._ecdhPrivateKey;
+    this._pendingPairing = undefined;
+    this._ecdhPrivateKey = undefined;
     this._closePairingSocket();
     if (!token) {
       log('Pairing completed without device token');
@@ -1639,43 +1725,80 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       return;
     }
 
-    // Derive ECDH key material if phone sent its public key
-    let ecdhKeyHex: string | undefined;
-    let ecdhKeyId: string | undefined;
-    if (phonePublicKeyHex && this._ecdhPrivateKey) {
+    // Derive ECDH key material if phone sent its public key.
+    // On success, ECDH-derived key becomes the active contentKey — overwrites legacy QR key.
+    let ecdhMaterial: { contentKeyHex: string; keyId: string } | undefined;
+    if (phonePublicKeyHex && ecdhPrivateKey) {
       try {
-        const sharedSecret = computeSharedSecret(this._ecdhPrivateKey, phonePublicKeyHex);
-        const material = deriveKeyMaterial(sharedSecret);
-        ecdhKeyHex = material.contentKeyHex;
-        ecdhKeyId = material.keyId;
+        const sharedSecret = computeSharedSecret(ecdhPrivateKey, phonePublicKeyHex);
+        ecdhMaterial = deriveKeyMaterial(sharedSecret);
       } catch (err) {
         log('[CodeKey] ECDH key exchange failed:', err instanceof Error ? err.message : String(err));
       }
     }
-    this._ecdhPrivateKey = undefined;
 
-    const e2eAvailable = !!ecdhKeyHex;
+    const e2eAvailable = !!ecdhMaterial;
+    log('[CodeKey] pairing E2E status:', JSON.stringify({
+      hasPhonePublicKeyHex: !!phonePublicKeyHex,
+      hasE2eKeyReceived: e2eKeyReceived === true,
+      hasPairingStateKey: !!(this._pairingState?.contentKeyHex && this._pairingState?.keyId),
+      ecdhSuccess: !!ecdhMaterial,
+    }));
 
-    const creds = loadCredentials();
-    if (creds) {
-      if (deviceId) creds.deviceId = deviceId;
-      creds.deviceToken = token;
-      const platform = this._pairingState?.platform;
-      if (platform === 'feishu' || platform === 'wechat' || platform === 'telegram') creds.platform = platform;
-      if (platform === 'telegram' && !e2eAvailable) {
-        delete creds.contentKeyHex;
-        delete creds.keyId;
-      } else {
-        if (this._pairingState?.contentKeyHex) creds.contentKeyHex = this._pairingState.contentKeyHex;
-        if (this._pairingState?.keyId) creds.keyId = this._pairingState.keyId;
-      }
-      if (ecdhKeyHex) creds.ecdhKeyHex = ecdhKeyHex;
-      if (ecdhKeyId) creds.ecdhKeyId = ecdhKeyId;
-      const { saveCredentials } = await import('../auth/credentials.js');
-      saveCredentials(creds);
-      BridgeStatusService.getInstance().restart();
-      vscode.window.showInformationMessage('Device paired successfully!');
+    if (!pending) {
+      // No staged credentials — pairing flow was never properly initiated
+      // (or was reset). Without these we can't write a coherent creds file.
+      log('Pairing complete arrived without _pendingPairing staging — refusing to write disk');
+      this._pairingState = {
+        code: this._pairingState?.code || '',
+        method: (this._pairingState?.platform || this._selectedPairingPlatform) === 'telegram' ? 'qr' : 'code',
+        platform: this._pairingState?.platform || this._selectedPairingPlatform,
+        status: 'error',
+        statusText: 'Pairing failed: missing pending state',
+        expiresAt: 0,
+      };
+      this._pushState();
+      return;
     }
+
+    // Merge: start from existing disk creds (keep any contentKey we deliberately
+    // didn't touch during generate phase), then layer pending pair-specific
+    // fields on top, then layer the per-platform contentKey policy.
+    const existing = loadCredentials();
+    const creds: Credentials = {
+      ...(existing ?? {}),
+      deviceId: deviceId || pending.deviceId,
+      deviceSecret: pending.deviceSecret,
+      relayUrl: pending.relayUrl,
+      deviceToken: token,
+    };
+    const platform = this._pairingState?.platform;
+    if (platform === 'feishu' || platform === 'wechat' || platform === 'telegram') creds.platform = platform;
+    if (ecdhMaterial) {
+      // ECDH success — this is the active key for all subsequent crypto
+      creds.contentKeyHex = ecdhMaterial.contentKeyHex;
+      creds.keyId = ecdhMaterial.keyId;
+    } else if (e2eKeyReceived) {
+      // Phone explicitly confirmed it has the legacy key (QR Phase 1).
+      // Desktop saves the same key for compatibility with old Mini Apps.
+      if (pending.contentKeyHex) creds.contentKeyHex = pending.contentKeyHex;
+      if (pending.keyId) creds.keyId = pending.keyId;
+    } else if (platform === 'telegram' && !e2eAvailable) {
+      // Telegram without ECDH → no E2E (manual code, Phase 1 fallback absent)
+      delete creds.contentKeyHex;
+      delete creds.keyId;
+    } else {
+      // Phase 1 fallback: legacy QR-embedded key (WeChat).
+      // pending.contentKeyHex was either reused from existing creds (re-pair
+      // case) or freshly generated (first-pair case) — either way it's the
+      // canonical key for this binding.
+      if (pending.contentKeyHex) creds.contentKeyHex = pending.contentKeyHex;
+      if (pending.keyId) creds.keyId = pending.keyId;
+    }
+    const { saveCredentials } = await import('../auth/credentials.js');
+    saveCredentials(creds);
+    BridgeStatusService.getInstance().restart();
+    vscode.window.showInformationMessage('Device paired successfully!');
     this._pairingState = {
       code: this._pairingState?.code || '',
       method: (this._pairingState?.platform || this._selectedPairingPlatform) === 'telegram' ? 'qr' : 'code',
