@@ -1883,4 +1883,81 @@ describe('outbound encryption invariants', () => {
       },
     )).toThrow();
   });
+
+  it('handleHookEvent task_complete gets encrypted when content key is set', async () => {
+    const relay = new FakeRelay();
+    const bridge = new ApprovalBridge(relay as any);
+    await bridge.ensureSession('claude-e2e-hook', 'window-e2e-1');
+    bridge.setContentKey(TEST_KEY, TEST_KEY_ID, TEST_DEVICE);
+
+    await bridge.handleHookEvent({
+      eventType: 'task_complete',
+      claudeSessionId: 'claude-e2e-hook',
+      data: { type: 'task_complete', summary: 'claude-hook-secret-output', summaryShort: 'secret' },
+    });
+
+    const sent = relay.sent.find((s) => s.includes('claude-hook:'));
+    expect(sent).toBeDefined();
+    const parsed = JSON.parse(sent!);
+    expect(parsed.payload.sealed_payload).toBeDefined();
+    expect(typeof parsed.payload.sealed_payload).toBe('string');
+    expect(parsed.payload.key_id).toBe(TEST_KEY_ID);
+    expect(parsed.payload.encryption_version).toBe(1);
+    expect(sent).not.toContain('claude-hook-secret-output');
+  });
+
+  it('session_idle hook synthesizes encrypted task_complete when content key is set', async () => {
+    const relay = new FakeRelay();
+    const bridge = new ApprovalBridge(relay as any);
+    await bridge.ensureSession('claude-e2e-idle', 'window-e2e-2');
+    bridge.setContentKey(TEST_KEY, TEST_KEY_ID, TEST_DEVICE);
+
+    await bridge.handleHookEvent({
+      eventType: 'session_idle',
+      claudeSessionId: 'claude-e2e-idle',
+      lastAssistantMessage: 'idle-synth-secret-response',
+      data: { type: 'session_idle', idleMinutes: 0 },
+    });
+
+    const sent = relay.sent.find((s) => s.includes('claude-synth:'));
+    expect(sent).toBeDefined();
+    const parsed = JSON.parse(sent!);
+    expect(parsed.payload.sealed_payload).toBeDefined();
+    expect(typeof parsed.payload.sealed_payload).toBe('string');
+    expect(parsed.payload.key_id).toBe(TEST_KEY_ID);
+    expect(parsed.payload.encryption_version).toBe(1);
+    expect(sent).not.toContain('idle-synth-secret-response');
+  });
+
+  it('transcript assistant backfill task_complete gets encrypted when content key is set', async () => {
+    const tmpDir = createTranscriptFixture('claude-e2e-tc', 'E2E backfill test');
+    process.env.CLAUDE_CONFIG_DIR = tmpDir;
+    try {
+      const relay = new FakeRelay();
+      const bridge = new ApprovalBridge(relay as any);
+      bridge.setContentKey(TEST_KEY, TEST_KEY_ID, TEST_DEVICE);
+
+      await bridge.attachClaudeSession('claude-e2e-tc');
+      await new Promise(resolve => setTimeout(resolve, 200));
+
+      appendTranscriptLine(tmpDir, 'claude-e2e-tc', {
+        type: 'assistant',
+        timestamp: '2026-06-14T00:00:00.000Z',
+        message: { role: 'assistant', content: [{ type: 'text', text: 'transcript-backfill-secret' }] },
+      });
+
+      await (bridge as any).syncClaudeTranscript('claude-e2e-tc', 'server-claude-e2e-tc');
+
+      const sent = relay.sent.find((s) => s.includes('assistant:claude-e2e-tc:'));
+      expect(sent).toBeDefined();
+      const parsed = JSON.parse(sent!);
+      expect(parsed.payload.sealed_payload).toBeDefined();
+      expect(typeof parsed.payload.sealed_payload).toBe('string');
+      expect(parsed.payload.key_id).toBe(TEST_KEY_ID);
+      expect(parsed.payload.encryption_version).toBe(1);
+      expect(sent).not.toContain('transcript-backfill-secret');
+    } finally {
+      delete process.env.CLAUDE_CONFIG_DIR;
+    }
+  });
 });

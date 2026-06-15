@@ -1649,6 +1649,7 @@ export class ApprovalBridge {
     const relayMsg: SessionEventMessage = {
       type: 'event',
       payload: {
+        clientEventId: `claude-hook:${claudeSessionId}:${Date.now()}`,
         sessionId: serverSessionId,
         agent: 'claude-code-hook',
         eventType: body.eventType,
@@ -1688,6 +1689,7 @@ export class ApprovalBridge {
     }
 
     if (shouldForwardRelayEvent) {
+      relayMsg.payload = this._encryptPayloadIfNeeded(relayMsg.payload as Record<string, unknown>) as any;
       const hookPolicy = checkHistoryPolicy(claudeSessionId, 'claude-code-hook');
       const hookProjected = projectHistoryEventForPolicy(JSON.stringify(relayMsg), hookPolicy);
       if (hookProjected !== null) {
@@ -1721,6 +1723,7 @@ export class ApprovalBridge {
       const msg: SessionEventMessage = {
         type: 'event',
         payload: {
+          clientEventId: `claude-synth:${claudeSessionId}:${Date.now()}`,
           sessionId: serverSessionId,
           agent: 'claude-code-hook',
           eventType: 'task_complete',
@@ -1732,6 +1735,7 @@ export class ApprovalBridge {
           ts: new Date().toISOString(),
         },
       };
+      msg.payload = this._encryptPayloadIfNeeded(msg.payload as Record<string, unknown>) as any;
       const idlePolicy = checkHistoryPolicy(claudeSessionId, 'claude-code-hook');
       const idleProjected = projectHistoryEventForPolicy(JSON.stringify(msg), idlePolicy);
       if (idleProjected !== null) {
@@ -1969,6 +1973,7 @@ export class ApprovalBridge {
           ts: entry.timestamp || new Date().toISOString(),
         },
       };
+      relayMsg.payload = this._encryptPayloadIfNeeded(relayMsg.payload as Record<string, unknown>) as any;
       const raw = JSON.stringify(relayMsg);
       const projected = projectHistoryEventForPolicy(raw, policy);
       if (projected !== null) {
