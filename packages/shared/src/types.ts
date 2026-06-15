@@ -55,6 +55,22 @@ export interface CommandEventData {
   cwd?: string;
 }
 
+/** Status-only payload for `command_started`. Audit r2 P0-A: command_started
+ *  is a STATE event, not a content event — the actual user prompt body lives
+ *  in the user_prompt event (encrypted into sealed_payload). Bridge code
+ *  emits the sanitized variant; legacy code paths may still emit `command`.
+ *  Encrypted-event fields (encrypted/safe_summary/preview_label/encryption_error)
+ *  are also valid here so the same shape can pass through encryption envelope. */
+export interface CommandStartedStatusData {
+  command?: string;          // legacy / non-sanitized callers — discouraged
+  safe_summary?: string;     // sanitized content-free label, e.g. "Command sent"
+  preview_label?: string;    // UI hint, e.g. "command_started"
+  encrypted?: boolean;       // set when this event went through encryption envelope
+  encryption_error?: boolean; // set when PC fail-closed encryption
+  exitCode?: number;
+  cwd?: string;
+}
+
 export interface ErrorEventData {
   message: string;
   code?: string;
@@ -79,7 +95,7 @@ export type AgentEventPayload =
   | ({ type: 'approval_required' } & ApprovalEventData)
   | InputRequiredEvent
   | ({ type: 'question' } & QuestionEventData)
-  | ({ type: 'command_started' } & CommandEventData)
+  | ({ type: 'command_started' } & CommandStartedStatusData)
   | ({ type: 'command_finished' } & CommandEventData)
   | ({ type: 'task_complete' } & { summary: string; summaryShort?: string; output?: string })
   | ({ type: 'diff_ready' } & DiffEventData)
@@ -167,7 +183,7 @@ export type WsMessage =
   | { type: 'session_deactivated'; payload: { sessionId: string } }
   | { type: 'attached_sessions'; payload: { sessions: { id: string; claudeSessionId: string | null }[] } }
   | { type: 'pairing_ready'; payload: { deviceId: string } }
-  | { type: 'device_token'; payload: { deviceToken: string; deviceId: string; phonePublicKeyHex?: string; e2eAvailable?: boolean } }
+  | { type: 'device_token'; payload: { deviceToken: string; deviceId: string; phonePublicKeyHex?: string; e2eAvailable?: boolean; platform?: 'wechat' | 'feishu' | 'telegram'; e2eKeyReceived?: boolean } }
   | { type: 'mp_online' }
   | { type: 'mp_offline' }
   | { type: 'error'; payload: { code: string } }

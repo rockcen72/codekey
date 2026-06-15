@@ -14,7 +14,20 @@ export const DEFAULT_HISTORY_SHARE_POLICY = HistorySharePolicy.Off;
 export const DEFAULT_RECENT_COUNT = 10;
 export const MIN_RECENT_COUNT = 1;
 export const MAX_RECENT_COUNT = 50;
-export const SANITIZED_ALLOWED_FIELDS = ['type', 'summary', 'summaryShort', 'status'] as const;
+export const SANITIZED_ALLOWED_FIELDS = [
+  'type',
+  'summary',
+  'summaryShort',
+  'status',
+  // E2E encryption envelope markers (Phase 4+) — must survive Sanitized projection
+  // so phone-side decryption logic still sees the envelope shape. Stripping these
+  // would leave sealed_payload orphaned at the outer level (still safe — relay
+  // can't read it — but client wouldn't know to attempt decryption).
+  'encrypted',
+  'safe_summary',
+  'preview_label',
+  'encryption_error',
+] as const;
 
 export type AgentType = 'claude' | 'codex' | 'opencode' | string;
 export type PolicyKey = `${AgentType}:${string}` | AgentType | '*';

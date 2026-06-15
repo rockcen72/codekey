@@ -131,7 +131,19 @@ describe('history-policy', () => {
       const r = checkHistoryPolicy('s', 'codex');
       expect(r.allowed).toBe(true);
       expect(r.maxCount).toBe(DEFAULT_RECENT_COUNT);
-      expect(r.allowedFields).toEqual(['type', 'summary', 'summaryShort', 'status']);
+      // Audit r2 P1-B: encryption envelope markers must survive Sanitized projection
+      // so phone-side decryption logic still sees the encrypted=true / safe_summary
+      // / preview_label / encryption_error markers.
+      expect(r.allowedFields).toEqual([
+        'type',
+        'summary',
+        'summaryShort',
+        'status',
+        'encrypted',
+        'safe_summary',
+        'preview_label',
+        'encryption_error',
+      ]);
     });
 
     it('per-session overrides agent-level', () => {

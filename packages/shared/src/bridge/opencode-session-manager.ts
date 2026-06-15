@@ -87,6 +87,11 @@ export class OpenCodeSessionManager {
   private _messageRoles = new Map<string, 'user' | 'assistant'>();
   /** Cache part text from onMessagePartUpdated so onMessageUpdated uses actual prompt text, not summary.title. */
   private _messageTexts = new Map<string, string>();
+  /** Cache message info.time.created (epoch ms) so onMessagePartUpdated can stamp
+   *  user_prompt with the actual user-input time, not the bridge's wall clock at
+   *  part-update arrival (which can land *after* the assistant's task_complete
+   *  for the same turn — see plan §6 vertical slice ordering bug). */
+  private _messageCreatedTimes = new Map<string, number>();
 
   private _abortController: AbortController | null = null;
   private _stopped = false;
@@ -164,6 +169,7 @@ export class OpenCodeSessionManager {
     this.deliveredMessageParts.clear();
     this._messageRoles.clear();
     this._messageTexts.clear();
+    this._messageCreatedTimes.clear();
   }
 
   async attachSession(localSessionId: string, title?: string, knownServerSessionId?: string): Promise<string> {
@@ -276,14 +282,17 @@ export class OpenCodeSessionManager {
         const text = extractOpenCodeHistoryText(m);
         if (role === 'user') {
           if (text) {
-            const raw = JSON.stringify({ type: 'event', payload: {
+            // Audit r3 P0: encrypt user_prompt at the unified outbound entry
+            // before serialize+project+send. Plan §6.2.
+            const encryptedPayload = this.bridge.encryptOutboundPayload({
               clientEventId: `oc-hist:${localSessionId}:${Date.now()}:${Math.random()}`,
               sessionId: serverSessionId,
               agent: 'opencode',
               eventType: 'user_prompt',
               data: { type: 'user_prompt', prompt: text, summary: text.slice(0, 200) },
               ts: info.time?.created ? new Date(info.time.created).toISOString() : new Date().toISOString(),
-            }});
+            });
+            const raw = JSON.stringify({ type: 'event', payload: encryptedPayload });
             const projected = projectHistoryEventForPolicy(raw, policy);
             if (projected !== null) {
               this.bridge.privacyCheckAndSend('history', projected, undefined, undefined);
@@ -291,14 +300,17 @@ export class OpenCodeSessionManager {
           }
         } else if (role === 'assistant') {
           if (text) {
-            const raw = JSON.stringify({ type: 'event', payload: {
+            // task_complete is not in ENCRYPTABLE_EVENT_TYPES (Phase 4 scope = user_prompt only),
+            // but route through encryptOutboundPayload so future eventType expansions auto-cover this site.
+            const encryptedPayload = this.bridge.encryptOutboundPayload({
               clientEventId: `oc-hist:${localSessionId}:${Date.now()}:${Math.random()}`,
               sessionId: serverSessionId,
               agent: 'opencode',
               eventType: 'task_complete',
               data: { type: 'task_complete', summary: text, summaryShort: text.slice(0, 200), output: text },
               ts: info.time?.completed || info.time?.created ? new Date((info.time.completed || info.time.created) as number).toISOString() : new Date().toISOString(),
-            }});
+            });
+            const raw = JSON.stringify({ type: 'event', payload: encryptedPayload });
             const projected = projectHistoryEventForPolicy(raw, policy);
             if (projected !== null) {
               this.bridge.privacyCheckAndSend('history', projected, undefined, undefined);
@@ -695,6 +707,15 @@ export class OpenCodeSessionManager {
       this._messageRoles.set(messageID, info.role as 'user' | 'assistant');
     }
 
+    // Cache info.time.created so the part-path can stamp user_prompt with the
+    // user-input time (avoids ordering bug where part.updated arrives later
+    // than the assistant's task_complete for the same turn).
+    const infoTime = info.time as Record<string, unknown> | undefined;
+    const createdMs = typeof infoTime?.created === 'number' ? infoTime.created : undefined;
+    if (createdMs !== undefined) {
+      this._messageCreatedTimes.set(messageID, createdMs);
+    }
+
     const key = `msg:${messageID}`;
     if (this.deliveredMessageParts.has(key)) return;
     this.deliveredMessageParts.add(key);
@@ -729,14 +750,19 @@ export class OpenCodeSessionManager {
         : '';
       const text = cachedText || (summary?.body as string) || (summary?.title as string) || partsText || '';
       if (text && !this._isRecentPhoneCommand(sessionID, text)) {
-        const raw = JSON.stringify({ type: 'event', payload: {
+        const ts = createdMs !== undefined
+          ? new Date(createdMs).toISOString()
+          : new Date().toISOString();
+        // Audit r3 P0: encrypt user_prompt at unified outbound entry. Plan §6.2.
+        const encryptedPayload = this.bridge.encryptOutboundPayload({
           clientEventId: `oc-user:${messageID}:${Date.now()}`,
           sessionId: serverSessionId,
           agent: 'opencode',
           eventType: 'user_prompt',
           data: { type: 'user_prompt', prompt: text, summary: text.slice(0, 200) },
-          ts: new Date().toISOString(),
-        }});
+          ts,
+        });
+        const raw = JSON.stringify({ type: 'event', payload: encryptedPayload });
         const projected = projectHistoryEventForPolicy(raw, policy);
         if (projected !== null) {
           this.bridge.privacyCheckAndSend('history', projected, undefined, undefined);
@@ -864,14 +890,25 @@ export class OpenCodeSessionManager {
       console.error('[opencode] onMessagePartUpdated: role=%s text=%s', messageRole || 'unknown', text.slice(0, 80).replace(/\n/g, '\\n'));
       if (messageRole === 'user') {
         if (this._isRecentPhoneCommand(sessionID, text)) return;
-        const rawUser = JSON.stringify({ type: 'event', payload: {
+        // Use info.time.created (cached from onMessageUpdated) when available
+        // so the user_prompt event sorts before the assistant's task_complete
+        // for the same turn — OpenCode may surface message.part.updated for the
+        // user message *after* the assistant's text part, which would put the
+        // bridge's wall clock past task_complete's now() at server insert time.
+        const createdMs = this._messageCreatedTimes.get(messageID);
+        const ts = createdMs !== undefined
+          ? new Date(createdMs).toISOString()
+          : new Date().toISOString();
+        // Audit r3 P0: encrypt user_prompt at unified outbound entry. Plan §6.2.
+        const encryptedPayload = this.bridge.encryptOutboundPayload({
           clientEventId: `oc-user-part:${messageID}:${partID || 'unknown'}:${Date.now()}`,
           sessionId: serverSessionId,
           agent: 'opencode',
           eventType: 'user_prompt',
           data: { type: 'user_prompt', prompt: text, summary: text.slice(0, 200) },
-          ts: new Date().toISOString(),
-        }});
+          ts,
+        });
+        const rawUser = JSON.stringify({ type: 'event', payload: encryptedPayload });
         const projectedUser = projectHistoryEventForPolicy(rawUser, policy);
         if (projectedUser !== null) {
           this.bridge.privacyCheckAndSend('history', projectedUser, undefined, undefined);
@@ -886,6 +923,10 @@ export class OpenCodeSessionManager {
       queueMicrotask(() => {
         if (this._messageRoles.get(messageID) === 'user') return;
         if (this._isRecentPhoneCommand(sessionID, text)) return;
+        const taskCreatedMs = this._messageCreatedTimes.get(messageID);
+        const taskTs = taskCreatedMs !== undefined
+          ? new Date(taskCreatedMs).toISOString()
+          : new Date().toISOString();
         const raw = JSON.stringify({ type: 'event', payload: {
           clientEventId: `oc-part:${partID}:${Date.now()}`,
           sessionId: serverSessionId,
@@ -897,6 +938,7 @@ export class OpenCodeSessionManager {
             summaryShort: text.slice(0, 200),
             output: text,
           },
+          ts: taskTs,
         }});
         const projected = projectHistoryEventForPolicy(raw, policy);
         if (projected !== null) {
@@ -1026,7 +1068,14 @@ export class OpenCodeSessionManager {
       sessionId,
       agent: 'opencode',
       eventType: 'command_started',
-      data: { type: 'command_started', command: text },
+      // Plan §5.1 + audit r2 P0-A: command_started is a status event, not a
+      // content event. The user prompt body lives in the user_prompt above
+      // (encrypted). Storing it here verbatim would bypass encryption.
+      data: {
+        type: 'command_started',
+        safe_summary: 'Command sent',
+        preview_label: 'command_started',
+      },
       ts: new Date().toISOString(),
     }, "transcript");
 

@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from 'vitest';
 import { EventEmitter } from 'node:events';
 import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -8,7 +8,7 @@ import { discoverLocalOpenCodeSessions, OpenCodeSessionManager } from '../bridge
 import { HistorySharePolicy, setConfig } from '../bridge/history-policy.js';
 
 vi.mock('../bridge/platform.js', async (importOriginal) => {
-  const mod = await importOriginal();
+  const mod = (await importOriginal()) as Record<string, unknown>;
   return { ...mod, discoverOpenCodePort: vi.fn(() => 4096) };
 });
 import { discoverOpenCodePort } from '../bridge/platform.js';
@@ -233,7 +233,7 @@ describe('OpenCodeSessionManager event handling', () => {
       // the phone's decision, the SSE may not have reconnected yet but the
       // fetch still needs the new port. Verify refreshOpenCodeUrl is called
       // and the fetch uses the new port.
-      (discoverOpenCodePort as unknown as vi.Mock).mockReturnValueOnce(20031);
+      (discoverOpenCodePort as unknown as Mock).mockReturnValueOnce(20031);
       const refreshSpy = vi.spyOn(manager as any, 'refreshOpenCodeUrl');
       const originalFetch = globalThis.fetch;
       const fetchSpy = vi.fn(async () => ({ ok: true }) as Response);
@@ -1191,10 +1191,13 @@ describe('OpenCodeSessionManager event handling', () => {
       expect(userPrompt).toBeDefined();
       expect(started).toBeDefined();
       expect(started.payload.sessionId).toBe('server-oc-session-command');
+      // Audit r2 P0-A: command_started is a status event — body stripped, not echoed.
       expect(started.payload.data).toEqual({
         type: 'command_started',
-        command: '继续分析这个问题',
+        safe_summary: 'Command sent',
+        preview_label: 'command_started',
       });
+      expect(started.payload.data).not.toHaveProperty('command');
       expect((globalThis.fetch as any)).toHaveBeenCalledWith(
         'http://127.0.0.1:4096/session/oc-session-command/prompt_async',
         expect.objectContaining({ method: 'POST' }),
