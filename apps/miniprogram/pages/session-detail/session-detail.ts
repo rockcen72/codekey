@@ -350,7 +350,7 @@ Page({
       ol: 'padding-left:36rpx;margin:8rpx 0;display:block',
       li: 'margin:4rpx 0;line-height:1.6;display:list-item',
       pre: 'background:#1c1917;color:#e7e5e4;padding:12rpx 16rpx;border-radius:8rpx;font-size:22rpx;line-height:1.5;margin:12rpx 0;white-space:pre-wrap;overflow:auto;display:block',
-      code: 'background:#f1f0ec;padding:2rpx 8rpx;border-radius:4rpx;font-family:monospace;font-size:22rpx;display:inline',
+      code: 'padding:2rpx 8rpx;border-radius:4rpx;font-family:monospace;font-size:22rpx;display:inline',
       blockquote: 'border-left:4rpx solid #d1d5db;padding-left:16rpx;margin:8rpx 0;color:#6b7280;font-style:italic;display:block',
       hr: 'border:none;border-top:1rpx solid #e5e5e5;margin:16rpx 0;display:block',
       table: 'width:100%;border-collapse:collapse;margin:8rpx 0;font-size:24rpx',
