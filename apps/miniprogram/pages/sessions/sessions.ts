@@ -1,5 +1,5 @@
 import { type Session, createApi } from '../../services/api';
-import { getServerUrl } from '../../services/storage';
+import { getServerUrl, hasAuth } from '../../services/storage';
 import { getSubscription, type UsageSnapshot } from '../../services/subscription';
 import { ensureUserToken } from '../../services/auth';
 
@@ -41,6 +41,7 @@ let _summaryTimers: Record<string, ReturnType<typeof setTimeout>> = {};
 
 Page({
   data: {
+    isPaired: false,
     sessions: [] as any[],
     filteredSessions: [] as any[],
     wsConnected: false,
@@ -67,10 +68,19 @@ Page({
   },
 
   onShow() {
-    this.fetchSessions();
-    this.fetchSubscription();
-    this.subscribeWs();
-    this._startPolling();
+    this.setData({ isPaired: hasAuth() });
+    if (hasAuth()) {
+      this.fetchSessions();
+      this.fetchSubscription();
+      this.subscribeWs();
+      this._startPolling();
+    } else {
+      this.setData({
+        sessions: [], filteredSessions: [],
+        activeTotal: 0, pendingTotal: 0,
+        subTier: 'unauthenticated',
+      });
+    }
   },
 
   onHide() {
@@ -146,11 +156,15 @@ Page({
     app.onWsEvent('session_label_updated', this._onFetchSessionsBound);
     app.onWsEvent('ws_connected', this._onWsConnectedBound);
     app.onWsEvent('ws_disconnected', this._onWsDisconnectedBound);
-    this._onAuthFailedBound = () => { wx.redirectTo({ url: '/pages/login/login' }); };
-    app.onWsEvent('auth_failed', this._onAuthFailedBound);
     app.onWsEvent('device_offline', this._onDeviceOfflineBound);
     app.onWsEvent('device_online', this._onDeviceOnlineBound);
     app.onWsEvent('quota_exceeded', this._onQuotaExceededBound);
+
+    this._onPairedChangedBound = () => {
+      this.setData({ isPaired: hasAuth() });
+      if (hasAuth()) this.fetchSessions();
+    };
+    app.onWsEvent('paired_state_changed', this._onPairedChangedBound);
 
     if (app.globalData.wsConnected !== this.data.wsConnected) {
       this.setData({ wsConnected: app.globalData.wsConnected });
@@ -161,13 +175,16 @@ Page({
     if (this._onEventPushBound) app.offWsEvent('event_push', this._onEventPushBound);
     if (this._onWsConnectedBound) app.offWsEvent('ws_connected', this._onWsConnectedBound);
     if (this._onWsDisconnectedBound) app.offWsEvent('ws_disconnected', this._onWsDisconnectedBound);
-    if (this._onAuthFailedBound) app.offWsEvent('auth_failed', this._onAuthFailedBound);
     if (this._onDeviceOfflineBound) app.offWsEvent('device_offline', this._onDeviceOfflineBound);
     if (this._onDeviceOnlineBound) app.offWsEvent('device_online', this._onDeviceOnlineBound);
     if (this._onQuotaExceededBound) app.offWsEvent('quota_exceeded', this._onQuotaExceededBound);
     if (this._onSessionRegisteredBound) app.offWsEvent('session_registered', this._onSessionRegisteredBound);
     if (this._onSessionDeactivatedWsBound) app.offWsEvent('session_deactivated', this._onSessionDeactivatedWsBound);
     if (this._onFetchSessionsBound) app.offWsEvent('session_label_updated', this._onFetchSessionsBound);
+    if (this._onPairedChangedBound) {
+      app.offWsEvent('paired_state_changed', this._onPairedChangedBound);
+      this._onPairedChangedBound = undefined;
+    }
     this._onEventPushBound = undefined;
     this._onFetchSessionsBound = undefined;
     this._onSessionRegisteredBound = undefined;
@@ -204,6 +221,7 @@ Page({
   },
 
   async fetchSessions() {
+    if (!hasAuth()) return;
     try {
       const api = createApi(getServerUrl());
       const raw = await api.getSessions();
@@ -277,6 +295,7 @@ Page({
   openSession(e: any) { this._closeAllSwipes(); wx.navigateTo({ url: '/pages/session-detail/session-detail?id=' + e.currentTarget.dataset.id }); },
   goToSettings() { wx.navigateTo({ url: '/pages/settings/settings' }); },
   goToSettingsFromPill() { this.goToSettings(); },
+  goToSettingsForPair() { wx.navigateTo({ url: '/pages/settings/settings' }); },
 
   async fetchSubscription() {
     // Pulls the per-user subscription so the top-bar pill can

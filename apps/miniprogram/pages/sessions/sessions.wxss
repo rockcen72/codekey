@@ -20,8 +20,9 @@
 .conn-pill { height: 44rpx; display: flex; align-items: center; gap: 6rpx; padding: 0 14rpx; border: 1rpx solid var(--ck-border); border-radius: var(--ck-radius-full); background: var(--ck-surface); font-size: 22rpx; color: var(--ck-muted); }
 .conn-dot { width: 10rpx; height: 10rpx; border-radius: 50%; background: var(--ck-subtle); transition: background 140ms ease; }
 .conn-pill.online .conn-dot { background: var(--ck-success); }
-.icon-btn-wrap { width: 44rpx; height: 44rpx; display: flex; align-items: center; justify-content: center; border-radius: var(--ck-radius-full); border: 1rpx solid var(--ck-border); background: var(--ck-surface); }
-.icon-btn { font-size: 26rpx; color: var(--ck-muted); }
+.icon-btn-wrap { width: 64rpx; height: 64rpx; display: flex; align-items: center; justify-content: center; border-radius: var(--ck-radius-full); border: 1rpx solid var(--ck-border); background: var(--ck-surface); }
+.icon-btn-wrap:active { background: var(--ck-bg); }
+.icon-btn { font-size: 36rpx; color: var(--ck-muted); line-height: 1; }
 
 /* ── Subscription pill (top bar, P4.1) ──
    Shape mirrors .conn-pill; tappable → opens settings.
@@ -75,6 +76,27 @@
   border-color: var(--ck-primary);
   color: #fff;
 }
+
+/* ── Unpaired banner ── */
+
+.unpaired-banner {
+  display: flex;
+  align-items: center;
+  margin: 0 24rpx 12rpx;
+  padding: 20rpx 24rpx;
+  background: #fff8e6;
+  border-radius: 12rpx;
+  box-shadow: 0 2rpx 6rpx rgba(0, 0, 0, 0.04);
+}
+.banner-stripe {
+  width: 6rpx; height: 56rpx;
+  background: #f5b400; border-radius: 3rpx;
+  margin-right: 20rpx; flex-shrink: 0;
+}
+.banner-body { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+.banner-title { font-size: 28rpx; color: #4a3a00; font-weight: 600; }
+.banner-desc { font-size: 24rpx; color: #806a2c; margin-top: 4rpx; }
+.banner-cta { font-size: 26rpx; color: #c08a00; padding-left: 20rpx; flex-shrink: 0; }
 
 /* ── Metrics chips ── */
 

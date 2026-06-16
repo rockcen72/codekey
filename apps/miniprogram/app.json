@@ -1,10 +1,10 @@
 {
   "pages": [
-    "pages/login/login",
-    "pages/bind/bind",
     "pages/sessions/sessions",
+    "pages/bind/bind",
     "pages/session-detail/session-detail",
     "pages/settings/settings",
+    "pages/login/login",
     "pages/crypto-test/crypto-test"
   ],
   "window": {

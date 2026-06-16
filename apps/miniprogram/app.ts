@@ -66,13 +66,14 @@ App({
         _deviceReplaced = true;
         wx.showModal({
           title: '设备已替换',
-          content: '你的账号已绑定新的主机，当前设备已自动解绑。请重新配对。',
+          content: '账号已绑定新主机，当前设备已自动解绑，请重新配对。',
           showCancel: false,
           success: () => {
             clearAuth();
             this.globalData.ws = null;
             this.globalData.wsConnected = false;
-            wx.redirectTo({ url: '/pages/login/login' });
+            this._emit('paired_state_changed');
+            wx.reLaunch({ url: '/pages/sessions/sessions' });
           },
         });
         return;
@@ -80,7 +81,8 @@ App({
       clearAuth();
       this.globalData.ws = null;
       this.globalData.wsConnected = false;
-      wx.redirectTo({ url: '/pages/login/login' });
+      this._emit('paired_state_changed');
+      wx.reLaunch({ url: '/pages/sessions/sessions' });
     });
     ws.on('*', (msg: any) => {
       this._emit(msg.type, msg.payload ?? msg);

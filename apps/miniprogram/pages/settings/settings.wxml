@@ -4,6 +4,20 @@
     <text class="title">设置</text>
   </view>
 
+  <!-- 未配对：设备配对区块 -->
+  <view class="section pair-section" wx:if="{{!isPaired}}">
+    <text class="section-title">设备配对</text>
+    <button class="scan-btn" bindtap="startScan">扫码配对</button>
+    <view class="manual-row">
+      <input class="manual-input" placeholder="输入 8 位配对码" maxlength="8"
+             value="{{manualCode}}" bindinput="onCodeInput" />
+      <button class="manual-btn" bindtap="confirmManualCode">绑定</button>
+    </view>
+    <view class="pair-hint">
+      <text>在 VS Code 扩展中点击 CodeKey 图标获取配对码</text>
+    </view>
+  </view>
+
   <view class="section" wx:if="{{loaded}}">
     <text class="section-title">订阅</text>
     <view class="info-row info-row-warning" wx:if="{{tier === 'paid' && isExpiringSoon}}">
@@ -47,7 +61,7 @@
       </text>
     </view>
 
-    <view class="redeem-row">
+    <view class="redeem-row" wx:if="{{isPaired}}">
       <input
         class="redeem-input"
         placeholder="输入兑换码 (CK-XXXX-XXXX-XXXX)"
@@ -60,25 +74,25 @@
         class="redeem-btn"
         bindtap="submitRedeem"
         loading="{{redeemBusy}}"
-        disabled="{{redeemBusy || !redeemInput || tier === 'unauthenticated'}}"
+        disabled="{{redeemBusy || !redeemInput}}"
       >兑换</button>
     </view>
   </view>
 
-  <view class="section">
+  <view class="section" wx:if="{{isPaired}}">
     <text class="section-title">已绑定设备</text>
     <view class="info-row">
       <text class="label">设备 ID</text>
-      <text class="value code">{{deviceId || '未绑定'}}</text>
-      <text class="copy-btn" wx:if="{{deviceId}}" bindtap="copyDeviceId">复制</text>
+      <text class="value code">{{deviceId}}</text>
+      <text class="copy-btn" bindtap="copyDeviceId">复制</text>
     </view>
   </view>
 
-  <view class="section">
+  <view class="section" wx:if="{{isPaired}}">
     <button class="unbind-btn" bindtap="unbindDevice">解绑设备</button>
   </view>
 
-  <view class="section">
+  <view class="section" wx:if="{{isPaired}}">
     <text class="section-title">端到端加密</text>
     <view class="info-row">
       <text class="label">加密状态</text>
@@ -93,7 +107,7 @@
 
   <view class="section about">
     <text class="section-title">关于</text>
-    <text class="about-text">CodeKey v1.1.6</text>
+    <text class="about-text">CodeKey v1.2.0</text>
     <text class="about-text">AI 远程控制工具</text>
   </view>
 </view>

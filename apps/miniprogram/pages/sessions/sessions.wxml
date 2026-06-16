@@ -25,6 +25,16 @@
     </view>
   </view>
 
+  <!-- Unpaired banner -->
+  <view class="unpaired-banner" wx:if="{{!isPaired}}" bindtap="goToSettingsForPair">
+    <view class="banner-stripe"></view>
+    <view class="banner-body">
+      <text class="banner-title">设备未配对</text>
+      <text class="banner-desc">请前往「设置」扫码或输入配对码</text>
+    </view>
+    <text class="banner-cta">去配对 ›</text>
+  </view>
+
   <!-- Metrics: compact row -->
   <view class="metrics-row" wx:if="{{activeTotal > 0}}">
     <view class="metric-chip">
@@ -50,7 +60,7 @@
     <view class="empty" wx:if="{{filteredSessions.length === 0}}">
       <text class="empty-icon">◌</text>
       <text class="empty-title">暂无对话记录</text>
-      <text class="empty-text">在 VS Code 中启动 AI 代理后，关联的会话将出现在这里。</text>
+      <text class="empty-text">{{isPaired ? '在 VS Code 中启动 AI 代理后，关联的会话将出现在这里。' : '配对设备后，会话将出现在这里'}}</text>
     </view>
 
     <!-- Session items -->

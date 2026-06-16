@@ -39,7 +39,7 @@ Page({
       app.initWs();
       this.setData({ status: 'success' });
       setTimeout(() => {
-        wx.redirectTo({ url: '/pages/sessions/sessions' });
+        wx.reLaunch({ url: '/pages/sessions/sessions' });
       }, 1500);
     } catch (err: any) {
       const msg = err?.error === 'RATE_LIMITED'
