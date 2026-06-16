@@ -10,19 +10,25 @@ interface ApiError {
 function request<T>(method: HttpMethod, url: string, data?: any): Promise<T> {
   return new Promise((resolve, reject) => {
     const token = getClientToken();
+    // wx.request 的 header 默认带 'content-type: application/json'。
+    // 当请求没有 body（DELETE / GET）时，fastify 4.x 会以
+    // FST_ERR_CTP_EMPTY_JSON_BODY 返回 400。所以仅在显式有 data 时
+    // 才使用 application/json，没有 body 时显式覆盖为 text/plain。
+    // 与 apps/telegram-miniapp/src/api/client.ts 的策略一致。
+    const hasBody = data !== undefined;
     wx.request({
       method,
       url,
       data,
       timeout: 5000,
       header: {
-        'Content-Type': 'application/json',
+        'content-type': hasBody ? 'application/json' : 'text/plain',
         ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
       },
       success(res: any) {
         if (res.statusCode === 401) {
           clearAuth();
-          wx.redirectTo({ url: '/pages/login/login' });
+          wx.reLaunch({ url: '/pages/sessions/sessions' });
           // Resolve with empty data to prevent caller error loops
           resolve([] as any);
           return;
