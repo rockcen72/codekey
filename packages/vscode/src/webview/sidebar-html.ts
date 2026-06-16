@@ -585,8 +585,11 @@ export function renderSubscribe(state: SidebarState): string {
     }
   }
   const qqHtml = `<div class="qq-group-row"><span class="qq-icon">QQ</span> <a class="qq-link" href="https://qm.qq.com/q/ryWvbgYpNY" target="_blank">827453239</a></div>`;
-  const founderCtaHtml = !sub || sub.tier !== 'paid'
-    ? `<a class="founder-cta" href="https://pay.ldxp.cn/shop/6T7QKRTE" target="_blank">${i18n(state.lang, 'Founder 10 Pro', 'Founder 10 Pro 早鸟席位')}</a>`
+  // Upgrade-to-Pro CTA: only show to free-tier users (paid/trial users
+  // already see their plan or trial countdown in the sub-row above).
+  // Link still points to the external shop page.
+  const upgradeCtaHtml = sub && sub.tier === 'free'
+    ? `<a class="upgrade-cta" href="https://pay.ldxp.cn/shop/6T7QKRTE" target="_blank">${i18n(state.lang, 'Upgrade to Pro', '升级 Pro')}</a>`
     : '';
   const notPairedHint = state.deviceStatus !== 'paired'
     ? `<div class="redeem-hint">${i18n(state.lang, 'Pair a device first, then redeem your code here.', '请先配对设备，配对成功后再来此输入兑换码激活。')}</div>`
@@ -600,7 +603,7 @@ export function renderSubscribe(state: SidebarState): string {
     </div>
     <div class="redeem-status" id="redeemStatus"></div>
   </div>`;
-  return `<div class="footer" id="subscriptionFooter">${qqHtml}${founderCtaHtml}<div class="sub-row" data-action="toggleRedeem"><span class="sub-label${planClass}">${planLabel}</span><span class="expand-icon">▸</span></div>${expandedHtml}</div>`;
+  return `<div class="footer" id="subscriptionFooter">${qqHtml}${upgradeCtaHtml}<div class="sub-row" data-action="toggleRedeem"><span class="sub-label${planClass}">${planLabel}</span><span class="expand-icon">▸</span></div>${expandedHtml}</div>`;
 }
 
 // ── Pairing card ─────────────────────────────────────────
@@ -1673,8 +1676,8 @@ body{
 .sub-label.sub-approaching{color:var(--vscode-terminal-ansiYellow,#e2b714)}
 .sub-label.sub-exhausted{color:var(--vscode-terminal-ansiRed,#f14c4c)}
 .sub-label.sub-expiring{color:var(--vscode-terminal-ansiYellow,#e2b714)}
-.founder-cta{display:inline-flex;align-items:center;justify-content:center;margin:6px 0 8px;padding:4px 8px;border:1px solid var(--vscode-button-border,rgba(92,156,245,.45));border-radius:4px;background:var(--vscode-button-background,#5c9cf5);color:var(--vscode-button-foreground,#fff);font-size:10px;font-weight:700;letter-spacing:0;text-decoration:none}
-.founder-cta:hover{background:var(--vscode-button-hoverBackground,#4a8ae8);text-decoration:none}
+.upgrade-cta{display:inline-flex;align-items:center;justify-content:center;margin:6px 0 8px;padding:4px 8px;border:1px solid var(--vscode-button-border,rgba(92,156,245,.45));border-radius:4px;background:var(--vscode-button-background,#5c9cf5);color:var(--vscode-button-foreground,#fff);font-size:10px;font-weight:700;letter-spacing:0;text-decoration:none}
+.upgrade-cta:hover{background:var(--vscode-button-hoverBackground,#4a8ae8);text-decoration:none}
 .sub-row{display:flex;align-items:center;justify-content:center;gap:6px;cursor:pointer}
 .sub-row:hover .expand-icon{opacity:1}
 .expand-icon{font-size:10px;opacity:0.4;transition:transform .2s,opacity .2s;color:var(--vscode-descriptionForeground,#888)}
