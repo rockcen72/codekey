@@ -1,0 +1,3 @@
+<view class="redirect-loading">
+  <view class="loading-spinner"></view>
+</view>

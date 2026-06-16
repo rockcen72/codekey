@@ -1,0 +1,47 @@
+{
+  "description": "CodeKey - AI Agent Remote Control",
+  "packOptions": {
+    "ignore": [
+      {"type": "folder", "value": "assets"}
+    ],
+    "include": []
+  },
+  "setting": {
+    "bundle": false,
+    "userConfirmedBundle": false,
+    "minified": true,
+    "urlCheck": true,
+    "scopeDataCheck": false,
+    "es6": true,
+    "postcss": false,
+    "compileWorklet": false,
+    "uglifyFileName": false,
+    "uploadWithSourceMap": true,
+    "enhance": false,
+    "packNpmManually": true,
+    "packNpmRelationList": [
+      {"packageJsonPath": "./package.json", "miniprogramNpmDistDir": "./miniprogram_npm"}
+    ],
+    "minifyTTSS": true,
+    "minifyTTML": true,
+    "localPlugins": false,
+    "disableUseStrict": false,
+    "useCompilerPlugins": [
+      "typescript"
+    ],
+    "condition": false,
+    "swc": false,
+    "disableSWC": true,
+    "babelSetting": {
+      "ignore": [],
+      "disablePlugins": [],
+      "outputPath": ""
+    }
+  },
+  "compileType": "miniprogram",
+  "libVersion": "2.0.0",
+  "projectname": "codekey-feishu",
+  "condition": {},
+  "simulatorPluginLibVersion": {},
+  "editorSetting": {}
+}

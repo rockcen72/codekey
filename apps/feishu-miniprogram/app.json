@@ -1,0 +1,24 @@
+{
+  "pages": [
+    "pages/sessions/sessions",
+    "pages/bind/bind",
+    "pages/session-detail/session-detail",
+    "pages/settings/settings",
+    "pages/login/login",
+    "pages/crypto-test/crypto-test"
+  ],
+  "window": {
+    "navigationBarTitleText": "CodeKey",
+    "navigationBarTextStyle": "black",
+    "navigationBarBackgroundColor": "#f5f0eb",
+    "backgroundColor": "#f5f0eb"
+  },
+  "style": "v2",
+  "sitemapLocation": "sitemap.json",
+  "permission": {
+    "scope.camera": {
+      "desc": "扫码绑定电脑端的配对码"
+    }
+  },
+  "usingComponents": {}
+}

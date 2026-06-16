@@ -1,0 +1,104 @@
+<view class="page">
+  <view class="topbar">
+    <view class="topbar-left">
+      <text class="brand">History</text>
+      <text class="brand-sub">CodeKey AI 远程控制</text>
+    </view>
+    <view class="top-actions">
+      <!-- Subscription pill (P4.1). Hidden when not authenticated
+           or when the server call failed �?those users can still
+           reach settings via the gear icon. -->
+      <view
+        tt:if="{{subTier !== 'unauthenticated' && subTier !== 'load_failed'}}"
+        class="sub-pill {{subPillClass}}"
+        bindtap="goToSettingsFromPill"
+      >
+        <text>{{subPillText}}</text>
+      </view>
+      <view class="conn-pill {{wsConnected ? 'online' : 'offline'}}">
+        <view class="conn-dot"></view>
+        <text>{{wsConnected ? '已连�? : '离线'}}</text>
+      </view>
+      <view class="icon-btn-wrap" bindtap="goToSettings">
+        <text class="icon-btn">�?/text>
+      </view>
+    </view>
+  </view>
+
+  <!-- Unpaired banner -->
+  <view class="unpaired-banner" tt:if="{{!isPaired}}" bindtap="goToSettingsForPair">
+    <view class="banner-stripe"></view>
+    <view class="banner-body">
+      <text class="banner-title">设备未配�?/text>
+      <text class="banner-desc">请前往「设置」扫码或输入配对�?/text>
+    </view>
+    <text class="banner-cta">去配�?�?/text>
+  </view>
+
+  <!-- Metrics: compact row -->
+  <view class="metrics-row" tt:if="{{activeTotal > 0}}">
+    <view class="metric-chip">
+      <view class="metric-dot active"></view>
+      <text>{{activeTotal}} 活跃</text>
+    </view>
+  </view>
+
+  <!-- Agent tabs: all / per-agent -->
+  <scroll-view class="tabs-scroll" scroll-x enhanced show-scrollbar="{{false}}">
+    <view class="tabs">
+      <view tt:for="{{agentTabs}}" tt:key="key"
+            class="tab {{activeTab === item.key ? 'active' : ''}}"
+            data-key="{{item.key}}"
+            bindtap="onTabTap">
+        <text>{{item.label}}</text>
+      </view>
+    </view>
+  </scroll-view>
+
+  <scroll-view class="list" scroll-y>
+    <!-- Empty state -->
+    <view class="empty" tt:if="{{filteredSessions.length === 0}}">
+      <text class="empty-icon">�?/text>
+      <text class="empty-title">暂无对话记录</text>
+      <text class="empty-text">{{isPaired ? '�?VS Code 中启�?AI 代理后，关联的会话将出现在这里�? : '配对设备后，会话将出现在这里'}}</text>
+    </view>
+
+    <!-- Session items -->
+    <view class="swipe-wrap" tt:for="{{filteredSessions}}" tt:key="id"
+          data-id="{{item.id}}"
+          bindtouchstart="onTouchStart"
+          bindtouchend="onTouchEnd">
+      <view class="swipe-inner {{item.swiped ? 'swiped' : ''}}">
+        <view class="session-card agent-{{item.agentClass}} {{item.hasPending ? 'has-pending' : ''}} {{item.connected ? 'connected' : ''}}"
+              data-id="{{item.id}}"
+              bindtap="openSession">
+          <view class="conn-bar {{item.connected ? 'online' : 'offline'}} agent-{{item.agentClass}}"></view>
+          <view class="card-body">
+            <view class="card-top">
+              <view class="card-title-row">
+                <view class="title-sweep-host {{item._taskHighlight ? 'is-sweeping' : ''}}">
+                  <text class="session-title ellipsis">{{item.displayTitle}}</text>
+                  <view tt:if="{{item._taskHighlight}}" class="title-sweep-bar"></view>
+                </view>
+                <text class="agent-chip agent-{{item.agentClass}}">{{item.displayAgentLabel}}</text>
+              </view>
+              <view class="card-time-wrap">
+                <text class="session-time">{{item.displayTime}}</text>
+              </view>
+            </view>
+            <text class="session-subtitle ellipsis">{{item.displaySubtitle}}</text>
+            <view class="card-footer">
+              <text class="session-id mono" tt:if="{{item.displayClaudeId}}">{{item.displayClaudeId}}</text>
+              <view tt:if="{{item.hasPending}}" class="pending-badge">
+                <text class="pending-badge-num">{{item.pendingCount}}</text>
+              </view>
+            </view>
+          </view>
+        </view>
+        <view class="delete-area" data-id="{{item.id}}" catchtap="deleteSession">
+          <text class="delete-text">删除</text>
+        </view>
+      </view>
+    </view>
+  </scroll-view>
+</view>

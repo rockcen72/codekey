@@ -31,6 +31,7 @@ import { loadConversation, loadCodexConversation, normalizeCodexSessionTitle } f
 import { log, debug } from '../log.js';
 import { secureFetch } from '../util/secure-fetch.js';
 import { generateEcdhKeyPair, computeSharedSecret, deriveKeyMaterial } from '@codekey/shared/bridge';
+import { FEISHU_APP_ID_CONST } from '../constants.js';
 
 const AGENT_DISPLAY_NAMES: Record<string, string> = {
   'claude-code': 'Claude Code',
@@ -1552,18 +1553,23 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       // (truly first-time pair on this machine).
       let contentKeyHex = '';
       let keyId = '';
-      if (platform !== 'feishu') {
-        if (!usedFreshDevice && existingCreds?.contentKeyHex && existingCreds?.keyId) {
-          contentKeyHex = existingCreds.contentKeyHex;
-          keyId = existingCreds.keyId;
-        } else {
-          contentKeyHex = crypto.randomBytes(32).toString('hex');
-          keyId = contentKeyHex.slice(0, 16);
-        }
+      if (!usedFreshDevice && existingCreds?.contentKeyHex && existingCreds?.keyId) {
+        contentKeyHex = existingCreds.contentKeyHex;
+        keyId = existingCreds.keyId;
+      } else {
+        contentKeyHex = crypto.randomBytes(32).toString('hex');
+        keyId = contentKeyHex.slice(0, 16);
       }
       let pairUrl = result.pairUrl || '';
       if (platform === 'wechat') {
         pairUrl = `codekey://pair?code=${result.code}&key_id=${keyId}&content_key=${contentKeyHex}&v=1`;
+      }
+      if (platform === 'feishu') {
+        const appId = vscode.workspace.getConfiguration('codekey').get<string>('feishuAppId', '') || FEISHU_APP_ID_CONST;
+        const query = encodeURIComponent(
+          `code=${result.code}&platform=feishu&key_id=${keyId}&content_key=${contentKeyHex}&v=1`
+        );
+        pairUrl = `feishu://applink.feishu.cn/client/mini_program/open?appId=${appId}&mode=appLaunch&path=pages/bind/bind&query=${query}`;
       }
       log('[CodeKey] pair QR generated:', JSON.stringify({
         platform,

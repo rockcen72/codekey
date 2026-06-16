@@ -1,6 +1,7 @@
 import type { SessionResponse, EventResponse } from '../api/client.js';
 import type { AgentDef } from '../agents/registry.js';
 import type { BridgeState } from '../services/bridge-status.js';
+import { FEISHU_APP_ID_CONST } from '../constants.js';
 
 export interface PendingApprovalItem {
   id: string;
@@ -667,7 +668,7 @@ export function renderPairingContent(state: SidebarState): string {
   const codeDigits = p?.code || '--------';
   const codeExpires = p?.expiresAt || 0;
   const platform = p?.platform || state.pairingPlatform || 'telegram';
-  const feishuAppId = state.feishuAppId || '';
+  const feishuAppId = state.feishuAppId || FEISHU_APP_ID_CONST;
   const hasFeishu = !!feishuAppId;
   const hasPartialCreds = !!(state.deviceId || state.deviceSecret);
   const wechatName = i18n(state.lang, 'WeChat', '微信');
@@ -698,8 +699,8 @@ export function renderPairingContent(state: SidebarState): string {
   const qrSize = 200;
   const wechatQrSvg = p?.pairUrl && p?.platform === 'wechat' ? generateQrSvg(p.pairUrl, qrSize)
     : p?.code && !p?.pairUrl ? generateQrSvg(p.code, qrSize) : '';
-  const feishuQrSvg = p?.code && feishuAppId
-    ? generateQrSvg(`feishu://app/${feishuAppId}/pages/login/login?code=${p.code}&platform=feishu`, qrSize)
+  const feishuQrSvg = p?.pairUrl && p?.platform === 'feishu'
+    ? generateQrSvg(p.pairUrl, qrSize)
     : '';
   const tgDeepLink = p?.code
     ? (p?.contentKeyHex && p?.keyId
