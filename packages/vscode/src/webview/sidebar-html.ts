@@ -668,7 +668,11 @@ export function renderPairingContent(state: SidebarState): string {
   const codeDigits = p?.code || '--------';
   const codeExpires = p?.expiresAt || 0;
   const platform = p?.platform || state.pairingPlatform || 'telegram';
-  const feishuAppId = state.feishuAppId || FEISHU_APP_ID_CONST;
+  // undefined or empty string → fallback to built-in constant
+  const rawFeishuAppId = state.feishuAppId;
+  const feishuAppId = (rawFeishuAppId === undefined || rawFeishuAppId === '')
+    ? FEISHU_APP_ID_CONST
+    : rawFeishuAppId;
   const hasFeishu = !!feishuAppId;
   const hasPartialCreds = !!(state.deviceId || state.deviceSecret);
   const wechatName = i18n(state.lang, 'WeChat', '微信');

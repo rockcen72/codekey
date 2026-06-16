@@ -288,7 +288,7 @@ function bytesToBase64(bytes: Uint8Array): string {
   // Prefer wx API in production (proven to work in WeChat mini program runtime).
   // btoa fallback is for local POC testing only �?real WeChat compatibility
   // must be verified via WeChat Developer Tool "Build npm" + device test.
-  if (typeof wx !== 'undefined' && tt.arrayBufferToBase64) {
+  if (typeof tt !== 'undefined' && tt.arrayBufferToBase64) {
     return tt.arrayBufferToBase64(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength));
   }
   // POC fallback: binary string + btoa
@@ -300,7 +300,7 @@ function bytesToBase64(bytes: Uint8Array): string {
 }
 
 function base64ToBytes(b64: string): Uint8Array {
-  if (typeof wx !== 'undefined' && tt.base64ToArrayBuffer) {
+  if (typeof tt !== 'undefined' && tt.base64ToArrayBuffer) {
     const buffer = tt.base64ToArrayBuffer(b64);
     return new Uint8Array(buffer);
   }
