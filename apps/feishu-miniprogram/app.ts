@@ -17,6 +17,7 @@ App({
     deviceId: getDeviceId() || '',
     ws: null as WsClient | null,
     wsConnected: false,
+    deviceOnline: false,
   },
 
   onLaunch() {
@@ -57,6 +58,7 @@ App({
     });
     ws.on('disconnected', () => {
       this.globalData.wsConnected = false;
+      this.globalData.deviceOnline = false;
       this._emit('ws_disconnected');
     });
     ws.on('auth_failed', (payload?: { code?: string }) => {
@@ -72,6 +74,7 @@ App({
             clearAuth();
             this.globalData.ws = null;
             this.globalData.wsConnected = false;
+            this.globalData.deviceOnline = false;
             this._emit('paired_state_changed');
             tt.reLaunch({ url: '/pages/sessions/sessions' });
           },
@@ -81,10 +84,13 @@ App({
       clearAuth();
       this.globalData.ws = null;
       this.globalData.wsConnected = false;
+      this.globalData.deviceOnline = false;
       this._emit('paired_state_changed');
       tt.reLaunch({ url: '/pages/sessions/sessions' });
     });
     ws.on('*', (msg: any) => {
+      if (msg.type === 'device_online') this.globalData.deviceOnline = true;
+      if (msg.type === 'device_offline') this.globalData.deviceOnline = false;
       this._emit(msg.type, msg.payload ?? msg);
     });
     // Phase 3: when the server blocks an approval because the free
@@ -121,6 +127,7 @@ App({
       ws.disconnect();
       this.globalData.ws = null;
       this.globalData.wsConnected = false;
+      this.globalData.deviceOnline = false;
     }
     this._eventBus.clear();
   },

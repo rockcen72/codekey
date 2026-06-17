@@ -167,7 +167,7 @@ Page({
         commandText: '',
         canSendCommand: false,
         wsConnected: false,
-        deviceOnline: true,
+        deviceOnline: false,
         scrollToId: '',
         scrollTop: 0,
         _userScrolledUp: false,
@@ -186,7 +186,12 @@ Page({
     },
     onLoad(query) {
         const id = query.id || '';
-        this.setData({ sessionId: id });
+        let viewportHeight = 600;
+        try {
+            viewportHeight = tt.getSystemInfoSync().windowHeight || 600;
+        }
+        catch { }
+        this.setData({ sessionId: id, _viewportHeight: viewportHeight });
         this.fetchDetail();
         this.fetchSubscription();
         this.subscribeWs();
@@ -222,6 +227,13 @@ Page({
         if (!nearBottom !== wasScrolledUp) {
             this.setData({ _userScrolledUp: !nearBottom });
         }
+    },
+    scrollToBottom() {
+        this.setData({ scrollToId: '' }, () => {
+            tt.nextTick(() => {
+                this.setData({ scrollToId: 'timeline-bottom', scrollTop: Date.now() });
+            });
+        });
     },
     subscribeWs() {
         // Bound closures for proper cleanup
@@ -791,32 +803,19 @@ Page({
             const pushedIdx = scrollToEventId
                 ? messages.findIndex((m) => m.eventId === scrollToEventId && m.type === 'ai')
                 : -1;
-            let latestPendingIdx = -1;
-            for (let i = messages.length - 1; i >= 0; i--) {
-                if (messages[i].pending) {
-                    latestPendingIdx = i;
-                    break;
-                }
-            }
             // Auto-scroll only when:
             // 1. A specific scrollToEventId was requested (new event push)
-            // 2. There's a pending approval
-            // 3. User is near the bottom (not scrolled up reading history)
-            const shouldAutoScroll = pushedIdx !== -1
-                || latestPendingIdx !== -1
-                || !this.data._userScrolledUp;
+            // 2. User is near the bottom (not scrolled up reading history)
+            const shouldAutoScroll = pushedIdx !== -1 || !this.data._userScrolledUp;
             const primaryPendingEvent = this.getPrimaryPendingEvent(messages);
             const pendingState = {
                 primaryPendingEvent,
                 hasPrimaryPendingEvent: !!primaryPendingEvent,
             };
             if (shouldAutoScroll) {
-                const targetIdx = pushedIdx !== -1
-                    ? pushedIdx
-                    : latestPendingIdx !== -1
-                        ? latestPendingIdx
-                        : messages.length - 1;
-                const targetId = 'msg-' + messages[targetIdx].id;
+                const targetId = pushedIdx !== -1
+                    ? 'msg-' + messages[pushedIdx].id
+                    : 'timeline-bottom';
                 // Reset scrollToId first so scroll-into-view always detects the change
                 this.setData({ chatMessages: messages, scrollToId: '', ...pendingState }, () => {
                     tt.nextTick(() => {
@@ -1082,7 +1081,7 @@ Page({
         }
         const primaryPendingEvent = this.getPrimaryPendingEvent(messages);
         this.setData({ chatMessages: messages, primaryPendingEvent, hasPrimaryPendingEvent: !!primaryPendingEvent }, () => {
-            this.setData({ scrollToId: 'msg-' + messages[messages.length - 1].id });
+            this.scrollToBottom();
         });
         setTimeout(() => this.fetchDetail(), 1500);
     },
@@ -1137,7 +1136,7 @@ Page({
         });
         const replyTexts = { ...this.data.replyTexts };
         delete replyTexts[eventId];
-        this.setData({ chatMessages: messages, replyTexts, scrollToId: 'msg-' + replyId });
+        this.setData({ chatMessages: messages, replyTexts }, () => this.scrollToBottom());
         setTimeout(() => this.fetchDetail(), 1500);
     },
     // ── Command input ──
@@ -1239,12 +1238,7 @@ Page({
             chatMessages: messages,
             _userScrolledUp: false,
             scrollToId: '',
-        }, () => {
-            this.setData({
-                scrollToId: 'msg-' + localCommandId,
-                scrollTop: Date.now(),
-            });
-        });
+        }, () => this.scrollToBottom());
         tt.showToast({ title: '已发送，等待电脑端接收', icon: 'none', duration: 1500 });
     },
     chooseInputOption(e) {
@@ -1300,7 +1294,7 @@ Page({
             senderName: '你',
         });
         const primaryPendingEvent = this.getPrimaryPendingEvent(messages);
-        this.setData({ chatMessages: messages, primaryPendingEvent, hasPrimaryPendingEvent: !!primaryPendingEvent, scrollToId: 'msg-' + replyId });
+        this.setData({ chatMessages: messages, primaryPendingEvent, hasPrimaryPendingEvent: !!primaryPendingEvent }, () => this.scrollToBottom());
         setTimeout(() => this.fetchDetail(), 1500);
     },
     // ── Navigation ──

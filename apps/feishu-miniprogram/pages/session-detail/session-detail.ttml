@@ -129,6 +129,7 @@
         </view>
       </view>
     </block>
+    <view id="timeline-bottom"></view>
   </scroll-view>
 
   <!-- Floating approval command dock -->

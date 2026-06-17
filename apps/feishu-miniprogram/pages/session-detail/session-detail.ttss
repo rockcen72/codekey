@@ -116,7 +116,7 @@
   flex: 1;
   height: 0;
   box-sizing: border-box;
-  padding: 10rpx 24rpx 140rpx;
+  padding: 10rpx 24rpx 24rpx;
 }
 
 .timeline-with-dock {

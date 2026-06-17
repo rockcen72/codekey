@@ -46,7 +46,7 @@ Page({
     sessions: [] as any[],
     filteredSessions: [] as any[],
     wsConnected: false,
-    deviceOnline: true,
+    deviceOnline: false,
     pendingTotal: 0,
     activeTotal: 0,
     activeTab: 'all',
@@ -146,7 +146,7 @@ Page({
       this._debouncedFetchSessions();
     };
     this._onWsConnectedBound = () => { this.setData({ wsConnected: true }); this._debouncedFetchSessions(); };
-    this._onWsDisconnectedBound = () => this.setData({ wsConnected: false });
+    this._onWsDisconnectedBound = () => { this.setData({ wsConnected: false, deviceOnline: false }); this._updateConnectedStates(false); };
     this._onDeviceOfflineBound = () => { this.setData({ deviceOnline: false }); this._updateConnectedStates(false); };
     this._onDeviceOnlineBound = () => { this.setData({ deviceOnline: true }); this._updateConnectedStates(true); };
     this._onQuotaExceededBound = () => { this.fetchSubscription(); };
@@ -169,6 +169,9 @@ Page({
 
     if (app.globalData.wsConnected !== this.data.wsConnected) {
       this.setData({ wsConnected: app.globalData.wsConnected });
+    }
+    if (!!app.globalData.deviceOnline !== this.data.deviceOnline) {
+      this.setData({ deviceOnline: !!app.globalData.deviceOnline });
     }
   },
 
