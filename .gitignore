@@ -17,6 +17,10 @@ packages/server/
 packages/shared/src/bridge/claude-transcripts.js
 packages/shared/src/bridge/claude-transcripts.js.map
 
+# Compiled TypeScript outputs (feishu miniprogram)
+apps/feishu-miniprogram/**/*.js
+apps/feishu-miniprogram/vendor/
+
 # Private project config
 project.private.config.json
 
