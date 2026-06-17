@@ -7,7 +7,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { discoverOpenCodePort } from './platform.js';
 import { tryFormatInputRequiredEvent } from './input-card.js';
-import { checkHistoryPolicy, DEFAULT_RECENT_COUNT } from './history-policy.js';
+import { checkHistoryPolicy, type PolicyResult, DEFAULT_RECENT_COUNT } from './history-policy.js';
 import { projectHistoryEventForPolicy } from './privacy-pipeline.js';
 
 interface OpenCodeSessionInfo {
@@ -97,6 +97,8 @@ export class OpenCodeSessionManager {
   private _stopped = false;
   private _reconnectDelay = INITIAL_RECONNECT_DELAY;
   private _reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Debounce timer for assistant text task_complete emission. Clears on each streaming update. */
+  private _pendingAssistantTextTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(opencodeBaseUrl: string, bridge: ApprovalBridge) {
     this.opencodeBaseUrl = opencodeBaseUrl;
@@ -157,6 +159,10 @@ export class OpenCodeSessionManager {
     if (this._reconnectTimer) {
       clearTimeout(this._reconnectTimer);
       this._reconnectTimer = null;
+    }
+    if (this._pendingAssistantTextTimer) {
+      clearTimeout(this._pendingAssistantTextTimer);
+      this._pendingAssistantTextTimer = null;
     }
     if (this._abortController) {
       this._abortController.abort();
@@ -633,6 +639,22 @@ export class OpenCodeSessionManager {
 
     const policy = checkHistoryPolicy(sessionID, 'opencode');
 
+    // Flush pending debounced assistant text synchronously, so the phone
+    // sees the final output even if session.idle fires within the 100ms
+    // debounce window.
+    if (this._pendingAssistantTextTimer) {
+      clearTimeout(this._pendingAssistantTextTimer);
+      this._pendingAssistantTextTimer = null;
+      // Find the last messageID for this session and flush
+      let lastMsgId = '';
+      for (const [mid] of this._messageTexts) {
+        if (this._messageRoles.get(mid) !== 'user') lastMsgId = mid;
+      }
+      if (lastMsgId) {
+        this._emitAssistantTextTaskComplete(sessionID, lastMsgId, undefined, serverSessionId, policy);
+      }
+    }
+
     const errorObj = props.error as Record<string, unknown> | undefined;
     if (errorObj) {
       const message = (errorObj.message as string) || 'Session idle with error';
@@ -855,24 +877,6 @@ export class OpenCodeSessionManager {
       // not the AI-generated summary.title (e.g. "Snake game generation request").
       this._messageTexts.set(messageID, text);
 
-      // Dedup key includes the text content, not just the partID, so
-      // streaming updates with growing text are not collapsed. The
-      // previous key was `part:${partID}` alone, which had two
-      // failure modes:
-      //   1. OpenCode often creates a part with text="" first, then
-      //      updates it with the real content. The old code added
-      //      partID to the dedup set BEFORE the empty check, so the
-      //      first event consumed the slot and the agent's actual
-      //      response was dropped on the floor. The phone then only
-      //      saw the generic "Session idle" task_complete.
-      //   2. Streaming updates (text="H" → "He" → "Hello") were
-      //      suppressed after the first chunk.
-      // With the new key, same-content re-fires still dedup, but
-      // empty-then-non-empty and incremental updates both pass.
-      const dedupKey = `part:${partID}:${text}`;
-      if (this.deliveredMessageParts.has(dedupKey)) return;
-      this.deliveredMessageParts.add(dedupKey);
-
       // User message typed on desktop: OpenCode may surface it first as a
       // message.part.updated event. Preserve the role so mobile can render it
       // as the user's right-side bubble instead of an agent reply.
@@ -911,34 +915,15 @@ export class OpenCodeSessionManager {
         return;
       }
 
-      // Role not found in SSE event — defer via microtask so onMessageUpdated
-      // can mark this messageID (from the same TCP packet) before we decide.
-      queueMicrotask(() => {
-        if (this._messageRoles.get(messageID) === 'user') return;
-        if (this._isRecentPhoneCommand(sessionID, text)) return;
-        const taskCreatedMs = this._messageCreatedTimes.get(messageID);
-        const taskTs = taskCreatedMs !== undefined
-          ? new Date(taskCreatedMs).toISOString()
-          : new Date().toISOString();
-        const encryptedPayload = this.bridge.encryptOutboundPayload({
-          clientEventId: `oc-part:${partID}:${Date.now()}`,
-          sessionId: serverSessionId,
-          agent: 'opencode',
-          eventType: 'task_complete',
-          data: {
-            type: 'task_complete',
-            summary: text,
-            summaryShort: text.slice(0, 200),
-            output: text,
-          },
-          ts: taskTs,
-        });
-        const raw = JSON.stringify({ type: 'event', payload: encryptedPayload });
-        const projected = projectHistoryEventForPolicy(raw, policy);
-        if (projected !== null) {
-          this.bridge.privacyCheckAndSend('transcript', projected, undefined, undefined);
-        }
-      });
+      // Debounce assistant text to avoid emitting a task_complete per
+      // streaming update. Each new text resets the 100ms timer; when the
+      // stream settles, the timer fires and emits a single task_complete
+      // with the LATEST cached text.
+      if (this._pendingAssistantTextTimer) clearTimeout(this._pendingAssistantTextTimer);
+      this._pendingAssistantTextTimer = setTimeout(() => {
+        this._pendingAssistantTextTimer = null;
+        this._emitAssistantTextTaskComplete(sessionID, messageID, partID, serverSessionId, policy);
+      }, 100);
     } else if (partType === 'tool') {
       const state = part.state as Record<string, unknown> | undefined;
       if (state?.status === 'completed') {
@@ -962,6 +947,41 @@ export class OpenCodeSessionManager {
           this.bridge.privacyCheckAndSend('transcript', projectedTool, undefined, undefined);
         }
       }
+    }
+  }
+
+  /** Emit a task_complete with the latest cached assistant text for a message.
+   *  Used as the debounced callback for streaming text, and flushed synchronously
+   *  from onSessionIdle when the session ends before the 100ms timer. */
+  private _emitAssistantTextTaskComplete(
+    sessionID: string,
+    messageID: string,
+    partID: string | undefined,
+    serverSessionId: string,
+    policy: PolicyResult,
+  ): void {
+    if (this._messageRoles.get(messageID) === 'user') return;
+    const latestText = this._messageTexts.get(messageID);
+    if (!latestText || latestText === '') return;
+    if (this._isRecentPhoneCommand(sessionID, latestText)) return;
+    const taskTs = new Date().toISOString();
+    const encryptedPayload = this.bridge.encryptOutboundPayload({
+      clientEventId: `oc-part:${partID}:${Date.now()}`,
+      sessionId: serverSessionId,
+      agent: 'opencode',
+      eventType: 'task_complete',
+      data: {
+        type: 'task_complete',
+        summary: latestText,
+        summaryShort: latestText.slice(0, 200),
+        output: latestText,
+      },
+      ts: taskTs,
+    });
+    const raw = JSON.stringify({ type: 'event', payload: encryptedPayload });
+    const projected = projectHistoryEventForPolicy(raw, policy);
+    if (projected !== null) {
+      this.bridge.privacyCheckAndSend('transcript', projected, undefined, undefined);
     }
   }
 
