@@ -1,4 +1,4 @@
-// Subscription service �?mini program side.
+// Subscription service — mini program side.
 // All calls require user_token (Bearer auth). The companion endpoints
 // live in packages/server/src/routes/subscription.ts.
 //
@@ -18,8 +18,11 @@ interface ApiError {
 function userRequest<T>(method: HttpMethod, url: string, data?: any): Promise<T> {
   return new Promise((resolve, reject) => {
     const token = getUserToken();
-    // tt.request �?header 默认�?'content-type: application/json'�?    // fastify 4.x 在收�?application/json + �?body 时会返回 400
-    // FST_ERR_CTP_EMPTY_JSON_BODY。仅在有 body 时才�?json，否则显�?    // 覆盖�?text/plain（参�?telegram-miniapp/src/api/client.ts）�?    const hasBody = data !== undefined;
+    // tt.request 的 header 默认带 'content-type: application/json'。
+    // fastify 4.x 在收到 application/json + 空 body 时会返回 400
+    // FST_ERR_CTP_EMPTY_JSON_BODY。仅在有 body 时才用 json，否则显式
+    // 覆盖为 text/plain（参考 telegram-miniapp/src/api/client.ts）。
+    const hasBody = data !== undefined;
     tt.request({
       method,
       url,

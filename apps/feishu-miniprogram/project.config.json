@@ -1,5 +1,6 @@
 {
   "description": "CodeKey - AI Agent Remote Control",
+  "appid": "cli_aabba46d2a3c9bcb",
   "packOptions": {
     "ignore": [
       {"type": "folder", "value": "assets"}
@@ -26,9 +27,7 @@
     "minifyTTML": true,
     "localPlugins": false,
     "disableUseStrict": false,
-    "useCompilerPlugins": [
-      "typescript"
-    ],
+    "useCompilerPlugins": [],
     "condition": false,
     "swc": false,
     "disableSWC": true,

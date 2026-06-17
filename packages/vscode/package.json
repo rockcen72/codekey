@@ -1,6 +1,6 @@
 {
   "name": "codekey-vscode",
-  "version": "1.2.1",
+  "version": "1.2.2",
   "displayName": "CodeKey",
   "icon": "media/codekey-icon.png",
   "description": "Remote control for AI coding agents — approve, deny, reply from your phone",

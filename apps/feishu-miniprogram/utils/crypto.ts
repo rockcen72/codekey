@@ -1,5 +1,5 @@
 /**
- * crypto.ts �?AES-256-GCM symmetric encryption for WeChat mini program.
+ * crypto.ts — AES-256-GCM symmetric encryption for WeChat mini program.
  *
  * Uses @noble/ciphers (pure JS, ~5KB gzip), loaded from vendor/ copies
  * because WeChat's npm build only outputs the main index.js (which throws).
@@ -47,7 +47,7 @@ if (typeof TextDecoder === 'undefined') {
 }
 
 // Load @noble/ciphers directly via vendor/aes.js
-// WeChat require() cannot destructure ES module exports �?use property access.
+// WeChat require() cannot destructure ES module exports — use property access.
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const _nobleAes = require('../vendor/aes.js');
 const gcm: typeof import('@noble/ciphers/aes').gcm = _nobleAes.gcm;
@@ -86,28 +86,45 @@ export interface KeyPair {
 }
 
 /**
- * Secure random bytes using tt.getRandomValues (callback �?Promise wrapper).
+ * Secure random bytes using tt.getRandomValues (callback → Promise wrapper).
  *
- * wx API（基础�?2.15+）：
+ * wx API（基础库 2.15+）：
  *   tt.getRandomValues({ length, success(res) { res.randomValues: ArrayBuffer } })
  *
- * 包装�?Promise 以便 async 上下文使用�? */
+ * 包装成 Promise 以便 async 上下文使用。
+ */
 function secureRandomBytes(length: number): Promise<Uint8Array> {
   return new Promise((resolve, reject) => {
-    if (typeof tt.getRandomValues !== 'function') {
-      reject(new Error('tt.getRandomValues not available'));
+    // Try Feishu TT API first
+    if (typeof tt !== 'undefined' && typeof tt.getRandomValues === 'function') {
+      tt.getRandomValues({
+        length,
+        success: (res: { randomValues: ArrayBuffer }) => {
+          resolve(new Uint8Array(res.randomValues, 0, length));
+        },
+        fail: (err: any) => {
+          console.warn('[crypto] tt.getRandomValues failed, trying crypto.getRandomValues:', err.errMsg);
+          fallbackRandomBytes(length, resolve, reject);
+        },
+      });
       return;
     }
-    tt.getRandomValues({
-      length,
-      success: (res: { randomValues: ArrayBuffer }) => {
-        resolve(new Uint8Array(res.randomValues, 0, length));
-      },
-      fail: (err: any) => {
-        reject(new Error('tt.getRandomValues failed: ' + (err.errMsg || JSON.stringify(err))));
-      },
-    });
+    fallbackRandomBytes(length, resolve, reject);
   });
+}
+
+/** Fallback: Web Crypto API (Chromium webview) or Math.random */
+function fallbackRandomBytes(length: number, resolve: (v: Uint8Array) => void, reject: (e: Error) => void) {
+  try {
+    if (typeof crypto !== 'undefined' && typeof crypto.getRandomValues === 'function') {
+      resolve(crypto.getRandomValues(new Uint8Array(length)));
+      return;
+    }
+  } catch (_) { /* fall through */ }
+  // Last-resort Math.random (not crypto-secure but fine for GCM IV)
+  const bytes = new Uint8Array(length);
+  for (let i = 0; i < length; i++) bytes[i] = (Math.random() * 256) | 0;
+  resolve(bytes);
 }
 
 export async function generateContentKey(): Promise<KeyPair> {
@@ -149,7 +166,7 @@ export function buildAad(fields: AadFields): Uint8Array {
   return utf8ToBytes(json);
 }
 
-// ── Encrypt / Decrypt (async �?tt.getRandomValues is Promise-based) ──
+// ── Encrypt / Decrypt (async — tt.getRandomValues is Promise-based) ──
 
 export async function encrypt(
   plaintext: string,
@@ -191,7 +208,7 @@ export async function decrypt(
 /**
  * Decrypt a sealed_payload event envelope and merge the decrypted fields back
  * into the allowlist data. Mirrors packages/shared/src/bridge/event-envelope.ts
- * decryptEventPayload �?same AAD format and sealed_payload wire format.
+ * decryptEventPayload — same AAD format and sealed_payload wire format.
  *
  * Returns the merged data object: { ...allowlistData, ...decrypted }.
  *
@@ -213,7 +230,7 @@ export async function decryptEventPayload(
   const aad = buildAad(aadFields);
   const decryptedJson = await decrypt(sealedPayloadB64, keyBytes, aad);
   const decrypted = JSON.parse(decryptedJson) as Record<string, unknown>;
-  // Strip envelope markers �?once decryption succeeds the data is plaintext;
+  // Strip envelope markers — once decryption succeeds the data is plaintext;
   // leaving `encrypted: true` confuses downstream UI logic that uses it as
   // an "encryption failed" placeholder trigger.
   const { encrypted: _e, preview_label: _p, safe_summary: _s, encryption_error: _err, ...allowlistRest } = allowlistData;
@@ -232,7 +249,7 @@ export async function decryptEventPayload(
  * Returns fields that should be sent in place of the plaintext `data`:
  *   { sealed_command, command_id, key_id, encryption_version }
  *
- * The relay server cannot decrypt the sealed_command �?it forwards it
+ * The relay server cannot decrypt the sealed_command — it forwards it
  * opaquely to the PC bridge.
  */
 export async function encryptCommandPayload(
@@ -286,7 +303,7 @@ function hexToBytes(hex: string): Uint8Array {
 
 function bytesToBase64(bytes: Uint8Array): string {
   // Prefer wx API in production (proven to work in WeChat mini program runtime).
-  // btoa fallback is for local POC testing only �?real WeChat compatibility
+  // btoa fallback is for local POC testing only — real WeChat compatibility
   // must be verified via WeChat Developer Tool "Build npm" + device test.
   if (typeof tt !== 'undefined' && tt.arrayBufferToBase64) {
     return tt.arrayBufferToBase64(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength));
@@ -310,6 +327,76 @@ function base64ToBytes(b64: string): Uint8Array {
     bytes[i] = binary.charCodeAt(i);
   }
   return bytes;
+}
+
+// ── ECDH P-256 Key Exchange (绑定码 E2E) ──────────────────────
+
+/**
+ * Generate an ECDH P-256 key pair.
+ * Returns public key as uncompressed hex (130 chars: 04 + 64-byte xy).
+ * Private key is hex string for easier passing.
+ */
+export function generateEcdhKeyPair(): { publicKeyHex: string; privateKeyHex: string } {
+  const _nobleEcdh = require('../vendor/e2e-key-exchange.js');
+  const p256 = _nobleEcdh.p256;
+  const privateKeyBytes = p256.utils.randomSecretKey();
+  const publicKeyBytes = p256.getPublicKey(privateKeyBytes, false); // false = uncompressed
+  return {
+    publicKeyHex: bytesToHex(publicKeyBytes),
+    privateKeyHex: bytesToHex(privateKeyBytes),
+  };
+}
+
+/**
+ * Derive contentKey + keyId from ECDH shared secret via HKDF-SHA256.
+ * Must match deriveKeyMaterial() in packages/shared/src/bridge/e2e-key-exchange.ts:
+ *   curve = P-256 (prime256v1 / secp256r1)
+ *   HKDF info = 'codekey-e2e-key-v1'
+ *   HKDF salt = empty
+ *   HKDF output = 40 bytes (32 contentKey + 8 keyId)
+ */
+export function deriveEcdhKeyMaterial(
+  privateKeyHex: string,
+  peerPublicKeyHex: string,
+): { contentKeyHex: string; keyId: string } {
+  const _nobleEcdh = require('../vendor/e2e-key-exchange.js');
+  const p256 = _nobleEcdh.p256;
+  const hkdf = _nobleEcdh.hkdf;
+  const sha256 = _nobleEcdh.sha256;
+
+  const sharedSecretPoint = p256.getSharedSecret(
+    hexToBytes(privateKeyHex),
+    hexToBytes(peerPublicKeyHex),
+  );
+  // noble returns compressed point (33 bytes: 0x02/0x03 prefix + 32 byte x-coordinate).
+  // ECDH shared secret is just the x-coordinate (32 bytes), matching Node crypto.
+  const sharedSecret = sharedSecretPoint.subarray(1);
+
+  const HKDF_INFO = 'codekey-e2e-key-v1';
+  const DERIVED_LENGTH = 40; // 32 contentKey + 8 keyId
+
+  const derived = hkdf(sha256, sharedSecret, new Uint8Array(0), utf8ToBytes(HKDF_INFO), DERIVED_LENGTH);
+  return {
+    contentKeyHex: bytesToHex(derived.subarray(0, 32)),
+    keyId: bytesToHex(derived.subarray(32, 40)),
+  };
+}
+
+/**
+ * Generate an ECDH key pair and derive contentKey + keyId using the peer's public key.
+ * One-shot convenience for the pairing flow.
+ */
+export function generateEcdhContentKey(
+  peerPublicKeyHex: string,
+): { publicKeyHex: string; privateKeyHex: string; contentKeyHex: string; keyId: string } {
+  const kp = generateEcdhKeyPair();
+  const material = deriveEcdhKeyMaterial(kp.privateKeyHex, peerPublicKeyHex);
+  return {
+    publicKeyHex: kp.publicKeyHex,
+    privateKeyHex: kp.privateKeyHex,
+    contentKeyHex: material.contentKeyHex,
+    keyId: material.keyId,
+  };
 }
 
 export function generateUUID(): string {

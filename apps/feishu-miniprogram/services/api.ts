@@ -10,11 +10,11 @@ interface ApiError {
 function request<T>(method: HttpMethod, url: string, data?: any): Promise<T> {
   return new Promise((resolve, reject) => {
     const token = getClientToken();
-    // tt.request �?header 默认�?'content-type: application/json'�?
-    // 当请求没�?body（DELETE / GET）时，fastify 4.x 会以
-    // FST_ERR_CTP_EMPTY_JSON_BODY 返回 400。所以仅在显式有 data �?
-    // 才使�?application/json，没�?body 时显式覆盖为 text/plain�?
-    // �?apps/telegram-miniapp/src/api/client.ts 的策略一致�?
+    // tt.request 的 header 默认带 'content-type: application/json'。
+    // 当请求没有 body（DELETE / GET）时，fastify 4.x 会以
+    // FST_ERR_CTP_EMPTY_JSON_BODY 返回 400。所以仅在显式有 data 时
+    // 才使用 application/json，没有 body 时显式覆盖为 text/plain。
+    // 与 apps/telegram-miniapp/src/api/client.ts 的策略一致。
     const hasBody = data !== undefined;
     tt.request({
       method,
@@ -79,14 +79,21 @@ export interface ConfirmResult {
   clientToken: string;
   deviceId: string;
   desktopNotified?: boolean;
+  e2eAvailable?: boolean;
+  desktopPublicKeyHex?: string;
+  e2eKeyReceived?: boolean;
 }
 
 export function createApi(serverUrl: string) {
   const api = serverUrl.endsWith('/api/v1') ? serverUrl : `${serverUrl}/api/v1`;
 
   return {
-    confirmCode(code: string, platform: 'wechat' | 'feishu' = 'feishu'): Promise<ConfirmResult> {
-      return request<ConfirmResult>('POST', `${api}/devices/confirm`, { code, platform });
+    confirmCode(code: string, platform: 'wechat' | 'feishu' = 'feishu', phonePublicKeyHex?: string): Promise<ConfirmResult> {
+      return request<ConfirmResult>('POST', `${api}/devices/confirm`, {
+        code,
+        platform,
+        ...(phonePublicKeyHex ? { phonePublicKeyHex } : {}),
+      });
     },
 
     getSessions(): Promise<Session[]> {

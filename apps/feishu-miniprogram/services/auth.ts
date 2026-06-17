@@ -1,13 +1,13 @@
 import { getUserToken, getClientToken, getServerUrl } from './storage';
 
 /**
- * Auth service �?Phase 1 of the subscription system.
+ * Auth service — Phase 1 of the subscription system.
  *
- *   wxLogin()           �?exchange tt.login() code for a server-issued user_token
- *   claimDevice()       �?bind the current clientToken's device to the logged-in user
- *   ensureUserToken()   �?convenience: silently wx-login if no token, then claim the device
+ *   wxLogin()           — exchange tt.login() code for a server-issued user_token
+ *   claimDevice()       — bind the current clientToken's device to the logged-in user
+ *   ensureUserToken()   — convenience: silently wx-login if no token, then claim the device
  *
- * The two-step (login �?claim) lets a logged-in user with no device
+ * The two-step (login → claim) lets a logged-in user with no device
  * yet (e.g. opened the mini program before pairing) still own an
  * account, and a paired device without a user (pre-existing devices
  * that haven't migrated) get retroactively bound.
@@ -23,8 +23,11 @@ interface ApiError {
 function userRequest<T>(method: HttpMethod, url: string, data?: any): Promise<T> {
   return new Promise((resolve, reject) => {
     const token = getUserToken();
-    // tt.request �?header 默认�?'content-type: application/json'�?    // fastify 4.x 在收�?application/json + �?body 时会返回 400
-    // FST_ERR_CTP_EMPTY_JSON_BODY。仅在有 body 时才�?json，否则显�?    // 覆盖�?text/plain（参�?telegram-miniapp/src/api/client.ts）�?    const hasBody = data !== undefined;
+    // tt.request 的 header 默认带 'content-type: application/json'。
+    // fastify 4.x 在收到 application/json + 空 body 时会返回 400
+    // FST_ERR_CTP_EMPTY_JSON_BODY。仅在有 body 时才用 json，否则显式
+    // 覆盖为 text/plain（参考 telegram-miniapp/src/api/client.ts）。
+    const hasBody = data !== undefined;
     tt.request({
       method,
       url,
@@ -99,7 +102,7 @@ export function claimDevice(clientToken?: string): Promise<ClaimDeviceResult> {
 
 /**
  * One-shot: log the user in (if not already) and bind the current
- * device. Safe to call from app.onShow �?the second call within
+ * device. Safe to call from app.onShow — the second call within
  * one session is essentially free (the second step returns 409
  * 'device already bound' which we swallow).
  */
@@ -118,7 +121,7 @@ export async function ensureUserToken(): Promise<{ userId: number; bound: boolea
     const result = await claimDevice();
     return { userId: (tt.getStorageSync('CODEKEY_USER_ID') as number), bound: true, alreadyBound: !!result?.alreadyBound };
   } catch (err: any) {
-    // device is bound to a different user �?surface as a structured
+    // device is bound to a different user — surface as a structured
     // error so the UI can prompt the user to unbind it on the PC side
     // before re-pairing. Don't swallow this one.
     if (err?.error === 'device bound to another user') {
@@ -126,7 +129,7 @@ export async function ensureUserToken(): Promise<{ userId: number; bound: boolea
       e.code = 'DEVICE_BOUND_TO_ANOTHER_USER';
       throw e;
     }
-    // No clientToken yet (user hasn't paired) �?log-in still succeeded,
+    // No clientToken yet (user hasn't paired) — log-in still succeeded,
     // device will be claimed after the first successful /devices/confirm.
     if (err?.error === 'NO_CLIENT_TOKEN' || err?.error === 'invalid clientToken') {
       return { userId: (tt.getStorageSync('CODEKEY_USER_ID') as number), bound: false };
