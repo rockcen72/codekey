@@ -9,7 +9,7 @@
 //   - 不再依赖 hasAuth / ensureUserToken（那些逻辑已转到 sessions/settings）
 //   - 仅作为路由跳板存在
 Page({
-  onLoad() {
-    tt.reLaunch({ url: '/pages/sessions/sessions' });
-  },
+    onLoad() {
+        tt.reLaunch({ url: '/pages/sessions/sessions' });
+    },
 });

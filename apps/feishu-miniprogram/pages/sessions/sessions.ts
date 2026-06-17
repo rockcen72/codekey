@@ -51,10 +51,10 @@ Page({
     activeTab: 'all',
     agentTabs: [{ key: 'all', label: 'All' }] as { key: string; label: string }[],
     _swipedSessionId: null as string | null,
-    // Subscription pill (top bar) �?mirrors the data shape used in
+    // Subscription pill (top bar) — mirrors the data shape used in
     // pages/settings/settings.ts so the same quota_exceeded
     // listener can drive a refetch on any page. The pill is hidden
-    // for unauthenticated / load_failed �?those users can still
+    // for unauthenticated / load_failed — those users can still
     // reach settings via the gear icon.
     subTier: 'unauthenticated' as 'paid' | 'trial' | 'free' | 'unauthenticated' | 'load_failed',
     subPlan: null as string | null,
@@ -130,7 +130,7 @@ Page({
     this._onSessionRegisteredBound = (payload: any) => {
       const sid = payload.sessionId;
       if (!sid || this.data.sessions.some((s: any) => s.id === sid)) return;
-      const entry = { id: sid, status: 'active', agent_type: 'claude-code', displayTitle: '同步�?..', displaySubtitle: 'claude-code', connected: true, pendingCount: 0, hasPending: false, metadata: {} };
+      const entry = { id: sid, status: 'active', agent_type: 'claude-code', displayTitle: '同步中...', displaySubtitle: 'claude-code', connected: true, pendingCount: 0, hasPending: false, metadata: {} };
       const sessions = [entry, ...this.data.sessions];
       this.setData({ sessions, activeTotal: sessions.filter((s: any) => s.connected).length });
       this._applyFilter(sessions);
@@ -277,7 +277,7 @@ Page({
     if (!session) return;
     tt.showModal({
       title: '删除会话',
-      content: '将从列表中移除此会话。如果会话仍处于连接状态，将同时解除关联�?,
+      content: '将从列表中移除此会话。如果会话仍处于连接状态，将同时解除关联。',
       success: (res) => {
         if (!res.confirm) { this._closeAllSwipes(); return; }
         if (session.connected && app.globalData.wsConnected) {
@@ -302,7 +302,7 @@ Page({
     // render the current tier / quota state. Same shape as the
     // settings page, so we get the same normal/approaching/
     // exhausted cutoffs. Silently no-ops on auth/network failure
-    // �?the pill just stays hidden, which is correct.
+    // — the pill just stays hidden, which is correct.
     try {
       await ensureUserToken();
       const sub = await getSubscription();
@@ -353,24 +353,24 @@ Page({
     quotaState: 'hidden' | 'normal' | 'approaching' | 'exhausted',
     isExpiringSoon: boolean = false,
   ): string {
-    // Compact text for the top-bar pill (�?8 Chinese chars or
+    // Compact text for the top-bar pill (≤ 8 Chinese chars or
     // ~12 Latin chars). Tapping the pill opens settings.
     if (tier === 'paid') {
       const planLabel = plan === 'yearly' ? '年付' : plan === 'monthly' ? '月付' : (plan || 'Pro');
       if (isExpiringSoon && daysRemaining != null) {
-        return `Pro · ${planLabel} · �?{daysRemaining}天`;
+        return `Pro · ${planLabel} · 剩${daysRemaining}天`;
       }
       return `Pro · ${planLabel}`;
     }
     if (tier === 'trial') {
       if (daysRemaining != null && daysRemaining > 0) return `试用 · ${daysRemaining}天`;
       if (daysRemaining === 0) return '试用 · 今天到期';
-      return '试用�?;
+      return '试用中';
     }
-    // free �?show the count for both normal and approaching so the
+    // free — show the count for both normal and approaching so the
     // user can see exactly how close they are; the pill's amber
     // background (sub-pill-approaching) does the warning work.
-    if (quotaState === 'exhausted') return 'Free · 已用�?;
+    if (quotaState === 'exhausted') return 'Free · 已用完';
     if ((quotaState === 'normal' || quotaState === 'approaching') && usage) {
       return `Free · ${usage.used}/${usage.limit}`;
     }

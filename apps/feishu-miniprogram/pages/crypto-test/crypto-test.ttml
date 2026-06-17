@@ -8,11 +8,11 @@
   <view class="debug" tt:if="{{debugInfo}}"><text class="debug-text">{{debugInfo}}</text></view>
   <view class="summary" tt:if="{{ready && !importError}}">
     <text class="score">{{passed}} / {{passed + failed}} passed</text>
-    <text class="verdict {{failed === 0 ? 'ok' : 'fail'}}">{{failed === 0 ? 'âœ?All pass' : 'â?Some failed'}}</text>
+    <text class="verdict {{failed === 0 ? 'ok' : 'fail'}}">{{failed === 0 ? 'All pass' : 'Some failed'}}</text>
   </view>
   <view class="results" tt:if="{{ready && !importError}}">
     <view class="test-item {{item.passed ? 'pass' : 'fail'}}" tt:for="{{results}}" tt:key="name">
-      <view class="test-head"><text class="test-icon">{{item.passed ? 'âœ? : 'â?}}</text><text class="test-name">{{item.name}}</text></view>
+      <view class="test-head"><text class="test-icon">{{item.passed ? 'PASS' : 'FAIL'}}</text><text class="test-name">{{item.name}}</text></view>
       <text class="test-detail">{{item.detail}}</text>
     </view>
   </view>

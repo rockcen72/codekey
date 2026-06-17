@@ -7,7 +7,7 @@
 
   <block tt:elif="{{status === 'success'}}">
     <view class="success-icon">成功</view>
-    <text class="status-text">设备绑定成功�?/text>
+    <text class="status-text">设备绑定成功！</text>
     <text class="hint-text">正在跳转...</text>
   </block>
 

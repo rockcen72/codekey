@@ -25,14 +25,14 @@
   </view>
 
   <view class="e2e-banner stale" tt:if="{{e2eStatus === 'stale'}}">
-    <text>桌面�?E2E 密钥已更新，请在设置页面重新配对手机�?/text>
+    <text>桌面端 E2E 密钥已更新，请在设置页面重新配对手机。</text>
   </view>
 
   <scroll-view class="timeline {{hasPrimaryPendingEvent && !approvalSheetOpen ? 'timeline-with-dock' : ''}}" scroll-y scroll-into-view="{{scrollToId}}" scroll-top="{{scrollTop}}" scroll-with-animation bindscroll="onScroll">
     <view class="empty" tt:if="{{chatMessages.length === 0}}">
-      <text class="empty-icon">�?/text>
+      <text class="empty-icon">◌</text>
       <text class="empty-title">暂无消息</text>
-      <text class="empty-text">�?Agent 请求审批、完成任务或等待指令时，会显示在这里�?/text>
+      <text class="empty-text">当 Agent 请求审批、完成任务或等待指令时，会显示在这里。</text>
     </view>
 
     <block tt:for="{{chatMessages}}" tt:key="id">
@@ -46,7 +46,7 @@
       <!-- User message bubble -->
       <view tt:elif="{{item.type === 'user'}}" class="msg-row right">
         <view class="chat-stack user-stack" id="msg-{{item.id}}">
-          <text class="sender-name">{{item.senderName || '�?}}</text>
+          <text class="sender-name">{{item.senderName || '你'}}</text>
           <view class="msg-bubble user">
             <text class="msg-text">{{item.content}}</text>
             <text tt:if="{{item.displayTime}}" class="msg-time">{{item.displayTime}}</text>
@@ -83,8 +83,9 @@
             <view tt:if="{{item.command}}" class="cmd-line">
               <text class="cmd-line-text mono">{{item.command}}</text>
             </view>
-            <!-- Summary: plain text only (mp-html not used in feishu) -->
-            <view tt:if="{{item.summary && item.summary !== item.command}}" class="event-summary">{{item.summary}}</view>
+            <!-- Summary: rich-text for markdown, plain text fallback -->
+            <rich-text tt:if="{{item.contentHtml}}" class="event-summary" nodes="{{item.contentHtml}}"></rich-text>
+            <view tt:elif="{{item.summary && item.summary !== item.command}}" class="event-summary">{{item.summary}}</view>
             <view tt:if="{{item.requiresInput && item.inputOptions && item.inputOptions.length}}" class="input-options">
               <button
                 tt:for="{{item.inputOptions}}"
@@ -142,7 +143,7 @@
         </view>
         <view class="dock-bar-right">
           <text tt:if="{{primaryPendingEvent.riskText}}" class="risk-tag {{primaryPendingEvent.risk_level}}">{{primaryPendingEvent.riskText}}</text>
-          <text class="dock-chevron">{{dockExpanded ? '�? : '�?}}</text>
+          <text class="dock-chevron">{{dockExpanded ? '▼' : '▲'}}</text>
         </view>
       </view>
 
@@ -172,14 +173,14 @@
         <view class="dock-reply">
           <input
             class="dock-reply-input"
-            placeholder="{{primaryPendingEvent.requiresInput ? '输入选择或说�?..' : '回复 Agent...'}}"
+            placeholder="{{primaryPendingEvent.requiresInput ? '输入选择或说明...' : '回复 Agent...'}}"
             value="{{dockReplyText}}"
             bindinput="onDockReplyInput"
             confirm-type="send"
             bindconfirm="sendDockReply"
           />
           <view class="dock-reply-send {{dockReplyText ? 'active' : ''}}" bindtap="sendDockReply">
-            <text>发�?/text>
+            <text>发送</text>
           </view>
         </view>
 
@@ -212,7 +213,7 @@
         </view>
       </view>
       <view class="composer-input-wrap">
-        <input class="composer-input" placeholder="�?Agent 发送指�?.." value="{{commandText}}" bindinput="onCommandInput" />
+        <input class="composer-input" placeholder="给 Agent 发送指令..." value="{{commandText}}" bindinput="onCommandInput" />
       </view>
       <view class="composer-send {{canSendCommand ? 'active' : ''}}" bindtap="sendCommand">
         <view class="send-arrow">
@@ -241,7 +242,7 @@
       </view>
 
       <view class="risk-notice" tt:if="{{approvalEvent.pending && !approvalEvent.requiresInput && !approvalEvent.canApprove}}">
-        <text>该请求风险较高，请在电脑端确认后处理�?/text>
+        <text>该请求风险较高，请在电脑端确认后处理。</text>
       </view>
 
       <view tt:if="{{approvalEvent.requiresInput && approvalEvent.inputOptions && approvalEvent.inputOptions.length}}" class="input-options sheet-options">
@@ -259,8 +260,8 @@
       </view>
 
       <view class="sheet-reply">
-        <input class="sheet-reply-input" placeholder="{{approvalEvent.requiresInput ? '输入选择或补充说�?..' : '回复 AI...'}}" value="{{sheetReplyText}}" bindinput="onSheetReplyInput" />
-        <button class="sheet-reply-btn" bindtap="sendSheetReply">发�?/button>
+        <input class="sheet-reply-input" placeholder="{{approvalEvent.requiresInput ? '输入选择或补充说明...' : '回复 AI...'}}" value="{{sheetReplyText}}" bindinput="onSheetReplyInput" />
+        <button class="sheet-reply-btn" bindtap="sendSheetReply">发送</button>
       </view>
 
       <view tt:if="{{!approvalEvent.requiresInput}}" class="sheet-actions">

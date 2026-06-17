@@ -17,9 +17,9 @@ const app = getApp<any>();
 type SubscriptionUiState = Tier | 'unauthenticated' | 'load_failed';
 
 // Quota bar coloring tier:
-//   normal    �?< 40/50, default tint
-//   approaching �?40-49, yellow warning ("接近额度上限")
-//   exhausted �?50/50, red ("本月已用�?)
+//   normal    — < 40/50, default tint
+//   approaching — 40-49, yellow warning ("接近额度上限")
+//   exhausted — 50/50, red ("本月已用完")
 type QuotaState = 'normal' | 'approaching' | 'exhausted' | 'hidden';
 
 interface PageData {
@@ -94,18 +94,42 @@ Page({
       onlyFromCamera: true,
       success: (res) => {
         const raw = res.result.trim();
-        let code = raw;
+        // Try several QR code formats, in order of preference:
+        // 1. Feishu deep link: feishu://...?query=code%3DXXX%26...
+        // 2. WeChat-style URL: codekey://pair?code=XXX
+        // 3. Direct 8-char code: XXXXXXXX
+        let code = '';
         let keyId = '';
         let contentKey = '';
-        const urlMatch = raw.match(/[?&]code=([A-Z2-9]{8})(?:$|&)/i);
-        if (urlMatch) {
-          code = urlMatch[1].toUpperCase();
-          const keyIdMatch = raw.match(/[?&]key_id=([^&]+)/i);
-          const contentKeyMatch = raw.match(/[?&]content_key=([^&]+)/i);
-          if (keyIdMatch) keyId = keyIdMatch[1];
-          if (contentKeyMatch) contentKey = contentKeyMatch[1];
+        // Check for feishu deep link with encoded query= param
+        const feishuQueryMatch = raw.match(/[?&]query=([^&]+)/i);
+        if (feishuQueryMatch) {
+          const decoded = decodeURIComponent(feishuQueryMatch[1]);
+          const codeMatch = decoded.match(/code=([A-Z2-9]{8})/i);
+          if (codeMatch) {
+            code = codeMatch[1].toUpperCase();
+            const keyIdMatch = decoded.match(/key_id=([^&]+)/i);
+            const contentKeyMatch = decoded.match(/content_key=([^&]+)/i);
+            if (keyIdMatch) keyId = keyIdMatch[1];
+            if (contentKeyMatch) contentKey = contentKeyMatch[1];
+          }
         }
-        if (code.length === 8 && /^[A-Z2-9]+$/.test(code)) {
+        // Fallback: direct code= param (WeChat / codekey:// scheme)
+        if (!code) {
+          const urlMatch = raw.match(/[?&]code=([A-Z2-9]{8})(?:$|&)/i);
+          if (urlMatch) {
+            code = urlMatch[1].toUpperCase();
+            const keyIdMatch = raw.match(/[?&]key_id=([^&]+)/i);
+            const contentKeyMatch = raw.match(/[?&]content_key=([^&]+)/i);
+            if (keyIdMatch) keyId = keyIdMatch[1];
+            if (contentKeyMatch) contentKey = contentKeyMatch[1];
+          }
+        }
+        // Last resort: raw 8-char code
+        if (!code && /^[A-Z2-9]{8}$/i.test(raw)) {
+          code = raw.toUpperCase();
+        }
+        if (code) {
           let url = `/pages/bind/bind?code=${code}`;
           if (keyId) url += `&key_id=${encodeURIComponent(keyId)}`;
           if (contentKey) url += `&content_key=${encodeURIComponent(contentKey)}`;
@@ -115,7 +139,7 @@ Page({
         }
       },
       fail: (err) => {
-        tt.showToast({ title: '扫码失败�? + (err.errMsg || '未知错误'), icon: 'none' });
+        tt.showToast({ title: '扫码失败：' + (err.errMsg || '未知错误'), icon: 'none' });
       },
     });
   },
@@ -129,7 +153,7 @@ Page({
     if (code.length === 8 && /^[A-Z2-9]+$/.test(code)) {
       tt.navigateTo({ url: `/pages/bind/bind?code=${code}` });
     } else {
-      tt.showToast({ title: '配对码必须为 8 位字�?, icon: 'none' });
+      tt.showToast({ title: '配对码必须为 8 位字符', icon: 'none' });
     }
   },
 
@@ -143,7 +167,7 @@ Page({
           const token = getUserToken();
           const clientToken = getClientToken();
           if (!deviceId || !token) {
-            tt.showToast({ title: '未登�?, icon: 'none' });
+            tt.showToast({ title: '未登录', icon: 'none' });
             return;
           }
           const base = getServerUrl();
@@ -152,10 +176,10 @@ Page({
             method: 'DELETE',
             url: `${api}/user/devices/${deviceId}`,
             timeout: 10000,
-            // 注意：DELETE 不带 body。wx.request header 默认�?'content-type: application/json',
-            // �?fastify 4.x 看到 application/json + �?body 会返�?400 FST_ERR_CTP_EMPTY_JSON_BODY�?
-            // 显式覆盖 content-type �?text/plain 来绕过这个默认行为�?
-            // 参�?telegram-miniapp/src/api/client.ts: 仅在�?body 时才�?application/json�?
+            // 注意：DELETE 不带 body。tt.request header 默认带 'content-type: application/json',
+            // 而 fastify 4.x 看到 application/json + 空 body 会返回 400 FST_ERR_CTP_EMPTY_JSON_BODY。
+            // 显式覆盖 content-type 为 text/plain 来绕过这个默认行为。
+            // 参考 telegram-miniapp/src/api/client.ts: 仅在有 body 时才设 application/json。
             header: {
               'content-type': 'text/plain',
               'Authorization': `Bearer ${token}`,
@@ -163,9 +187,9 @@ Page({
             },
             success: (resp: any) => {
               if (resp.statusCode >= 400) {
-                // 后端 200/4xx 都返�?JSON; fastify 的默�?400 形如
+                // 后端 200/4xx 都返回 JSON; fastify 的默认 400 形如
                 // { statusCode, error: 'Bad Request', message: '...' }
-                // 应用层错误形�?{ error: 'client_token_required' }
+                // 应用层错误形如 { error: 'client_token_required' }
                 const message = resp.data?.message || resp.data?.error || `解绑失败 (${resp.statusCode})`;
                 tt.showToast({ title: message, icon: 'none', duration: 3000 });
                 console.warn('[settings] unbind failed', resp.statusCode, resp.data);
@@ -177,7 +201,7 @@ Page({
             },
             fail: (err: any) => {
               console.warn('[settings] unbind network error', err);
-              tt.showToast({ title: '网络错误�? + (err?.errMsg || '解绑失败'), icon: 'none', duration: 3000 });
+              tt.showToast({ title: '网络错误：' + (err?.errMsg || '解绑失败'), icon: 'none', duration: 3000 });
             },
           });
         }
@@ -188,7 +212,7 @@ Page({
   copyDeviceId() {
     tt.setClipboardData({
       data: this.data.deviceId,
-      success: () => tt.showToast({ title: '已复�?, icon: 'success' }),
+      success: () => tt.showToast({ title: '已复制', icon: 'success' }),
     });
   },
 
@@ -199,8 +223,8 @@ Page({
       await ensureUserToken();
     } catch (err) {
       // Not logged in (no clientToken yet, or the user is not
-      // bound to this device) �?surface as unauthenticated so the
-      // UI can show "未登�? instead of a generic error.
+      // bound to this device) — surface as unauthenticated so the
+      // UI can show "未登录" instead of a generic error.
       this.setData({ tier: 'unauthenticated', loaded: true });
       this._installQuotaListener();
       return;
@@ -215,7 +239,7 @@ Page({
       this.applySubscription(sub);
     } catch (err) {
       console.warn('[settings] getSubscription failed:', err);
-      // Server reachable (we have a token) but the call failed �?
+      // Server reachable (we have a token) but the call failed —
       // most likely a network blip. Tell the user it's a load
       // failure, not an auth issue, so they know to retry.
       this.setData({ tier: 'load_failed', loaded: true });
@@ -233,7 +257,7 @@ Page({
     const expiresAt = sub.expiresAt ? new Date(sub.expiresAt) : null;
     const daysRemaining = expiresAt ? this._daysFromNow(expiresAt) : null;
 
-    // Quota bar is only meaningful for free users �?paid/trial are
+    // Quota bar is only meaningful for free users — paid/trial are
     // unlimited. For the Free tier, the server returns a usage
     // snapshot; for paid/trial it returns null, so quotaState is
     // 'hidden'.
@@ -268,7 +292,7 @@ Page({
 
   /** Compute whole-day delta from "now" to the given future date.
    *  Positive = days remaining; 0 = today; negative = already
-   *  expired (treat as "已到�? by the render layer). */
+   *  expired (treat as "已到期" by the render layer). */
   _daysFromNow(target: Date): number {
     const ms = target.getTime() - Date.now();
     return Math.ceil(ms / 86_400_000);
@@ -299,16 +323,16 @@ Page({
     this.setData({ redeemBusy: true });
     try {
       const r = await redeemCode(code);
-      tt.showToast({ title: `已激�?${r.plan}`, icon: 'success' });
+      tt.showToast({ title: `已激活 ${r.plan}`, icon: 'success' });
       this.setData({ redeemInput: '' });
       this.refreshSubscription();
     } catch (err: any) {
       const msg =
         err?.error === 'invalid_format' ? '兑换码格式不正确' :
-        err?.error === 'not_found' ? '兑换码无�? :
-        err?.error === 'already_used' ? '兑换码已被使�? :
+        err?.error === 'not_found' ? '兑换码无效' :
+        err?.error === 'already_used' ? '兑换码已被使用' :
         err?.error === 'void' ? '兑换码已作废' :
-        err?.error === 'product_mismatch' ? '兑换码与产品不匹�? :
+        err?.error === 'product_mismatch' ? '兑换码与产品不匹配' :
         '兑换失败';
       tt.showToast({ title: msg, icon: 'none' });
     } finally {

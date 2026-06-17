@@ -54,19 +54,30 @@ function saveLocalCommandMessages(sessionId: string, messages: LocalCommandMessa
 }
 
 /** Decrypt all encrypted events in-place. Mirrors Telegram SessionDetailPage's
- *  decryptEvents �?see plan §5.3 / §5.4.
+ *  decryptEvents — see plan §5.3 / §5.4.
  *
  *  Behavior:
- *    - sealed_payload missing                  �?leave event untouched (legacy plaintext)
- *    - data.encryption_error === true          �?leave as-is (PC fail-closed placeholder)
- *    - encryption_version unknown              �?leave + log once
- *    - no contentKey / deviceId                �?leave + log once
- *    - decrypt throws                          �?leave + log once
- *    - decrypt succeeds                        �?merge decrypted body into event.data
+ *    - sealed_payload missing                  → leave event untouched (legacy plaintext)
+ *    - data.encryption_error === true          → leave as-is (PC fail-closed placeholder)
+ *    - encryption_version unknown              → leave + log once
+ *    - no contentKey / deviceId                → leave + log once
+ *    - decrypt throws                          → leave + log once
+ *    - decrypt succeeds                        → merge decrypted body into event.data
  */
 async function decryptRawEvents(events: any[]): Promise<any[]> {
   const contentKey = getContentKey();
   const deviceId = getDeviceId();
+  // === DIAGNOSTIC ===
+  console.log('[decryptRawEvents] contentKey present:', !!contentKey, 'len:', contentKey?.length);
+  console.log('[decryptRawEvents] deviceId:', deviceId);
+  console.log('[decryptRawEvents] storedKeyId:', getKeyId());
+  console.log('[decryptRawEvents] events count:', events.length);
+  for (const ev of events.slice(0, 3)) {
+    console.log('[decryptRawEvents] event sample:', JSON.stringify({
+      id: ev.id, type: ev.type, has_sealed: !!ev.sealed_payload,
+      key_id: ev.key_id, encryption_version: ev.encryption_version,
+    }));
+  }
   if (!contentKey || !deviceId) return events;
 
   const storedKeyId = getKeyId();
@@ -76,7 +87,7 @@ async function decryptRawEvents(events: any[]): Promise<any[]> {
   for (const event of out) {
     if (!event.sealed_payload || !event.key_id) continue;
 
-    // Phase 4C: detect keyId mismatch �?PC rotated keys, phone has stale key
+    // Phase 4C: detect keyId mismatch — PC rotated keys, phone has stale key
     if (storedKeyId && event.key_id !== storedKeyId) {
       if (!decryptionFailureLogged.has(event.id)) {
         console.warn('[session-detail] stale keyId: event.key_id=', event.key_id, 'stored=', storedKeyId);
@@ -135,8 +146,124 @@ async function decryptRawEvents(events: any[]): Promise<any[]> {
 function getEncryptedPlaceholder(data: any): string | null {
   if (data?.e2eKeyStale === true) return '加密内容不可用（密钥已更新，请重新配对手机）';
   if (data?.encryption_error === true) return '加密内容不可用（桌面端加密失败）';
-  if (data?.encrypted === true) return '加密内容不可�?;
+  if (data?.encrypted === true) return '加密内容不可用';
   return null;
+}
+
+function markdownToHtml(md: string): string {
+  if (!md) return '';
+  const lines = md.split('\n');
+  const out: string[] = [];
+  let inCode = false;
+  let inList = false;
+  let listType: 'ul' | 'ol' | null = null;
+
+  const flushList = () => {
+    if (inList) {
+      out.push(listType === 'ol' ? '</ol>' : '</ul>');
+      inList = false;
+      listType = null;
+    }
+  };
+
+  for (const raw of lines) {
+    if (raw.trimStart().startsWith('```')) {
+      flushList();
+      if (inCode) {
+        out.push('</code></pre>');
+        inCode = false;
+      } else {
+        out.push('<pre><code>');
+        inCode = true;
+      }
+      continue;
+    }
+    if (inCode) {
+      out.push(escapeHtml(raw));
+      continue;
+    }
+
+    let line = raw.trim();
+
+    if (/^#{1,6}\s+/.test(line)) {
+      flushList();
+      const hMatch = line.match(/^(#{1,6})\s+(.*)$/);
+      if (hMatch) {
+        const level = hMatch[1].length;
+        out.push(`<h${level}>${escapeHtml(hMatch[2])}</h${level}>`);
+      }
+      continue;
+    }
+
+    if (/^[-*_]{3,}$/.test(line)) {
+      flushList();
+      out.push('<hr>');
+      continue;
+    }
+
+    if (/^[-*+]\s+/.test(line)) {
+      if (!inList || listType !== 'ul') { flushList(); out.push('<ul>'); inList = true; listType = 'ul'; }
+      out.push(`<li>${escapeHtml(line.replace(/^[-*+]\s+/, ''))}</li>`);
+      continue;
+    }
+
+    if (/^\d+\.\s+/.test(line)) {
+      if (!inList || listType !== 'ol') { flushList(); out.push('<ol>'); inList = true; listType = 'ol'; }
+      out.push(`<li>${escapeHtml(line.replace(/^\d+\.\s+/, ''))}</li>`);
+      continue;
+    }
+
+    if (/^>\s?/.test(line)) {
+      flushList();
+      out.push(`<blockquote>${escapeHtml(line.replace(/^>\s?/, ''))}</blockquote>`);
+      continue;
+    }
+
+    if (/^\|[\s:-]+\|$/.test(line)) {
+      flushList();
+      continue;
+    }
+
+    if (/^\|.*\|$/.test(line)) {
+      flushList();
+      const cells = line.split('|').slice(1, -1).map(c => c.trim());
+      if (cells.length === 0) continue;
+      if (!out.some(l => /^<table/.test(l))) {
+        out.push('<table cellpadding="6" cellspacing="0" style="width:100%;border-collapse:collapse;margin:12rpx 0;font-size:24rpx">');
+        out.push('<thead><tr>');
+        for (const c of cells) {
+          out.push(`<th style="background:#f5f5f4;font-weight:700;padding:8rpx 12rpx;border:1rpx solid #d1d5db;text-align:left">${escapeHtml(c)}</th>`);
+        }
+        out.push('</tr></thead><tbody>');
+      } else {
+        out.push('<tr>');
+        for (const c of cells) {
+          out.push(`<td style="padding:8rpx 12rpx;border:1rpx solid #d1d5db">${escapeHtml(c)}</td>`);
+        }
+        out.push('</tr>');
+      }
+      continue;
+    }
+
+    if (line) {
+      flushList();
+      let html = escapeHtml(line)
+        .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+        .replace(/\*(.+?)\*/g, '<em>$1</em>')
+        .replace(/`(.+?)`/g, '<code>$1</code>');
+      out.push(`<p>${html}</p>`);
+    } else if (out.length > 0 && !out[out.length - 1].startsWith('<') && !out[out.length - 1].startsWith('</')) {
+      flushList();
+    }
+  }
+
+  flushList();
+  if (inCode) out.push('</code></pre>');
+  if (out.some(l => /^<table/.test(l)) && !out.some(l => /<\/table>/.test(l))) {
+    out.push('</table>');
+  }
+
+  return out.join('\n');
 }
 
 function escapeHtml(str: string): string {
@@ -148,10 +275,11 @@ function escapeHtml(str: string): string {
     .replace(/'/g, '&#39;');
 }
 
+
 const RISK_LABELS: Record<string, string> = {
-  low: '低风�?,
-  medium: '中风�?,
-  high: '高风�?,
+  low: '低风险',
+  medium: '中风险',
+  high: '高风险',
   critical: '严重风险',
   unknown: '未知',
 };
@@ -161,6 +289,7 @@ interface ChatMessage {
   type: 'ai' | 'user' | 'system';
   side: 'left' | 'right';
   content: string;
+  contentHtml?: string;
   displayTime: string;
   typeLabel: string;
   isTaskComplete: boolean;
@@ -181,7 +310,6 @@ interface ChatMessage {
   senderName?: string;
   requiresInput?: boolean;
   inputOptions?: { label: string; value: string; description?: string }[];
-
 }
 
 Page({
@@ -261,6 +389,8 @@ Page({
   },
 
   subscribeWs() {
+    // Guard against duplicate registration (e.g. hot-reload in dev IDE)
+    this.unsubscribeWs();
     // Bound closures for proper cleanup
     this._onEventPushBound = (payload: any) => {
       if (payload.sessionId === this.data.sessionId) {
@@ -269,7 +399,7 @@ Page({
     };
     this._onSessionDeactivatedBound = (payload: any) => {
       if (payload.sessionId === this.data.sessionId) {
-        tt.showToast({ title: '会话已取消关�?, icon: 'none', duration: 2000 });
+        tt.showToast({ title: '会话已取消关联', icon: 'none', duration: 2000 });
         setTimeout(() => tt.navigateBack(), 1500);
       }
     };
@@ -291,9 +421,9 @@ Page({
       const title = code === 'BRIDGE_NOT_CONNECTED'
         ? '桌面端未连接'
         : code === 'RISK_TOO_HIGH'
-          ? '风险过高，不能批�?
+          ? '风险过高，不能批准'
           : code === 'ALREADY_RESPONDED'
-            ? '审批已处�?
+            ? '审批已处理'
             : '操作失败';
       tt.showToast({ title, icon: 'none', duration: 2000 });
       this.fetchDetail();
@@ -315,7 +445,7 @@ Page({
 
     this._onEventResolvedBound = (payload: any) => {
       if (payload.sessionId !== this.data.sessionId) return;
-      // Immediately dismiss the resolved event locally �?don't wait for fetchDetail.
+      // Immediately dismiss the resolved event locally — don't wait for fetchDetail.
       const eventId = payload.eventId;
       if (eventId) {
         const messages = [...this.data.chatMessages];
@@ -323,7 +453,7 @@ Page({
         if (idx !== -1) {
           messages[idx].pending = false;
           messages[idx].decision = 'resolved';
-          messages[idx].decisionText = '已在桌面端处�?;
+          messages[idx].decisionText = '已在桌面端处理';
           messages[idx].accent = 'neutral';
           messages[idx].canApprove = false;
           messages[idx].kindBadge = 'DONE';
@@ -396,7 +526,7 @@ Page({
   async fetchSubscription() {
     // Pulls the per-user subscription (including the free-tier
     // monthly usage counter) so the top bar can show "X/50".
-    // Silently no-ops on auth/network failure �?the top bar just
+    // Silently no-ops on auth/network failure — the top bar just
     // stays hidden, which is correct (we can't show a quota for
     // paid/trial when we don't know the tier).
     try {
@@ -526,8 +656,10 @@ Page({
         user_prompt: 0,
         command_started: 1,
         approval_required: 2,
+        task_complete: 3,
+        session_idle: 4,
       };
-      return (priority[this.effectiveEventType(a)] ?? 2) - (priority[this.effectiveEventType(b)] ?? 2);
+      return (priority[this.effectiveEventType(a)] ?? 5) - (priority[this.effectiveEventType(b)] ?? 5);
     });
     const messages: ChatMessage[] = [];
     let lastUserPrompt = '';
@@ -582,7 +714,7 @@ Page({
           accent: 'neutral',
           agentClass: 'unknown',
           kindBadge: '',
-          senderName: '�?,
+          senderName: '你',
         });
         flushPendingCommandStarted();
         continue;
@@ -621,7 +753,7 @@ Page({
           id: e.id + '-sys',
           type: 'system',
           side: 'left',
-          content: 'AI 代理等待指令�?..',
+          content: 'AI 代理等待指令中...',
           displayTime: time,
           typeLabel: '',
           isTaskComplete: false,
@@ -685,6 +817,7 @@ Page({
           type: 'ai',
           side: 'left',
           content: taskText,
+          contentHtml: markdownToHtml(taskText),
           displayTime: time,
           typeLabel: '任务完成',
           isTaskComplete: true,
@@ -763,7 +896,7 @@ Page({
             accent: 'neutral',
             agentClass: 'unknown',
             kindBadge: '',
-            senderName: '�?,
+            senderName: '你',
           });
         }
         continue;
@@ -822,7 +955,7 @@ Page({
             accent: 'neutral',
             agentClass: 'unknown',
             kindBadge: '',
-            senderName: '�?,
+            senderName: '你',
           });
         }
         continue;
@@ -906,7 +1039,7 @@ Page({
         accent: 'neutral',
         agentClass: 'unknown',
         kindBadge: '',
-        senderName: '�?,
+        senderName: '你',
       });
     }
   },
@@ -928,11 +1061,11 @@ Page({
 
   getDecisionText(decision: string): string {
     switch (decision) {
-      case 'approve': return '已批�?;
-      case 'deny': return '已拒�?;
-      case 'pause': return '已暂�?;
-      case 'reply': return '已回�?;
-      case 'resolved_by_bridge': return '已在桌面端处�?;
+      case 'approve': return '已批准';
+      case 'deny': return '已拒绝';
+      case 'pause': return '已暂缓';
+      case 'reply': return '已回复';
+      case 'resolved_by_bridge': return '已在桌面端处理';
       default: return decision;
     }
   },
@@ -986,9 +1119,9 @@ Page({
     if (aiIdx !== -1) {
       messages[aiIdx].pending = false;
       messages[aiIdx].decision = 'reply';
-      messages[aiIdx].decisionText = '已回�?;
+      messages[aiIdx].decisionText = '已回复';
       messages[aiIdx].accent = 'neutral';
-      messages[aiIdx].kindBadge = '已回�?;
+      messages[aiIdx].kindBadge = '已回复';
     }
     const replyId = eventId + '-reply-' + Date.now();
     messages.push({
@@ -1005,13 +1138,13 @@ Page({
       riskText: '',
       pending: false,
       decision: 'reply',
-      decisionText: '已回�?,
+      decisionText: '已回复',
       canApprove: false,
       eventId,
       accent: 'neutral',
       agentClass: 'unknown',
       kindBadge: '',
-      senderName: '�?,
+      senderName: '你',
     });
 
     const primaryPendingEvent = this.getPrimaryPendingEvent(messages);
@@ -1068,7 +1201,7 @@ Page({
     if (aiIdx !== -1) {
       messages[aiIdx].pending = false;
       messages[aiIdx].decision = 'reply';
-      messages[aiIdx].decisionText = '已回�?;
+      messages[aiIdx].decisionText = '已回复';
       messages[aiIdx].accent = 'neutral';
       messages[aiIdx].canApprove = false;
       messages.splice(aiIdx + 1, 0, {
@@ -1085,13 +1218,13 @@ Page({
         riskText: '',
         pending: false,
         decision: 'reply',
-        decisionText: '已回�?,
+        decisionText: '已回复',
         canApprove: false,
         eventId,
         accent: 'neutral',
         agentClass: 'unknown',
         kindBadge: '',
-        senderName: '�?,
+        senderName: '你',
       });
     }
 
@@ -1143,7 +1276,7 @@ Page({
         accent: 'neutral',
         agentClass: 'unknown',
         kindBadge: '',
-        senderName: '�?,
+        senderName: '你',
       });
     }
     const primaryPendingEvent = this.getPrimaryPendingEvent(messages);
@@ -1204,7 +1337,7 @@ Page({
       accent: 'neutral',
       agentClass: 'unknown',
       kindBadge: '',
-      senderName: '�?,
+      senderName: '你',
     });
 
     const replyTexts = { ...this.data.replyTexts };
@@ -1224,7 +1357,7 @@ Page({
   async sendCommand() {
     const text = this.data.commandText.trim();
     if (!text) {
-      tt.showToast({ title: '请输入指�?, icon: 'none' });
+      tt.showToast({ title: '请输入指令', icon: 'none' });
       return;
     }
     if (!app.globalData.wsConnected) {
@@ -1232,11 +1365,11 @@ Page({
       return;
     }
     if (!this.data.deviceOnline) {
-      tt.showToast({ title: '设备离线，无法发送指�?, icon: 'none' });
+      tt.showToast({ title: '设备离线，无法发送指令', icon: 'none' });
       return;
     }
     if (!this.data.session?.status || this.data.session.status !== 'active') {
-      tt.showToast({ title: '会话未处于活跃状�?, icon: 'none' });
+      tt.showToast({ title: '会话未处于活跃状态', icon: 'none' });
       return;
     }
 
@@ -1257,7 +1390,7 @@ Page({
           return;
         }
         setE2EState({ state: 'stale', localKeyId: keyId, lastToastAt: Date.now(), lastToastSessionId: this.data.sessionId });
-        tt.showToast({ title: 'E2E 密钥已过期，请在电脑上重新配�?, icon: 'none' });
+        tt.showToast({ title: 'E2E 密钥已过期，请在电脑上重新配对', icon: 'none' });
         return;
       }
       try {
@@ -1274,7 +1407,7 @@ Page({
         };
       } catch (err) {
         console.error('[sendCommand] encryption failed, dropping command:', err);
-        tt.showToast({ title: '加密失败，无法发送指�?, icon: 'none' });
+        tt.showToast({ title: '加密失败，无法发送指令', icon: 'none' });
         return;
       }
     } else {
@@ -1311,7 +1444,7 @@ Page({
       accent: 'neutral',
       agentClass: 'unknown',
       kindBadge: '',
-      senderName: '�?,
+      senderName: '你',
     } as ChatMessage];
 
     this.setData({
@@ -1327,7 +1460,7 @@ Page({
         scrollTop: Date.now(),
       });
     });
-    tt.showToast({ title: '已发送，等待电脑端接�?, icon: 'none', duration: 1500 });
+    tt.showToast({ title: '已发送，等待电脑端接收', icon: 'none', duration: 1500 });
   },
 
   chooseInputOption(e: any) {
@@ -1381,7 +1514,7 @@ Page({
       accent: 'neutral',
       agentClass: 'unknown',
       kindBadge: '',
-      senderName: '�?,
+      senderName: '你',
     });
     const primaryPendingEvent = this.getPrimaryPendingEvent(messages);
     this.setData({ chatMessages: messages, primaryPendingEvent, hasPrimaryPendingEvent: !!primaryPendingEvent, scrollToId: 'msg-' + replyId });

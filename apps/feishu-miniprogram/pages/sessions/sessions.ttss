@@ -25,13 +25,13 @@
 .icon-btn { font-size: 36rpx; color: var(--ck-muted); line-height: 1; }
 
 /* â”€â”€ Subscription pill (top bar, P4.1) â”€â”€
-   Shape mirrors .conn-pill; tappable â†?opens settings.
+   Shape mirrors .conn-pill; tappable â†’ opens settings.
    6 visual variants driven by subQuotaState + subTier + isExpiringSoon:
-     paid / trial      â†?blue tint  (.sub-pill-tier-paid, .sub-pill-tier-trial)
-     paid + <=3d left  â†?amber      (.sub-pill-expiring)  P4.1.2
-     free + normal     â†?neutral    (.sub-pill-normal, .sub-pill-tier-free)
-     free + approaching â†?amber     (.sub-pill-approaching)
-     free + exhausted  â†?red        (.sub-pill-exhausted) */
+     paid / trial      â†’ blue tint  (.sub-pill-tier-paid, .sub-pill-tier-trial)
+     paid + <=3d left  â†’ amber      (.sub-pill-expiring)  P4.1.2
+     free + normal     â†’ neutral    (.sub-pill-normal, .sub-pill-tier-free)
+     free + approaching â†’ amber     (.sub-pill-approaching)
+     free + exhausted  â†’ red        (.sub-pill-exhausted) */
 .sub-pill {
   height: 44rpx;
   display: flex;
