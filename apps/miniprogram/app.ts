@@ -131,7 +131,15 @@ App({
 
   _emit(event: string, payload?: any) {
     const handlers = this._eventBus.get(event);
-    if (handlers) handlers.forEach((fn) => fn(payload));
+    if (handlers) {
+      handlers.forEach((fn) => {
+        if (typeof fn !== 'function') {
+          console.warn('[app._emit] skipping non-function handler for', event);
+          return;
+        }
+        fn(payload);
+      });
+    }
   },
 
   onWsEvent(event: string, handler: EventHandler) {

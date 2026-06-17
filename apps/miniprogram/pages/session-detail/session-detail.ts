@@ -411,6 +411,8 @@ Page({
   },
 
   subscribeWs() {
+    // Guard against duplicate registration (e.g. hot-reload in dev IDE)
+    this.unsubscribeWs();
     // Bound closures for proper cleanup
     this._onEventPushBound = (payload: any) => {
       if (payload.sessionId === this.data.sessionId) {
@@ -676,8 +678,10 @@ Page({
         user_prompt: 0,
         command_started: 1,
         approval_required: 2,
+        task_complete: 3,
+        session_idle: 4,
       };
-      return (priority[this.effectiveEventType(a)] ?? 2) - (priority[this.effectiveEventType(b)] ?? 2);
+      return (priority[this.effectiveEventType(a)] ?? 5) - (priority[this.effectiveEventType(b)] ?? 5);
     });
     const messages: ChatMessage[] = [];
     let lastUserPrompt = '';
