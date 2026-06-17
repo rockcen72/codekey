@@ -93,6 +93,8 @@ describe("renderPairingContent — feishu QR", () => {
 		}));
 		expect(html).toContain("id=\"qrFeishu\"");
 		expect(html).toContain("<svg"); // QR SVG is rendered
+		expect(html).toContain("Join Workspace");
+		expect(html).toContain("Pair Device");
 	});
 
 	it("does not render feishu QR when pairUrl is empty (regression guard)", () => {

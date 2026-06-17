@@ -620,6 +620,9 @@ type QrCodeConstructor = new (typeNumber: number, errorCorrectLevel: number) => 
 
 const QRCode = require('qrcode-terminal/vendor/QRCode') as QrCodeConstructor;
 const QRErrorCorrectLevel = require('qrcode-terminal/vendor/QRCode/QRErrorCorrectLevel') as { L: number };
+const FEISHU_ORG_INVITE_SRC = typeof __FEISHU_ORG_INVITE_SRC__ !== 'undefined'
+  ? __FEISHU_ORG_INVITE_SRC__
+  : '';
 
 /**
  * Render a standards-compliant QR matrix as SVG so wx.scanCode can decode it.
@@ -700,7 +703,7 @@ export function renderPairingContent(state: SidebarState): string {
   }
 
   // Generate QR SVGs
-  const qrSize = 200;
+  const qrSize = platform === 'feishu' ? 208 : 200;
   const wechatQrSvg = p?.pairUrl && p?.platform === 'wechat' ? generateQrSvg(p.pairUrl, qrSize)
     : p?.code && !p?.pairUrl ? generateQrSvg(p.code, qrSize) : '';
   const feishuQrSvg = p?.pairUrl && p?.platform === 'feishu'
@@ -712,10 +715,7 @@ export function renderPairingContent(state: SidebarState): string {
         : `https://t.me/CodekeyAiBot?startapp=${p.code}`)
     : '';
   const tgQrSvg = tgDeepLink ? generateQrSvg(tgDeepLink, qrSize) : '';
-  const tgKeyInfo = platform === 'telegram' && hasCode && p?.contentKeyHex
-    ? `<div class="tg-key-info" style="margin-top:8px">
-      <div class="guide-step" style="font-size:11px;color:#16a34a;font-weight:600">${i18n(state.lang, 'E2E encryption key embedded in QR — auto-paired', 'E2E 加密密钥已嵌入二维码，扫码自动配对')}</div>
-    </div>` : '';
+  const tgKeyInfo = '';
 
   // Platform toggle — all neutral, no default selection
   const platToggleHtml = `<div class="platform-toggle">
@@ -769,16 +769,40 @@ export function renderPairingContent(state: SidebarState): string {
       <div class="guide-step">${i18n(state.lang, 'Search for <strong>CodeKey</strong> mini program', '搜索「<strong>码钥</strong>」小程序')}</div>
       <div class="guide-step">${i18n(state.lang, 'Tap <strong>Scan QR</strong> on the home page to pair', '点击首页「<strong>扫码</strong>」完成配对')}</div>
     </div>` : '';
+  const feishuGuide = platform === 'feishu' && hasCode
+    ? `<div class="feishu-pairing">
+      <div class="feishu-pair-card">
+        <div class="feishu-pair-step feishu-step-line">${i18n(state.lang, 'Step 1: Scan to join the workspace', '第 1 步：扫码加入企业组织')}</div>
+        <div class="feishu-pair-qr">
+          ${FEISHU_ORG_INVITE_SRC
+            ? `<img class="feishu-pair-img" src="${FEISHU_ORG_INVITE_SRC}" alt="${i18n(state.lang, 'Join Workspace QR', '加入组织二维码')}" />`
+            : `<div class="feishu-pair-empty">${i18n(state.lang, 'Add invite QR asset', '请补充组织邀请码')}</div>`
+          }
+        </div>
+      </div>
+      <div class="feishu-pair-instructions">
+        <div class="guide-step one-line">${i18n(state.lang, 'Step 2: Open Feishu home, find "Developer Helper", then tap "Launch Mini Program"', '第 2 步：进入飞书首页，找到“开发小助手”，点击里面的“启动小程序”')}</div>
+      </div>
+      <div class="feishu-pair-card">
+        <div class="feishu-pair-step feishu-step-line">${i18n(state.lang, 'Step 3: Scan to pair the device', '第 3 步：扫码绑定设备')}</div>
+        <div class="feishu-pair-qr">${qrHtml}</div>
+        <div class="feishu-pair-note">${i18n(state.lang, 'Scan after launching CodeKey', '启动 CodeKey 小程序后再扫码')}</div>
+      </div>
+    </div>`
+    : '';
   const guideHtml = tgGuide || wechatGuide;
 
   // Hide actions/guide when no code generated yet — platforms auto-generate on click
   return `<div class="pairing-content">
     ${platToggleHtml}
     ${hasCode ? `<div class="pairing-code-area">
-      ${codeHtml}
+      ${platform === 'feishu'
+        ? `${codeHtml}${feishuGuide}`
+        : `${codeHtml}
       <div class="pairing-divider"><span>${i18n(state.lang, 'or scan QR', '或扫码')}</span></div>
       ${qrHtml}
-      ${guideHtml}
+      ${guideHtml}`
+      }
       ${actionHtml}
     </div>` : `<div class="pairing-placeholder">${i18n(state.lang, 'Select a platform above to pair', '选择一个平台开始配对')}</div>`}
   </div>`;
@@ -1747,6 +1771,63 @@ body{
 .qr-bottom{display:flex;align-items:center}
 .qr-status{font-size:10px;color:var(--vscode-descriptionForeground,#50506e);min-height:16px}
 .qr-status.success{color:#2ecc71}
+.feishu-pairing{display:flex;flex-direction:column;gap:10px;margin-top:10px}
+.feishu-pair-card{
+  display:flex;flex-direction:column;align-items:center;gap:6px;
+  padding:10px 8px;border-radius:8px;
+  border:1px solid var(--vscode-panel-border,#1e1e2e);
+  background:rgba(255,255,255,.02);
+}
+.feishu-pair-step{
+  font-size:9px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;
+  color:var(--vscode-textLink-foreground,#00ffe0);
+}
+.feishu-step-line{
+  width:100%;
+  text-align:center;
+  white-space:nowrap;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  text-transform:none;
+  letter-spacing:0;
+  font-size:10px;
+}
+.feishu-pair-title{
+  font-size:11px;font-weight:600;color:var(--vscode-editor-foreground,#e8e8f0);
+  text-align:center;
+}
+.feishu-pair-qr{
+  width:100%;display:flex;align-items:center;justify-content:center;
+  min-height:176px;
+}
+.feishu-pair-img{
+  width:100%;max-width:184px;height:auto;display:block;
+  border-radius:6px;background:#fff;
+}
+.feishu-pair-empty{
+  width:100%;max-width:184px;min-height:184px;
+  display:flex;align-items:center;justify-content:center;
+  padding:10px;border-radius:6px;border:1px dashed var(--vscode-panel-border,#333);
+  color:var(--vscode-descriptionForeground,#50506e);font-size:10px;text-align:center;
+}
+.feishu-pair-note{
+  font-size:10px;line-height:1.5;color:var(--vscode-descriptionForeground,#8888a8);
+  text-align:center;min-height:30px;
+}
+.feishu-pair-instructions{
+  padding:10px 12px;border-radius:8px;
+  border:1px solid rgba(0,255,224,.08);
+  background:rgba(0,255,224,.03);
+}
+.feishu-pair-instructions .guide-step{font-size:10px;line-height:1.6;color:var(--vscode-textLink-foreground,#00ffe0);font-weight:700}
+.feishu-pair-instructions .guide-step.muted{color:var(--vscode-descriptionForeground,#8888a8)}
+.feishu-pair-instructions .guide-step.one-line{
+  white-space:normal;
+  overflow:visible;
+  text-overflow:clip;
+  line-height:1.5;
+  text-align:center;
+}
 
 /* paired-compact: shown when device is already paired */
 .paired-compact{padding:2px 0}
@@ -1769,7 +1850,6 @@ body{
 .plat-opt svg{width:14px;height:14px}
 .plat-badge{font-size:7px;padding:1px 4px;border-radius:99px;background:rgba(255,255,255,.06);color:var(--vscode-descriptionForeground,#50506e);white-space:nowrap}
 .tg-guide{margin-top:8px;text-align:left;font-size:10px;color:var(--vscode-descriptionForeground,#50506e);line-height:1.6}
-.tg-key-info{margin-top:4px;border-top:1px solid var(--vscode-widget-border,#333);padding-top:6px}
 .key-text{font-family:monospace;font-size:11px;word-break:break-all;background:var(--vscode-editor-background,#1a1a2e);padding:6px 8px;border-radius:4px;margin:4px 0;color:var(--vscode-editor-foreground,#ccc)}
 .guide-step strong{color:var(--vscode-editor-foreground)}
 
