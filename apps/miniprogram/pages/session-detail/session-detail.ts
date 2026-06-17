@@ -328,7 +328,7 @@ Page({
     commandText: '',
     canSendCommand: false,
     wsConnected: false,
-    deviceOnline: true,
+    deviceOnline: false,
     scrollToId: '',
     scrollTop: 0,
     _userScrolledUp: false,
@@ -365,7 +365,11 @@ Page({
 
   onLoad(query: any) {
     const id = query.id || '';
-    this.setData({ sessionId: id });
+    let viewportHeight = 600;
+    try {
+      viewportHeight = wx.getSystemInfoSync().windowHeight || 600;
+    } catch {}
+    this.setData({ sessionId: id, _viewportHeight: viewportHeight });
     this.fetchDetail();
     this.fetchSubscription();
     this.subscribeWs();
@@ -410,6 +414,14 @@ Page({
     }
   },
 
+  scrollToBottom() {
+    this.setData({ scrollToId: '' }, () => {
+      wx.nextTick(() => {
+        this.setData({ scrollToId: 'timeline-bottom', scrollTop: Date.now() });
+      });
+    });
+  },
+
   subscribeWs() {
     // Guard against duplicate registration (e.g. hot-reload in dev IDE)
     this.unsubscribeWs();
@@ -430,7 +442,7 @@ Page({
       this.fetchDetail();
     };
     this._onWsDisconnectedBound = () => {
-      this.setData({ wsConnected: false });
+      this.setData({ wsConnected: false, deviceOnline: false });
     };
     this._onDeviceOfflineBound = () => {
       this.setData({ deviceOnline: false });
@@ -505,6 +517,9 @@ Page({
     // Sync current connection state
     if (app.globalData.wsConnected !== this.data.wsConnected) {
       this.setData({ wsConnected: app.globalData.wsConnected });
+    }
+    if (!!app.globalData.deviceOnline !== this.data.deviceOnline) {
+      this.setData({ deviceOnline: !!app.globalData.deviceOnline });
     }
   },
 
@@ -996,20 +1011,10 @@ Page({
       const pushedIdx = scrollToEventId
         ? messages.findIndex((m: ChatMessage) => m.eventId === scrollToEventId && m.type === 'ai')
         : -1;
-      let latestPendingIdx = -1;
-      for (let i = messages.length - 1; i >= 0; i--) {
-        if (messages[i].pending) {
-          latestPendingIdx = i;
-          break;
-        }
-      }
       // Auto-scroll only when:
       // 1. A specific scrollToEventId was requested (new event push)
-      // 2. There's a pending approval
-      // 3. User is near the bottom (not scrolled up reading history)
-      const shouldAutoScroll = pushedIdx !== -1
-        || latestPendingIdx !== -1
-        || !this.data._userScrolledUp;
+      // 2. User is near the bottom (not scrolled up reading history)
+      const shouldAutoScroll = pushedIdx !== -1 || !this.data._userScrolledUp;
 
       const primaryPendingEvent = this.getPrimaryPendingEvent(messages);
       const pendingState = {
@@ -1018,12 +1023,9 @@ Page({
       };
 
       if (shouldAutoScroll) {
-        const targetIdx = pushedIdx !== -1
-          ? pushedIdx
-          : latestPendingIdx !== -1
-            ? latestPendingIdx
-            : messages.length - 1;
-        const targetId = 'msg-' + messages[targetIdx].id;
+        const targetId = pushedIdx !== -1
+          ? 'msg-' + messages[pushedIdx].id
+          : 'timeline-bottom';
         // Reset scrollToId first so scroll-into-view always detects the change
         this.setData({ chatMessages: messages, scrollToId: '', ...pendingState }, () => {
           wx.nextTick(() => {
@@ -1309,7 +1311,7 @@ Page({
     }
     const primaryPendingEvent = this.getPrimaryPendingEvent(messages);
     this.setData({ chatMessages: messages, primaryPendingEvent, hasPrimaryPendingEvent: !!primaryPendingEvent }, () => {
-      this.setData({ scrollToId: 'msg-' + messages[messages.length - 1].id });
+      this.scrollToBottom();
     });
 
     setTimeout(() => this.fetchDetail(), 1500);
@@ -1371,7 +1373,7 @@ Page({
     const replyTexts = { ...this.data.replyTexts };
     delete replyTexts[eventId];
 
-    this.setData({ chatMessages: messages, replyTexts, scrollToId: 'msg-' + replyId });
+    this.setData({ chatMessages: messages, replyTexts }, () => this.scrollToBottom());
     setTimeout(() => this.fetchDetail(), 1500);
   },
 
@@ -1482,12 +1484,7 @@ Page({
       chatMessages: messages,
       _userScrolledUp: false,
       scrollToId: '',
-    }, () => {
-      this.setData({
-        scrollToId: 'msg-' + localCommandId,
-        scrollTop: Date.now(),
-      });
-    });
+    }, () => this.scrollToBottom());
     wx.showToast({ title: '已发送，等待电脑端接收', icon: 'none', duration: 1500 });
   },
 
@@ -1545,7 +1542,7 @@ Page({
       senderName: '你',
     });
     const primaryPendingEvent = this.getPrimaryPendingEvent(messages);
-    this.setData({ chatMessages: messages, primaryPendingEvent, hasPrimaryPendingEvent: !!primaryPendingEvent, scrollToId: 'msg-' + replyId });
+    this.setData({ chatMessages: messages, primaryPendingEvent, hasPrimaryPendingEvent: !!primaryPendingEvent }, () => this.scrollToBottom());
     setTimeout(() => this.fetchDetail(), 1500);
   },
 
