@@ -1794,7 +1794,7 @@ a {
   bottom: 0;
   z-index: 80;
   width: min(720px, 100%);
-  padding: 0 10px calc(76px + env(safe-area-inset-bottom));
+  padding: 0 10px calc(56px + env(safe-area-inset-bottom));
   transform: translateX(-50%);
   pointer-events: none;
 }

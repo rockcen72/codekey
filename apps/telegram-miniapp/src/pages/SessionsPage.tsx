@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { SessionCard } from '../components/SessionCard';
 import { SubscriptionPill } from '../components/SubscriptionPill';
@@ -9,6 +9,7 @@ import type { AuthState } from '../hooks/useAuth';
 import { useDevices } from '../hooks/useDevices';
 import { useSessions } from '../hooks/useSessions';
 import { useSubscription } from '../hooks/useSubscription';
+import { WsClient } from '../services/ws-client';
 import { collectAgentTabs } from '../utils/session-display';
 
 interface Props {
@@ -20,6 +21,9 @@ export function SessionsPage({ auth }: Props) {
   const [unbindTarget, setUnbindTarget] = useState<UserDevice | null>(null);
   const [unbindBusy, setUnbindBusy] = useState(false);
   const [unbindError, setUnbindError] = useState<string | null>(null);
+  const [wsConnected, setWsConnected] = useState(false);
+  const [deviceOnline, setDeviceOnline] = useState(false);
+  const wsRef = useRef<WsClient | null>(null);
   const enabled = !!auth.token && !auth.loading;
   const devices = useDevices(enabled);
   const sessions = useSessions(enabled);
@@ -32,7 +36,38 @@ export function SessionsPage({ auth }: Props) {
       : sessions.sessions.filter((session) => (session.agent_type || session.metadata.runtime || 'unknown') === selectedTab);
   }, [selectedTab, sessions.sessions]);
   const activeTotal = sessions.sessions.filter((session) => session.status === 'active').length;
-  const serviceOnline = enabled && !devices.error && !sessions.error;
+  const serviceOnline = wsConnected && deviceOnline;
+
+  useEffect(() => {
+    const relayUrl = import.meta.env.VITE_RELAY_URL || '';
+    if (!auth.deviceId || !auth.clientToken || !relayUrl) {
+      wsRef.current?.disconnect();
+      wsRef.current = null;
+      setWsConnected(false);
+      setDeviceOnline(false);
+      return;
+    }
+
+    const ws = new WsClient(relayUrl, auth.deviceId, auth.clientToken);
+    ws.on('connected', () => setWsConnected(true));
+    ws.on('disconnected', () => {
+      setWsConnected(false);
+      setDeviceOnline(false);
+    });
+    ws.on('device_online', () => setDeviceOnline(true));
+    ws.on('device_offline', () => setDeviceOnline(false));
+    ws.on('auth_failed', () => {
+      setWsConnected(false);
+      setDeviceOnline(false);
+    });
+    ws.connect();
+    wsRef.current = ws;
+
+    return () => {
+      ws.disconnect();
+      wsRef.current = null;
+    };
+  }, [auth.deviceId, auth.clientToken]);
 
   async function confirmUnbind() {
     if (!unbindTarget) return;

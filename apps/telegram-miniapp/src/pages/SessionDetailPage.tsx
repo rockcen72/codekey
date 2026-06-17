@@ -7,6 +7,7 @@ import { compactMarkdownWhitespace, markdownToHtml } from '../utils/markdown';
 import { agentChatName, agentColorClass, agentLabel } from '../utils/session-display';
 import { decryptEventPayload, encryptCommandPayload } from '../utils/encryption';
 import { getContentKey, getKeyId, getDeviceId, getE2EStatus, getE2EState, setE2EStatus, setE2EState } from '../auth/device-storage';
+import { WsClient } from '../services/ws-client';
 
 const POLL_INTERVAL = 5_000;
 
@@ -673,10 +674,13 @@ export function SessionDetailPage({ auth }: Props) {
   const [resolvedMap, setResolvedMap] = useState<Map<string, string>>(new Map());
   const [promptText, setPromptText] = useState('');
   const [promptBusy, setPromptBusy] = useState(false);
+  const [wsConnected, setWsConnected] = useState(false);
+  const [deviceOnline, setDeviceOnline] = useState(false);
   const loadingRef = useRef(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const userScrolledRef = useRef(false);
+  const wsRef = useRef<WsClient | null>(null);
 
   const load = useCallback(async () => {
     if (!auth.token || !id || loadingRef.current) return;
@@ -770,8 +774,8 @@ export function SessionDetailPage({ auth }: Props) {
   const targetEventId = searchParams.get('eventId');
 
   useEffect(() => {
-    const hasPending = messages.some((message) => message.pending);
-    if ((!userScrolledRef.current || hasPending) && scrollRef.current) {
+    if (!scrollRef.current) return;
+    if (!userScrolledRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
   }, [messages]);
@@ -821,6 +825,37 @@ export function SessionDetailPage({ auth }: Props) {
       document.removeEventListener('visibilitychange', onVisibility);
     };
   }, [auth.token, id, load]);
+
+  useEffect(() => {
+    const relayUrl = import.meta.env.VITE_RELAY_URL || '';
+    if (!auth.deviceId || !auth.clientToken || !relayUrl) {
+      wsRef.current?.disconnect();
+      wsRef.current = null;
+      setWsConnected(false);
+      setDeviceOnline(false);
+      return;
+    }
+
+    const ws = new WsClient(relayUrl, auth.deviceId, auth.clientToken);
+    ws.on('connected', () => setWsConnected(true));
+    ws.on('disconnected', () => {
+      setWsConnected(false);
+      setDeviceOnline(false);
+    });
+    ws.on('device_online', () => setDeviceOnline(true));
+    ws.on('device_offline', () => setDeviceOnline(false));
+    ws.on('auth_failed', () => {
+      setWsConnected(false);
+      setDeviceOnline(false);
+    });
+    ws.connect();
+    wsRef.current = ws;
+
+    return () => {
+      ws.disconnect();
+      wsRef.current = null;
+    };
+  }, [auth.deviceId, auth.clientToken]);
 
   function handleScroll() {
     const el = scrollRef.current;
@@ -909,7 +944,7 @@ export function SessionDetailPage({ auth }: Props) {
           <h1 className="detail-title">{title}</h1>
           <span className="detail-subtitle">{session?.metadata.cwd || session?.metadata.runtime || session?.agent_type || ''}</span>
         </div>
-        <button className="ws-indicator online" type="button" onClick={() => void load()} aria-label="Refresh">
+        <button className={`ws-indicator ${wsConnected && deviceOnline ? 'online' : 'offline'}`} type="button" onClick={() => void load()} aria-label="Refresh">
           <span className="ws-dot" />
         </button>
       </header>

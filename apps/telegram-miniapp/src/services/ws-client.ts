@@ -1,4 +1,4 @@
-type WsEvent = 'connected' | 'disconnected' | 'auth_failed';
+type WsEvent = 'connected' | 'disconnected' | 'auth_failed' | 'device_online' | 'device_offline';
 type MessageHandler = (payload?: any) => void;
 
 const RECONNECT_INTERVAL_MS = 3000;
@@ -39,6 +39,10 @@ export class WsClient {
         if (msg.type === 'pong') return;
         if (msg.type === 'auth_failed') {
           this.emit('auth_failed', msg.payload || { code: msg.code || 'unknown' });
+          return;
+        }
+        if (msg.type === 'device_online' || msg.type === 'device_offline') {
+          this.emit(msg.type, msg.payload || msg);
         }
       } catch {
         // drop malformed messages silently
