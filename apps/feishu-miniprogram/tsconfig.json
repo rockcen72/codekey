@@ -1,0 +1,31 @@
+{
+  "compilerOptions": {
+    "target": "es2020",
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "allowJs": false,
+    "strict": false,
+    "noImplicitAny": false,
+    "noEmitOnError": false,
+    "lib": ["es2020"],
+    "types": [],
+    "rootDir": "./",
+    "outDir": "./",
+    "sourceMap": false,
+    "removeComments": false
+  },
+  "include": [
+    "app.ts",
+    "pages/**/*.ts",
+    "services/**/*.ts",
+    "utils/**/*.ts",
+    "globals.d.ts"
+  ],
+  "exclude": [
+    "node_modules",
+    "miniprogram_npm",
+    "vendor"
+  ]
+}
