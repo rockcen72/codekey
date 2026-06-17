@@ -244,6 +244,7 @@ function decisionLabel(decision?: string | null): string {
 
 function buildChatMessages(events: UserEvent[], session: UserSession | null, resolvedMap: Map<string, string>): ChatMessage[] {
   const messages: ChatMessage[] = [];
+  const seenClientEventIds = new Set<string>();
   let lastUserPrompt = '';
   let lastCommandStarted = false;
   let pendingCommandStarted: ChatMessage | null = null;
@@ -255,8 +256,13 @@ function buildChatMessages(events: UserEvent[], session: UserSession | null, res
 
   for (const event of events) {
     if (!ALLOWED_EVENT_TYPES.has(event.type)) continue;
-
     const data = getEventData(event);
+    const clientEventId = String(data.clientEventId || '');
+    if (clientEventId.startsWith('oc-hist:')) {
+      if (seenClientEventIds.has(clientEventId)) continue;
+      seenClientEventIds.add(clientEventId);
+    }
+
     const eventAgentType = String(data.agent || data.agentType || session?.agent_type || session?.metadata.runtime || '');
     const agentClass = agentColorClass(eventAgentType);
     const risk = event.risk_level || (data.risk ? String(data.risk) : null);

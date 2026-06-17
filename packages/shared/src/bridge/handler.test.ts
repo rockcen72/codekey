@@ -7,6 +7,7 @@ import { ApprovalBridge } from './handler.js';
 import { decryptEventPayload } from './event-envelope.js';
 import { OpenCodeSessionManager } from './opencode-session-manager.js';
 import { HistorySharePolicy, setConfig } from './history-policy.js';
+import { stableHistoryEventId } from './opencode-history.js';
 
 /** Create a temp CLAUDE_CONFIG_DIR with a transcript for the given sessionId.
  *  Returns the temp dir path. Caller must set process.env.CLAUDE_CONFIG_DIR. */
@@ -1959,5 +1960,117 @@ describe('outbound encryption invariants', () => {
     } finally {
       delete process.env.CLAUDE_CONFIG_DIR;
     }
+  });
+
+  describe('stableHistoryEventId', () => {
+    it('returns same ID for identical inputs', () => {
+      const a = stableHistoryEventId('s1', 'user', 'hello', 100);
+      const b = stableHistoryEventId('s1', 'user', 'hello', 100);
+      expect(a).toBe(b);
+      expect(a).toMatch(/^oc-hist:s1:/);
+    });
+
+    it('returns different IDs for different text', () => {
+      const a = stableHistoryEventId('s1', 'user', 'hello', 100);
+      const b = stableHistoryEventId('s1', 'user', 'world', 100);
+      expect(a).not.toBe(b);
+    });
+
+    it('returns different IDs for different roles', () => {
+      const a = stableHistoryEventId('s1', 'user', 'hello', 100);
+      const b = stableHistoryEventId('s1', 'assistant', 'hello', 100);
+      expect(a).not.toBe(b);
+    });
+
+    it('returns different IDs for different session IDs', () => {
+      const a = stableHistoryEventId('s1', 'user', 'hello', 100);
+      const b = stableHistoryEventId('s2', 'user', 'hello', 100);
+      expect(a).not.toBe(b);
+    });
+
+    it('returns different IDs for different timestamps', () => {
+      const a = stableHistoryEventId('s1', 'user', 'hello', 100);
+      const b = stableHistoryEventId('s1', 'user', 'hello', 200);
+      expect(a).not.toBe(b);
+    });
+
+    it('handles undefined role', () => {
+      expect(stableHistoryEventId('s1', undefined, 'hello', 100)).toMatch(/^oc-hist:s1:/);
+    });
+
+    it('handles undefined text', () => {
+      expect(stableHistoryEventId('s1', 'user', undefined, 100)).toMatch(/^oc-hist:s1:/);
+    });
+
+    it('handles undefined createdAt', () => {
+      expect(stableHistoryEventId('s1', 'user', 'hello')).toMatch(/^oc-hist:s1:/);
+    });
+  });
+
+  describe('tryMarkOpenCodeHistorySent', () => {
+    it('returns false for unseen key, true for duplicate', () => {
+      const relay = new FakeRelay();
+      const bridge = new ApprovalBridge(relay as any);
+
+      expect(bridge.tryMarkOpenCodeHistorySent('s1', 'user', 'hello', 100)).toBe(false);
+      expect(bridge.tryMarkOpenCodeHistorySent('s1', 'user', 'hello', 100)).toBe(true);
+    });
+
+    it('returns false for different text', () => {
+      const relay = new FakeRelay();
+      const bridge = new ApprovalBridge(relay as any);
+
+      bridge.tryMarkOpenCodeHistorySent('s1', 'user', 'hello', 100);
+      expect(bridge.tryMarkOpenCodeHistorySent('s1', 'user', 'world', 100)).toBe(false);
+    });
+
+    it('differentiates user vs assistant for same text', () => {
+      const relay = new FakeRelay();
+      const bridge = new ApprovalBridge(relay as any);
+
+      bridge.tryMarkOpenCodeHistorySent('s1', 'user', 'hello', 100);
+      expect(bridge.tryMarkOpenCodeHistorySent('s1', 'assistant', 'hello', 100)).toBe(false);
+    });
+
+    it('isolates dedup per session ID', () => {
+      const relay = new FakeRelay();
+      const bridge = new ApprovalBridge(relay as any);
+
+      bridge.tryMarkOpenCodeHistorySent('session-A', 'user', 'hello', 100);
+      expect(bridge.tryMarkOpenCodeHistorySent('session-B', 'user', 'hello', 100)).toBe(false);
+    });
+  });
+
+  describe('_replayOpenCodeHistory dedup via attachOpenCodeSession', () => {
+    it('does not produce duplicate events on re-attach', async () => {
+      const relay = new FakeRelay();
+      const bridge = new ApprovalBridge(relay as any);
+      setConfig('*', { policy: HistorySharePolicy.Recent, updatedAt: Date.now() });
+
+      const messages = [
+        {
+          role: 'user',
+          content: [{ type: 'text', text: 'question' }],
+          info: { time: { created: 1000 } },
+        },
+      ];
+      const fetchMessages = async () => messages;
+
+      await bridge.attachOpenCodeSession('oc-dedup-test', fetchMessages);
+      await new Promise(r => setTimeout(r, 20));
+
+      const firstEvents = relay.sent.filter(s => {
+        try { return JSON.parse(s).type === 'event'; } catch { return false; }
+      }).length;
+
+      await bridge.attachOpenCodeSession('oc-dedup-test', fetchMessages);
+      await new Promise(r => setTimeout(r, 20));
+
+      const secondEvents = relay.sent.filter(s => {
+        try { return JSON.parse(s).type === 'event'; } catch { return false; }
+      }).length;
+
+      expect(secondEvents).toBe(firstEvents);
+    });
   });
 });

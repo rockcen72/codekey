@@ -32,6 +32,7 @@ function filterSessionsByTab(sessions, tab) {
         : sessions.filter(s => (s.agent_type || s.displayRuntime || 'unknown') === tab);
 }
 let _summaryTimers = {};
+let _fetchSessionsTimer = null;
 Page({
     data: {
         isPaired: false,
@@ -62,7 +63,7 @@ Page({
     onShow() {
         this.setData({ isPaired: (0, storage_1.hasAuth)() });
         if ((0, storage_1.hasAuth)()) {
-            this.fetchSessions();
+            this._debouncedFetchSessions();
             this.fetchSubscription();
             this.subscribeWs();
             this._startPolling();
@@ -114,7 +115,7 @@ Page({
                 }, 2000);
             }
             else {
-                this.fetchSessions();
+                this._debouncedFetchSessions();
             }
         };
         // WS events: update local list immediately, then refresh from server.
@@ -126,7 +127,7 @@ Page({
             const sessions = [entry, ...this.data.sessions];
             this.setData({ sessions, activeTotal: sessions.filter((s) => s.connected).length });
             this._applyFilter(sessions);
-            this.fetchSessions(); // background refresh for full data
+            this._debouncedFetchSessions(); // background refresh for full data
         };
         this._onSessionDeactivatedWsBound = (payload) => {
             const sid = payload.sessionId;
@@ -135,9 +136,9 @@ Page({
             const sessions = this.data.sessions.filter((s) => s.id !== sid);
             this.setData({ sessions, activeTotal: sessions.filter((s) => s.connected).length });
             this._applyFilter(sessions);
-            this.fetchSessions();
+            this._debouncedFetchSessions();
         };
-        this._onWsConnectedBound = () => { this.setData({ wsConnected: true }); this.fetchSessions(); };
+        this._onWsConnectedBound = () => { this.setData({ wsConnected: true }); this._debouncedFetchSessions(); };
         this._onWsDisconnectedBound = () => this.setData({ wsConnected: false });
         this._onDeviceOfflineBound = () => { this.setData({ deviceOnline: false }); this._updateConnectedStates(false); };
         this._onDeviceOnlineBound = () => { this.setData({ deviceOnline: true }); this._updateConnectedStates(true); };
@@ -154,7 +155,7 @@ Page({
         this._onPairedChangedBound = () => {
             this.setData({ isPaired: (0, storage_1.hasAuth)() });
             if ((0, storage_1.hasAuth)())
-                this.fetchSessions();
+                this._debouncedFetchSessions();
         };
         app.onWsEvent('paired_state_changed', this._onPairedChangedBound);
         if (app.globalData.wsConnected !== this.data.wsConnected) {
@@ -194,6 +195,14 @@ Page({
         this._onDeviceOnlineBound = undefined;
         this._onQuotaExceededBound = undefined;
     },
+    _debouncedFetchSessions() {
+        if (_fetchSessionsTimer) clearTimeout(_fetchSessionsTimer);
+        _fetchSessionsTimer = setTimeout(() => {
+            _fetchSessionsTimer = null;
+            this.fetchSessions();
+        }, 300);
+    },
+
     _startPolling() { this._stopPolling(); this._pollTimer = setInterval(() => this.fetchSessions(), 5000); },
     _stopPolling() { if (this._pollTimer) {
         clearInterval(this._pollTimer);
@@ -293,7 +302,7 @@ Page({
                 const updated = sessions.filter((s) => s.id !== sessionId);
                 this.setData({ sessions: updated, pendingTotal: updated.reduce((sum, s) => sum + (s.pendingCount || 0), 0), activeTotal: updated.filter((s) => s.connected).length });
                 this._applyFilter(updated);
-                setTimeout(() => this.fetchSessions(), 2000);
+                setTimeout(() => this._debouncedFetchSessions(), 2000);
             },
         });
     },

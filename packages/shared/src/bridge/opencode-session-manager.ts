@@ -9,6 +9,7 @@ import { discoverOpenCodePort } from './platform.js';
 import { tryFormatInputRequiredEvent } from './input-card.js';
 import { checkHistoryPolicy, type PolicyResult, DEFAULT_RECENT_COUNT } from './history-policy.js';
 import { projectHistoryEventForPolicy } from './privacy-pipeline.js';
+import { stableHistoryEventId } from './opencode-history.js';
 
 interface OpenCodeSessionInfo {
   id: string;
@@ -286,41 +287,36 @@ export class OpenCodeSessionManager {
         const info = m.info || {};
         const role = getOpenCodeHistoryMessageRole(m);
         const text = extractOpenCodeHistoryText(m);
+        if (!text) continue;
+        const createdAt = role === 'assistant' ? info.time?.completed || info.time?.created : info.time?.created;
+        if (this.bridge.tryMarkOpenCodeHistorySent(localSessionId, role, text, createdAt)) continue;
         if (role === 'user') {
-          if (text) {
-            // Audit r3 P0: encrypt user_prompt at the unified outbound entry
-            // before serialize+project+send. Plan §6.2.
-            const encryptedPayload = this.bridge.encryptOutboundPayload({
-              clientEventId: `oc-hist:${localSessionId}:${Date.now()}:${Math.random()}`,
-              sessionId: serverSessionId,
-              agent: 'opencode',
-              eventType: 'user_prompt',
-              data: { type: 'user_prompt', prompt: text, summary: text.slice(0, 200) },
-              ts: info.time?.created ? new Date(info.time.created).toISOString() : new Date().toISOString(),
-            });
-            const raw = JSON.stringify({ type: 'event', payload: encryptedPayload });
-            const projected = projectHistoryEventForPolicy(raw, policy);
-            if (projected !== null) {
-              this.bridge.privacyCheckAndSend('history', projected, undefined, undefined);
-            }
+          const encryptedPayload = this.bridge.encryptOutboundPayload({
+            clientEventId: stableHistoryEventId(localSessionId, role, text, info.time?.created),
+            sessionId: serverSessionId,
+            agent: 'opencode',
+            eventType: 'user_prompt',
+            data: { type: 'user_prompt', prompt: text, summary: text.slice(0, 200) },
+            ts: info.time?.created ? new Date(info.time.created).toISOString() : new Date().toISOString(),
+          });
+          const raw = JSON.stringify({ type: 'event', payload: encryptedPayload });
+          const projected = projectHistoryEventForPolicy(raw, policy);
+          if (projected !== null) {
+            this.bridge.privacyCheckAndSend('history', projected, undefined, undefined);
           }
         } else if (role === 'assistant') {
-          if (text) {
-            // task_complete is not in ENCRYPTABLE_EVENT_TYPES (Phase 4 scope = user_prompt only),
-            // but route through encryptOutboundPayload so future eventType expansions auto-cover this site.
-            const encryptedPayload = this.bridge.encryptOutboundPayload({
-              clientEventId: `oc-hist:${localSessionId}:${Date.now()}:${Math.random()}`,
-              sessionId: serverSessionId,
-              agent: 'opencode',
-              eventType: 'task_complete',
-              data: { type: 'task_complete', summary: text, summaryShort: text.slice(0, 200), output: text },
-              ts: info.time?.completed || info.time?.created ? new Date((info.time.completed || info.time.created) as number).toISOString() : new Date().toISOString(),
-            });
-            const raw = JSON.stringify({ type: 'event', payload: encryptedPayload });
-            const projected = projectHistoryEventForPolicy(raw, policy);
-            if (projected !== null) {
-              this.bridge.privacyCheckAndSend('history', projected, undefined, undefined);
-            }
+          const encryptedPayload = this.bridge.encryptOutboundPayload({
+            clientEventId: stableHistoryEventId(localSessionId, role, text, info.time?.completed || info.time?.created),
+            sessionId: serverSessionId,
+            agent: 'opencode',
+            eventType: 'task_complete',
+            data: { type: 'task_complete', summary: text, summaryShort: text.slice(0, 200), output: text },
+            ts: info.time?.completed || info.time?.created ? new Date((info.time.completed || info.time.created) as number).toISOString() : new Date().toISOString(),
+          });
+          const raw = JSON.stringify({ type: 'event', payload: encryptedPayload });
+          const projected = projectHistoryEventForPolicy(raw, policy);
+          if (projected !== null) {
+            this.bridge.privacyCheckAndSend('history', projected, undefined, undefined);
           }
         }
       }

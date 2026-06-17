@@ -684,6 +684,7 @@ Page({
       return (priority[this.effectiveEventType(a)] ?? 5) - (priority[this.effectiveEventType(b)] ?? 5);
     });
     const messages: ChatMessage[] = [];
+    const seenClientEventIds = new Set<string>();
     let lastUserPrompt = '';
     let lastCommandStarted = false;
     let pendingCommandStarted: ChatMessage | null = null;
@@ -694,6 +695,11 @@ Page({
     };
 
     for (const e of sorted) {
+      const clientEventId = e.data?.clientEventId;
+      if (clientEventId && clientEventId.startsWith('oc-hist:')) {
+        if (seenClientEventIds.has(clientEventId)) continue;
+        seenClientEventIds.add(clientEventId);
+      }
       const time = this.formatTime(e.created_at);
       const command = e.data?.command || '';
       const summary = e.data?.summary || e.data?.command || '';

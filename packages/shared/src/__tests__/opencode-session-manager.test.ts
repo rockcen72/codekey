@@ -649,6 +649,33 @@ describe('OpenCodeSessionManager event handling', () => {
       expect(promptAsTaskComplete).toBeUndefined();
     });
 
+    it('deduplicates history messages on second replayHistory call via tryMarkOpenCodeHistorySent', async () => {
+      vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+        if (url.includes('/session/oc-replay-dd/message')) {
+          return {
+            ok: true,
+            json: async () => [
+              {
+                parts: [{ type: 'text', text: 'dedup msg', role: 'user' }],
+                info: { time: { created: 1000 } },
+              },
+            ],
+          } as Response;
+        }
+        return { ok: true, body: null } as Response;
+      }));
+      (manager as any).opencodeSessionToRelayId.set('oc-replay-dd', 'server-replay-dd');
+      (manager as any).opencodeSessions.add('server-replay-dd');
+
+      await (manager as any).replayHistory('oc-replay-dd', 'server-replay-dd');
+      const afterFirst = (relay.sentEvents as any[]).length;
+
+      await (manager as any).replayHistory('oc-replay-dd', 'server-replay-dd');
+      const afterSecond = (relay.sentEvents as any[]).length;
+
+      expect(afterSecond).toBe(afterFirst);
+    });
+
     it('does not restore old attached mappings when the current OpenCode API list is empty', async () => {
       writeFileSync(attachedStoragePath, JSON.stringify([
         { localSessionId: 'ses_stored', serverSessionId: 'server-stored' },

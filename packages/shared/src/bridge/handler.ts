@@ -17,6 +17,7 @@ import { encryptEventPayload } from './event-envelope.js';
 import { normalizeCommandPayload } from './command-envelope.js';
 import type { AuditSink, PrivacyDecision, SourceType, PrivacyStats } from './privacy-pipeline.js';
 import { checkHistoryPolicy, HistorySharePolicy, getEffectiveConfig, DEFAULT_RECENT_COUNT } from './history-policy.js';
+import { stableHistoryEventId } from './opencode-history.js';
 
 interface PhoneCommandFingerprint {
   fingerprint: string;
@@ -144,6 +145,7 @@ export class ApprovalBridge {
   codexReplayTarget: { replayActiveHistory(): void } | null = null;
   private sentAssistantKeys = new Set<string>();  // "claudeSessionId:index" — prevents transcript duplicate sends
   private sentAssistantTextKeys = new Set<string>(); // "claudeSessionId:fingerprint" — dedups hook + transcript sends
+  private sentOpenCodeHistoryKeys = new Set<string>();
   // Tracks number of phone commands claimed but not yet acknowledged via session_idle.
   // Used to gate task_complete synthesis from session_idle events.
   private pendingPhoneDeliveryCount = new Map<string, number>(); // serverSessionId → count
@@ -487,37 +489,38 @@ export class ApprovalBridge {
         const info = m.info || {};
         const role = getOpenCodeHistoryMessageRole(m);
         const text = extractOpenCodeHistoryText(m);
+        if (!text) continue;
+        const createdAt = role === 'assistant' ? info.time?.completed || info.time?.created : info.time?.created;
+        const dedupKey = `${localSessionId}:${stableHistoryEventId(localSessionId, role, text, createdAt)}`;
+        if (this.sentOpenCodeHistoryKeys.has(dedupKey)) continue;
+        this.sentOpenCodeHistoryKeys.add(dedupKey);
         if (role === 'user') {
-          if (text) {
-            let payload: Record<string, unknown> = {
-              clientEventId: `oc-hist:${localSessionId}:${Date.now()}:${Math.random()}`,
-              sessionId: serverSessionId,
-              agent: 'opencode',
-              eventType: 'user_prompt',
-              data: { type: 'user_prompt', prompt: text, summary: text.slice(0, 200) },
-              ts: info.time?.created ? new Date(info.time.created).toISOString() : new Date().toISOString(),
-            };
-            payload = this._encryptPayloadIfNeeded(payload);
-            const raw = JSON.stringify({ type: 'event', payload });
-            const projected = projectHistoryEventForPolicy(raw, policy);
-            if (projected !== null) {
-              this.privacyCheckAndSend('history', projected, undefined, undefined);
-            }
+          let payload: Record<string, unknown> = {
+            clientEventId: stableHistoryEventId(localSessionId, role, text, createdAt),
+            sessionId: serverSessionId,
+            agent: 'opencode',
+            eventType: 'user_prompt',
+            data: { type: 'user_prompt', prompt: text, summary: text.slice(0, 200) },
+            ts: info.time?.created ? new Date(info.time.created).toISOString() : new Date().toISOString(),
+          };
+          payload = this._encryptPayloadIfNeeded(payload);
+          const raw = JSON.stringify({ type: 'event', payload });
+          const projected = projectHistoryEventForPolicy(raw, policy);
+          if (projected !== null) {
+            this.privacyCheckAndSend('history', projected, undefined, undefined);
           }
         } else if (role === 'assistant') {
-          if (text) {
-            const raw = JSON.stringify({ type: 'event', payload: {
-              clientEventId: `oc-hist:${localSessionId}:${Date.now()}:${Math.random()}`,
-              sessionId: serverSessionId,
-              agent: 'opencode',
-              eventType: 'task_complete',
-              data: { type: 'task_complete', summary: text, summaryShort: text.slice(0, 200), output: text },
-              ts: info.time?.completed || info.time?.created ? new Date((info.time.completed || info.time.created) as number).toISOString() : new Date().toISOString(),
-            }});
-            const projected = projectHistoryEventForPolicy(raw, policy);
-            if (projected !== null) {
-              this.privacyCheckAndSend('history', projected, undefined, undefined);
-            }
+          const raw = JSON.stringify({ type: 'event', payload: {
+            clientEventId: stableHistoryEventId(localSessionId, role, text, createdAt),
+            sessionId: serverSessionId,
+            agent: 'opencode',
+            eventType: 'task_complete',
+            data: { type: 'task_complete', summary: text, summaryShort: text.slice(0, 200), output: text },
+            ts: info.time?.completed || info.time?.created ? new Date((info.time.completed || info.time.created) as number).toISOString() : new Date().toISOString(),
+          }});
+          const projected = projectHistoryEventForPolicy(raw, policy);
+          if (projected !== null) {
+            this.privacyCheckAndSend('history', projected, undefined, undefined);
           }
         }
       }
@@ -562,6 +565,13 @@ export class ApprovalBridge {
       this.relay.sendCheckedPayload(toCheckedPayload(decision)!);
     }
     return decision;
+  }
+
+  tryMarkOpenCodeHistorySent(localSessionId: string, role: string | undefined, text: string | undefined, createdAt?: number | string): boolean {
+    const key = `${localSessionId}:${stableHistoryEventId(localSessionId, role, text, createdAt)}`;
+    if (this.sentOpenCodeHistoryKeys.has(key)) return true;
+    this.sentOpenCodeHistoryKeys.add(key);
+    return false;
   }
 
   /** Push current history share policy to relay so it has the value immediately.
