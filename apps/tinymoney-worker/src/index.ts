@@ -167,7 +167,7 @@ header { text-align: center; margin-bottom: 32px; }
 header h1 { font-size: 28px; font-weight: 800; margin-bottom: 6px; }
 header p { color: var(--muted); font-size: 14px; line-height: 1.6; }
 
-.plans { display: flex; gap: 12px; margin-bottom: 32px; }
+.plans { display: flex; gap: 12px; margin-bottom: 8px; }
 .plan-card { flex: 1; min-width: 0; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 20px; display: flex; flex-direction: column; }
 .plan-card.featured { border-color: var(--primary); box-shadow: 0 0 0 2px rgba(37,99,235,0.15); position: relative; }
 .plan-card.featured::before { content: attr(data-badge); position: absolute; top: -10px; left: 50%; transform: translateX(-50%); background: var(--primary); color: #fff; font-size: 11px; font-weight: 700; padding: 2px 12px; border-radius: 999px; white-space: nowrap; }
@@ -178,14 +178,18 @@ header p { color: var(--muted); font-size: 14px; line-height: 1.6; }
 .plan-features { list-style: none; margin-bottom: 16px; flex: 1; }
 .plan-features li { padding: 5px 0; font-size: 13px; }
 .plan-features li::before { content: "✓ "; color: var(--success); font-weight: 700; }
-.plan-features li.missing::before { content: "— "; color: var(--muted); font-weight: 400; }
 .subscribe-btn { display: block; width: 100%; padding: 10px; border: 0; border-radius: 8px; font-size: 14px; font-weight: 700; text-align: center; cursor: pointer; text-decoration: none; margin-top: auto; }
 .subscribe-btn.primary { background: var(--primary); color: #fff; }
 .subscribe-btn.primary:hover { background: #1d4ed8; }
-.subscribe-btn.china { background: #e53e3e; color: #fff; }
-.subscribe-btn.china:hover { background: #c53030; }
-.subscribe-btn.ghost { background: transparent; color: var(--muted); border: 1px solid var(--border); cursor: default; }
 .paypal-button-container { margin-top: 8px; min-height: 40px; }
+
+.paypal-note { text-align: center; color: var(--muted); font-size: 12px; margin-bottom: 24px; line-height: 1.5; }
+
+.china-row { display: flex; align-items: center; justify-content: center; gap: 12px; margin-bottom: 32px; padding: 16px 20px; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; }
+.china-row-text { color: var(--muted); font-size: 13px; }
+.china-row-text strong { color: var(--text); }
+.china-btn { display: inline-flex; align-items: center; gap: 6px; padding: 8px 18px; border: 0; border-radius: 8px; background: #e53e3e; color: #fff; font-size: 13px; font-weight: 700; text-decoration: none; cursor: pointer; white-space: nowrap; flex-shrink: 0; }
+.china-btn:hover { background: #c53030; }
 
 .guide-section { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 20px; margin-bottom: 32px; }
 .guide-section h2 { font-size: 15px; font-weight: 800; margin-bottom: 10px; }
@@ -208,7 +212,7 @@ footer { text-align: center; padding: 20px 0; color: var(--muted); font-size: 12
 
 @media (max-width: 640px) {
   .plans { flex-direction: column; }
-  .payment-options { flex-direction: column; }
+  .china-row { flex-direction: column; text-align: center; }
 }
 </style>
 </head>
@@ -270,25 +274,19 @@ footer { text-align: center; padding: 20px 0; color: var(--muted); font-size: 12
     </div>
   </div>
 
-  <div class="payment-options">
-    <div class="payment-card">
-      <h2 data-i18n="paypal-title">💳 PayPal</h2>
-      <p data-i18n="paypal-desc">Pay with PayPal, credit card, or debit card. Subscription activates automatically after payment.</p>
-    </div>
-    <div class="payment-card">
-      <h2 data-i18n="china-title">🇨🇳 China Payment</h2>
-      <p data-i18n="china-desc">Alipay, WeChat Pay, and bank cards. Purchase a redeem code, then activate in VS Code sidebar.</p>
-      <a class="subscribe-btn china" href="${env.CHINA_PAY_URL}" target="_blank" data-i18n="china-btn">Buy Redeem Code →</a>
-    </div>
+  <p class="paypal-note" data-i18n="paypal-note">💳 PayPal, credit card, and debit card accepted. Subscription activates automatically after payment.</p>
+
+  <div class="china-row">
+    <span class="china-row-text" data-i18n="china-text"><strong>🇨🇳 China users:</strong> Alipay, WeChat Pay, and bank cards. Buy a redeem code, then activate in VS Code.</span>
+    <a class="china-btn" href="${env.CHINA_PAY_URL}" target="_blank" data-i18n="china-btn">Buy Redeem Code →</a>
   </div>
 
   <div class="guide-section">
     <h2 data-i18n="guide-title">How to Subscribe</h2>
     <ol>
-      <li data-i18n="guide-1"><strong>Choose a plan</strong> — Click "Subscribe with PayPal" on your preferred plan</li>
-      <li data-i18n="guide-2"><strong>Complete payment</strong> — Log in to PayPal and confirm. Subscription activates automatically.</li>
-      <li data-i18n="guide-3"><strong>China users</strong> — Click "Buy Redeem Code" below, purchase via Alipay/WeChat Pay, then enter the code in VS Code sidebar</li>
-      <li data-i18n="guide-4"><strong>Enjoy</strong> — Refresh your phone to see the Pro badge</li>
+    <li data-i18n="guide-1"><strong>Choose a plan</strong> — Click "Subscribe with PayPal" on your preferred plan</li>
+    <li data-i18n="guide-2"><strong>Complete payment</strong> — Log in to PayPal and confirm. Subscription activates automatically.</li>
+    <li data-i18n="guide-3"><strong>Enjoy</strong> — Refresh your phone to see the Pro badge</li>
     </ol>
   </div>
 
@@ -343,16 +341,13 @@ const i18n = {
     'plan-pro-f3': '完整会话历史',
     'plan-pro-f4': '端到端加密',
     'plan-pro-f5': '优先支持',
-    'paypal-title': '💳 PayPal',
-    'paypal-desc': '支持 PayPal、信用卡、借记卡支付，支付成功后自动激活订阅。',
-    'china-title': '🇨🇳 国内支付',
-    'china-desc': '支持支付宝、微信支付、银行卡。购买兑换码后在 VS Code 侧边栏输入激活。',
+    'paypal-note': '💳 支持 PayPal、信用卡、借记卡支付，支付成功后自动激活订阅。',
+    'china-text': '<strong>🇨🇳 国内用户：</strong>支持支付宝、微信支付、银行卡。购买兑换码后在 VS Code 侧边栏输入激活。',
     'china-btn': '购买兑换码 →',
     'guide-title': '订阅指南',
     'guide-1': '<strong>选择方案</strong> — 点击心仪方案下的"PayPal 订阅"按钮',
     'guide-2': '<strong>完成支付</strong> — 登录 PayPal 确认支付，订阅自动激活',
-    'guide-3': '<strong>国内用户</strong> — 点击下方"购买兑换码"，通过支付宝/微信支付购买后在 VS Code 侧边栏输入',
-    'guide-4': '<strong>开始使用</strong> — 刷新手机端即可看到 Pro 标识',
+    'guide-3': '<strong>开始使用</strong> — 刷新手机端即可看到 Pro 标识',
     'faq-title': '常见问题',
     'faq-1-q': '免费版包含什么？',
     'faq-1-a': '新用户首次配对自动获得 14 天 Pro 试用。试用结束后每月有 50 次审批额度，限 1 台设备。',
@@ -390,16 +385,13 @@ const i18n = {
     'plan-pro-f3': 'Full session history',
     'plan-pro-f4': 'End-to-end encryption',
     'plan-pro-f5': 'Priority support',
-    'paypal-title': '💳 PayPal',
-    'paypal-desc': 'Pay with PayPal, credit card, or debit card. Subscription activates automatically after payment.',
-    'china-title': '🇨🇳 China Payment',
-    'china-desc': 'Alipay, WeChat Pay, and bank cards. Purchase a redeem code, then activate in VS Code sidebar.',
+    'paypal-note': '💳 PayPal, credit card, and debit card accepted. Subscription activates automatically after payment.',
+    'china-text': '<strong>🇨🇳 China users:</strong> Alipay, WeChat Pay, and bank cards. Buy a redeem code, then activate in VS Code.',
     'china-btn': 'Buy Redeem Code →',
     'guide-title': 'How to Subscribe',
     'guide-1': '<strong>Choose a plan</strong> — Click "Subscribe with PayPal" on your preferred plan',
     'guide-2': '<strong>Complete payment</strong> — Log in to PayPal and confirm. Subscription activates automatically.',
-    'guide-3': '<strong>China users</strong> — Click "Buy Redeem Code" below, purchase via Alipay/WeChat Pay, then enter the code in VS Code sidebar',
-    'guide-4': '<strong>Enjoy</strong> — Refresh your phone to see the Pro badge',
+    'guide-3': '<strong>Enjoy</strong> — Refresh your phone to see the Pro badge',
     'faq-title': 'FAQ',
     'faq-1-q': "What's included in the free plan?",
     'faq-1-a': 'New users get a 14-day free trial with full Pro features. After the trial, you get 50 approvals per month on 1 device with limited history.',
