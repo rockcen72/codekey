@@ -166,6 +166,11 @@ export function SessionsPage({ auth }: Props) {
 
       {subscription.subscription && subscription.subscription.tier === 'free' ? (
         <section className="subscription-summary compact-redeem">
+          <div style={{display:'flex', gap:8, marginBottom:10}}>
+            <a className="primary-button link-button" style={{flex:1, textAlign:'center', fontSize:13, textDecoration:'none'}} href="https://tinymoney.ccwu.cc" target="_blank">
+              Subscribe to Pro →
+            </a>
+          </div>
           <RedeemCode onRedeemed={() => void subscription.refresh()} />
         </section>
       ) : null}

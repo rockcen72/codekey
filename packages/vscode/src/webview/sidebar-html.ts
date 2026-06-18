@@ -590,13 +590,13 @@ export function renderSubscribe(state: SidebarState): string {
   // already see their plan or trial countdown in the sub-row above).
   // Link still points to the external shop page.
   const upgradeCtaHtml = sub && sub.tier === 'free'
-    ? `<a class="upgrade-cta" href="https://pay.ldxp.cn/shop/6T7QKRTE" target="_blank">${i18n(state.lang, 'Upgrade to Pro', '升级 Pro')}</a>`
+    ? `<a class="upgrade-cta" href="https://tinymoney.ccwu.cc" target="_blank">${i18n(state.lang, 'Upgrade to Pro', '升级 Pro')}</a>`
     : '';
   const notPairedHint = state.deviceStatus !== 'paired'
     ? `<div class="redeem-hint">${i18n(state.lang, 'Pair a device first, then redeem your code here.', '请先配对设备，配对成功后再来此输入兑换码激活。')}</div>`
     : '';
   const expandedHtml = `<div class="redeem-panel" id="redeemPanel">
-    <a class="purchase-link" href="https://pay.ldxp.cn/shop/6T7QKRTE" target="_blank">${i18n(state.lang, 'Purchase →', '购买 →')}</a>
+    <a class="purchase-link" href="https://tinymoney.ccwu.cc" target="_blank">${i18n(state.lang, 'Purchase →', '购买 →')}</a>
     ${notPairedHint}
     <div class="redeem-row">
       <input class="redeem-input" id="redeemInput" placeholder="CK-XXXX-XXXX-XXXX" maxlength="19" spellcheck="false" ${state.deviceStatus !== 'paired' ? 'disabled' : ''} />
