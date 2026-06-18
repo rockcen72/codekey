@@ -4,10 +4,6 @@
 
 **Remote control for AI coding agents — approve, deny, reply from your phone**
 
-<p align="center">
-  <a href="README.zh.md">🇨🇳 中文</a>
-</p>
-
 <br />
 
 <a href="https://marketplace.visualstudio.com/items?itemName=codekey.codekey-vscode"><img src="https://img.shields.io/visual-studio-marketplace/v/codekey.codekey-vscode?label=VS%20Code&logo=visualstudiocode&logoColor=white" alt="VS Code Marketplace" /></a>
