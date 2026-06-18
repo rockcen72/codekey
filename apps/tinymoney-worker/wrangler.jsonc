@@ -13,6 +13,13 @@
   "vars": {
     "RELAY_BACKEND_URL": "https://codekey.tinymoney.cn",
     "PAYPAL_CLIENT_ID": "sandbox-placeholder",
-    "CHINA_PAY_URL": "https://pay.ldxp.cn/shop/6T7QKRTE"
+    "CHINA_PAY_URL": "https://pay.ldxp.cn/shop/6T7QKRTE",
+    "MERCHANT_NAME": "[Merchant Name Placeholder]",
+    "MERCHANT_NAME_CN": "[\u5546\u6237\u540d\u79f0\u5360\u4f4d]",
+    "MERCHANT_ADDRESS": "[Merchant Address Placeholder]",
+    "MERCHANT_ADDRESS_CN": "[\u7ecf\u8425\u5730\u5740\u5360\u4f4d]",
+    "SUPPORT_EMAIL": "support@example.com",
+    "SUPPORT_PHONE": "+86-000-0000-0000",
+    "EFFECTIVE_DATE": "2026-06-18"
   }
 }
