@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { randomUUID, createHash } from 'node:crypto';
 import { RelayClient } from './relay-client.js';
 import { CommandQueue } from './command-queue.js';
 import {
@@ -12,9 +12,12 @@ import { MAX_PROMPT_LENGTH } from '../types.js';
 import type { AgentEventPayload, SessionEventMessage } from '../types.js';
 import { RiskEngine } from '../risk.js';
 import { tryFormatInputRequiredEvent } from './input-card.js';
-import { runPrivacyPipeline, toCheckedPayload, PrivacyAuditCollector, projectHistoryEventForPolicy } from './privacy-pipeline.js';
+import { runPrivacyPipeline, toCheckedPayload, PrivacyAuditCollector, projectHistoryEventForPolicy, ensureSafeSummary } from './privacy-pipeline.js';
+import { encryptEventPayload } from './event-envelope.js';
+import { normalizeCommandPayload } from './command-envelope.js';
 import type { AuditSink, PrivacyDecision, SourceType, PrivacyStats } from './privacy-pipeline.js';
 import { checkHistoryPolicy, HistorySharePolicy, getEffectiveConfig, DEFAULT_RECENT_COUNT } from './history-policy.js';
+import { stableHistoryEventId } from './opencode-history.js';
 
 interface PhoneCommandFingerprint {
   fingerprint: string;
@@ -142,6 +145,7 @@ export class ApprovalBridge {
   codexReplayTarget: { replayActiveHistory(): void } | null = null;
   private sentAssistantKeys = new Set<string>();  // "claudeSessionId:index" — prevents transcript duplicate sends
   private sentAssistantTextKeys = new Set<string>(); // "claudeSessionId:fingerprint" — dedups hook + transcript sends
+  private sentOpenCodeHistoryKeys = new Set<string>();
   // Tracks number of phone commands claimed but not yet acknowledged via session_idle.
   // Used to gate task_complete synthesis from session_idle events.
   private pendingPhoneDeliveryCount = new Map<string, number>(); // serverSessionId → count
@@ -178,6 +182,169 @@ export class ApprovalBridge {
   /** Event ack handlers (OpenCodeSessionManager etc.). Called when relay confirms event persistence. */
   private _eventAckHandlers: Array<(clientEventId: string, serverEventId: string) => void> = [];
 
+  // ── E2E Encryption (Phase 4+) ──────────────────────────────────
+  private _contentKeyHex?: string;
+  private _keyId?: string;
+  private _deviceId?: string;
+
+  /** Set the content key used to encrypt event payloads before sending to relay.
+   *  The key is derived from ECDH (or loaded from legacy QR pairing) and stored
+   *  in credentials.json. Calling clearContentKey() disables encryption.
+   *  `deviceId` is the PC device UUID used as AAD binding. */
+  setContentKey(contentKeyHex: string, keyId: string, deviceId: string): void {
+    this._contentKeyHex = contentKeyHex;
+    this._keyId = keyId;
+    this._deviceId = deviceId;
+  }
+
+  clearContentKey(): void {
+    this._contentKeyHex = undefined;
+    this._keyId = undefined;
+    this._deviceId = undefined;
+  }
+
+  /**
+   * Resolve a command payload to its plaintext data, decrypting sealed_command
+   * if present.  Uses the bridge's stored content key / deviceId.
+   *
+   * All relay 'command' event consumers (CodexResumeManager, CodexRelay, etc.)
+   * should call this instead of accessing payload.data directly, so they are
+   * not reliant on listener ordering for decryption.
+   *
+   * Returns null when the command is sealed but cannot be decrypted.
+   */
+  resolveCommandData(payload: {
+    data?: string;
+    sealed_command?: string;
+    command_id?: string;
+    key_id?: string;
+    encryption_version?: number;
+    sessionId?: string;
+  }): string | null {
+    return normalizeCommandPayload(payload, this._contentKeyHex, this._deviceId);
+  }
+
+  /** Event types whose `data` body must be encrypted into `sealed_payload`
+   *  before reaching relay. user_prompt + task_complete are both encryptable. */
+  private static readonly ENCRYPTABLE_EVENT_TYPES = new Set<string>(['user_prompt', 'task_complete']);
+
+  /** Build a fail-closed placeholder payload when encryption blows up.
+   *  Plan §5.3: sealed_payload gets dropped, data is reduced to encryption_error
+   *  + safe_summary + preview_label so the phone shows "Encrypted content
+   *  unavailable" without leaking the original body. */
+  private _buildEncryptionErrorPayload(
+    payload: Record<string, unknown>,
+    eventType: string,
+  ): Record<string, unknown> {
+    return {
+      ...payload,
+      data: {
+        type: eventType,
+        encryption_error: true,
+        safe_summary: 'Encryption failed',
+        preview_label: 'encryption_error',
+      },
+      sealed_payload: null,
+      key_id: this._keyId ?? null,
+      encryption_version: 1,
+    };
+  }
+
+  /** Sanitize a `command_started` payload — strip user-input fields (command,
+   *  prompt, summary, text) and replace with safe_summary + preview_label.
+   *  Plan §5.1: `command` is in the must-encrypt set; for command_started
+   *  (which is a status event, not a content event) we strip rather than
+   *  encrypt — the actual user text already lives in user_prompt. */
+  private _sanitizeCommandStartedPayload(
+    payload: Record<string, unknown>,
+  ): Record<string, unknown> {
+    return {
+      ...payload,
+      data: {
+        type: 'command_started',
+        safe_summary: 'Command sent',
+        preview_label: 'command_started',
+      },
+    };
+  }
+
+  /** Public hook for external session managers (CodexResumeManager,
+   *  OpenCodeSessionManager) that build their own outbound paths and
+   *  cannot route through sendEventToRelay. Mirrors the same fail-closed
+   *  contract — see _encryptPayloadIfNeeded comment block.
+   *
+   *  Audit r2 P0-B: unified outbound encryption.
+   */
+  encryptOutboundPayload(payload: Record<string, unknown>): Record<string, unknown> {
+    return this._encryptPayloadIfNeeded(payload);
+  }
+
+  /** Encrypt event payload data if encryption is available and the event type
+   *  is in the encryptable set. Returns the modified payload (with sealed_payload,
+   *  key_id, encryption_version added, data reduced to allowlist only).
+   *
+   *  Behavior matrix (plan §5.3 + audit r2 + r3):
+   *    - No key configured (legacy / pre-pairing) → return payload unchanged (plaintext, backward-compat)
+   *    - eventType not in ENCRYPTABLE_EVENT_TYPES → return payload unchanged
+   *    - Key configured but missing AAD fields (clientEventId / sessionId / data) →
+   *      fail-closed: returns encryption_error placeholder. Audit r3 P1 — once
+   *      key is enabled, "missing AAD" is a programming error and NEVER a
+   *      reason to leak plaintext.
+   *    - Encryption succeeds → returns sealed envelope
+   *    - Encryption throws → fail-closed: returns placeholder payload with
+   *      encryption_error=true, sealed_payload=null.
+   */
+  private _encryptPayloadIfNeeded(
+    payload: Record<string, unknown>,
+  ): Record<string, unknown> {
+    if (!this._contentKeyHex || !this._keyId || !this._deviceId) return payload;
+    const eventType = payload.eventType as string | undefined;
+    if (!eventType || !ApprovalBridge.ENCRYPTABLE_EVENT_TYPES.has(eventType)) return payload;
+
+    // Audit r3 P1: from here on, key is set + eventType is encryptable. Any
+    // missing AAD field is a fail-closed condition, NOT a plaintext bypass.
+    const data = payload.data as Record<string, unknown> | undefined;
+    const clientEventId = payload.clientEventId as string | undefined;
+    const sessionId = payload.sessionId as string | undefined;
+    if (!data || !clientEventId || !sessionId) {
+      const missing = [
+        !data ? 'data' : null,
+        !clientEventId ? 'clientEventId' : null,
+        !sessionId ? 'sessionId' : null,
+      ].filter(Boolean).join(', ');
+      console.error('[bridge] encryption skipped for %s due to missing AAD fields: %s — emitting fail-closed placeholder', eventType, missing);
+      return this._buildEncryptionErrorPayload(payload, eventType);
+    }
+
+    try {
+      const envelope = encryptEventPayload(
+        data,
+        this._contentKeyHex,
+        this._keyId,
+        this._deviceId,
+        sessionId,
+        clientEventId,
+        eventType,
+      );
+      const encryptedData = eventType === 'task_complete' && !envelope.data.safe_summary
+        ? { ...envelope.data, safe_summary: 'Task complete' }
+        : envelope.data;
+      return {
+        ...payload,
+        data: encryptedData,
+        sealed_payload: envelope.sealed_payload,
+        key_id: envelope.key_id,
+        encryption_version: envelope.encryption_version,
+      };
+    } catch (err) {
+      // Fail-closed: never fall back to plaintext when key is configured.
+      // Phone will see encryption_error placeholder and show "Encrypted
+      // content unavailable" instead of leaking the original body.
+      console.error('[bridge] encryptEventPayload failed for %s clientEventId=%s: %s — emitting fail-closed placeholder', eventType, clientEventId, err);
+      return this._buildEncryptionErrorPayload(payload, eventType);
+    }
+  }
+
   /** Register an external approval responder. */
   registerExternalApprovalResponder(responder: ApprovalResponder): void {
     this._approvalResponders.push(responder);
@@ -198,7 +365,12 @@ export class ApprovalBridge {
 
   /** Public wrapper: send event to relay with privacy check. */
   sendEventToRelay(serverSessionId: string, payload: Record<string, unknown>, source: SourceType, allowedFields?: readonly string[]): void {
-    const raw = JSON.stringify({ type: 'event', payload } as any);
+    // Audit r2 P0-B: unified outbound encryption. All user_prompt events
+    // routed through this helper get encrypted automatically — covers
+    // OpenCode (live + history + phone echo) and any future agent that
+    // uses sendEventToRelay. Plan §6.2.
+    const encryptedPayload = this._encryptPayloadIfNeeded(payload);
+    const raw = JSON.stringify({ type: 'event', payload: encryptedPayload } as any);
     this.privacyCheckAndSend(source, raw, undefined, allowedFields);
   }
 
@@ -275,7 +447,7 @@ export class ApprovalBridge {
       this.sessions.set(localSessionId, knownServerSessionId);
     }
     const serverSessionId = existingServerSessionId
-      ?? await this.ensureSession(localSessionId, undefined, 'opencode', { agentType: 'opencode', runtime: 'opencode', title });
+      ?? await this.ensureSession(localSessionId, undefined, 'opencode_attach', { agentType: 'opencode', runtime: 'opencode', title });
     if (existingServerSessionId) {
       this.relay.sendRaw(JSON.stringify({
         type: 'attach_session',
@@ -317,35 +489,38 @@ export class ApprovalBridge {
         const info = m.info || {};
         const role = getOpenCodeHistoryMessageRole(m);
         const text = extractOpenCodeHistoryText(m);
+        if (!text) continue;
+        const createdAt = role === 'assistant' ? info.time?.completed || info.time?.created : info.time?.created;
+        const dedupKey = `${localSessionId}:${stableHistoryEventId(localSessionId, role, text, createdAt)}`;
+        if (this.sentOpenCodeHistoryKeys.has(dedupKey)) continue;
+        this.sentOpenCodeHistoryKeys.add(dedupKey);
         if (role === 'user') {
-          if (text) {
-            const raw = JSON.stringify({ type: 'event', payload: {
-              clientEventId: `oc-hist:${localSessionId}:${Date.now()}:${Math.random()}`,
-              sessionId: serverSessionId,
-              agent: 'opencode',
-              eventType: 'user_prompt',
-              data: { type: 'user_prompt', prompt: text, summary: text.slice(0, 200) },
-              ts: info.time?.created ? new Date(info.time.created).toISOString() : new Date().toISOString(),
-            }});
-            const projected = projectHistoryEventForPolicy(raw, policy);
-            if (projected !== null) {
-              this.privacyCheckAndSend('history', projected, undefined, undefined);
-            }
+          let payload: Record<string, unknown> = {
+            clientEventId: stableHistoryEventId(localSessionId, role, text, createdAt),
+            sessionId: serverSessionId,
+            agent: 'opencode',
+            eventType: 'user_prompt',
+            data: { type: 'user_prompt', prompt: text, summary: text.slice(0, 200) },
+            ts: info.time?.created ? new Date(info.time.created).toISOString() : new Date().toISOString(),
+          };
+          payload = this._encryptPayloadIfNeeded(payload);
+          const raw = JSON.stringify({ type: 'event', payload });
+          const projected = projectHistoryEventForPolicy(raw, policy);
+          if (projected !== null) {
+            this.privacyCheckAndSend('history', projected, undefined, undefined);
           }
         } else if (role === 'assistant') {
-          if (text) {
-            const raw = JSON.stringify({ type: 'event', payload: {
-              clientEventId: `oc-hist:${localSessionId}:${Date.now()}:${Math.random()}`,
-              sessionId: serverSessionId,
-              agent: 'opencode',
-              eventType: 'task_complete',
-              data: { type: 'task_complete', summary: text, summaryShort: text.slice(0, 200), output: text },
-              ts: info.time?.completed || info.time?.created ? new Date((info.time.completed || info.time.created) as number).toISOString() : new Date().toISOString(),
-            }});
-            const projected = projectHistoryEventForPolicy(raw, policy);
-            if (projected !== null) {
-              this.privacyCheckAndSend('history', projected, undefined, undefined);
-            }
+          const raw = JSON.stringify({ type: 'event', payload: {
+            clientEventId: stableHistoryEventId(localSessionId, role, text, createdAt),
+            sessionId: serverSessionId,
+            agent: 'opencode',
+            eventType: 'task_complete',
+            data: { type: 'task_complete', summary: text, summaryShort: text.slice(0, 200), output: text },
+            ts: info.time?.completed || info.time?.created ? new Date((info.time.completed || info.time.created) as number).toISOString() : new Date().toISOString(),
+          }});
+          const projected = projectHistoryEventForPolicy(raw, policy);
+          if (projected !== null) {
+            this.privacyCheckAndSend('history', projected, undefined, undefined);
           }
         }
       }
@@ -371,13 +546,14 @@ export class ApprovalBridge {
 
   get auditSink(): AuditSink | undefined { return this._auditSink; }
 
-  /**
-   * Run the privacy pipeline on a payload and send via sendCheckedPayload if allowed.
-   * Returns the decision (caller can check .action for 'block' / 'require_confirmation').
-   */
-  privacyCheckAndSend(source: SourceType, rawPayload: string, structuredPayload?: Record<string, unknown>, allowedFields?: readonly string[]): PrivacyDecision {
+   /**
+    * Run the privacy pipeline on a payload and send via sendCheckedPayload if allowed.
+    * Returns the decision (caller can check .action for 'block' / 'require_confirmation').
+    */
+   privacyCheckAndSend(source: SourceType, rawPayload: string, structuredPayload?: Record<string, unknown>, allowedFields?: readonly string[]): PrivacyDecision {
+     const withSummary = ensureSafeSummary(rawPayload);
     const decision = runPrivacyPipeline(
-      { source, rawPayload, structuredPayload, allowedFields },
+      { source, rawPayload: withSummary, structuredPayload, allowedFields },
       undefined, // cwd — uses workspace root if available
       this._auditSink,
     );
@@ -389,6 +565,13 @@ export class ApprovalBridge {
       this.relay.sendCheckedPayload(toCheckedPayload(decision)!);
     }
     return decision;
+  }
+
+  tryMarkOpenCodeHistorySent(localSessionId: string, role: string | undefined, text: string | undefined, createdAt?: number | string): boolean {
+    const key = `${localSessionId}:${stableHistoryEventId(localSessionId, role, text, createdAt)}`;
+    if (this.sentOpenCodeHistoryKeys.has(key)) return true;
+    this.sentOpenCodeHistoryKeys.add(key);
+    return false;
   }
 
   /** Push current history share policy to relay so it has the value immediately.
@@ -1475,6 +1658,7 @@ export class ApprovalBridge {
     const relayMsg: SessionEventMessage = {
       type: 'event',
       payload: {
+        clientEventId: `claude-hook:${claudeSessionId}:${Date.now()}`,
         sessionId: serverSessionId,
         agent: 'claude-code-hook',
         eventType: body.eventType,
@@ -1514,6 +1698,7 @@ export class ApprovalBridge {
     }
 
     if (shouldForwardRelayEvent) {
+      relayMsg.payload = this._encryptPayloadIfNeeded(relayMsg.payload as Record<string, unknown>) as any;
       const hookPolicy = checkHistoryPolicy(claudeSessionId, 'claude-code-hook');
       const hookProjected = projectHistoryEventForPolicy(JSON.stringify(relayMsg), hookPolicy);
       if (hookProjected !== null) {
@@ -1547,6 +1732,7 @@ export class ApprovalBridge {
       const msg: SessionEventMessage = {
         type: 'event',
         payload: {
+          clientEventId: `claude-synth:${claudeSessionId}:${Date.now()}`,
           sessionId: serverSessionId,
           agent: 'claude-code-hook',
           eventType: 'task_complete',
@@ -1558,6 +1744,7 @@ export class ApprovalBridge {
           ts: new Date().toISOString(),
         },
       };
+      msg.payload = this._encryptPayloadIfNeeded(msg.payload as Record<string, unknown>) as any;
       const idlePolicy = checkHistoryPolicy(claudeSessionId, 'claude-code-hook');
       const idleProjected = projectHistoryEventForPolicy(JSON.stringify(msg), idlePolicy);
       if (idleProjected !== null) {
@@ -1570,9 +1757,31 @@ export class ApprovalBridge {
   }
 
   listenRelayCommands(): void {
-    this.relay.on('command', (payload: { sessionId?: string; claudeSessionId?: string; action: string; data: string }) => {
+    this.relay.on('command', (payload: {
+      sessionId?: string;
+      claudeSessionId?: string;
+      action: string;
+      data?: string;
+      sealed_command?: string;
+      command_id?: string;
+      key_id?: string;
+      encryption_version?: number;
+    }) => {
       if (payload.action !== 'write_stdin') return;
       if (!payload.sessionId) return;
+
+      // Phase 4B: decrypt sealed_command into plaintext data
+      const resolved = this.resolveCommandData(payload);
+      if (resolved === null) {
+        if (payload.sealed_command) {
+          console.error('[bridge] sealed_command decrypt failed for sessionId=%s', payload.sessionId);
+          if (payload.sessionId) {
+            this.sendErrorToRelay(payload.sessionId, 'E2E key mismatch — re-pair phone from desktop sidebar');
+          }
+        }
+        return;
+      }
+      payload.data = resolved;
 
       // Codex resume routing guard: if this serverSessionId is managed by
       // CodexResumeManager, skip the Claude command queue.
@@ -1637,7 +1846,7 @@ export class ApprovalBridge {
 
       // Resolve cwd so command-relay can launch CC in the correct project directory
       const cwd = claudeSessionId ? resolveTranscriptCwd(claudeSessionId) ?? undefined : undefined;
-      console.error('[bridge] command queued: sessionId=%s claudeSessionId=%s cwd=%s text=%s', payload.sessionId, claudeSessionId, cwd, payload.data);
+      console.error('[bridge] command queued: sessionId=%s claudeSessionId=%s cwd=%s len=%d hash=%s', payload.sessionId, claudeSessionId, cwd, payload.data.length, createHash('sha256').update(payload.data).digest('hex').slice(0, 8));
       this.commandQueue.push({
         id: randomUUID(),
         sessionId: payload.sessionId,
@@ -1651,22 +1860,20 @@ export class ApprovalBridge {
       // Emit user_prompt event so the mini program can see the phone command in the conversation.
       // Without this, phone commands only exist in the in-memory command queue and disappear
       // on page refresh — they must be persisted as events in the relay DB.
-      const relayMsg: SessionEventMessage = {
-        type: 'event',
-        payload: {
-          clientEventId: `phone:${payload.sessionId}:${Date.now()}`,
-          sessionId: payload.sessionId,
-          agent: 'claude-code-hook',
-          eventType: 'user_prompt',
-          data: {
-            type: 'user_prompt',
-            prompt: payload.data,
-            summary: payload.data.slice(0, 200),
-          },
-          ts: new Date().toISOString(),
+      let relayPayload: Record<string, unknown> = {
+        clientEventId: `phone:${payload.sessionId}:${Date.now()}`,
+        sessionId: payload.sessionId,
+        agent: 'claude-code-hook',
+        eventType: 'user_prompt',
+        data: {
+          type: 'user_prompt',
+          prompt: payload.data,
+          summary: payload.data.slice(0, 200),
         },
+        ts: new Date().toISOString(),
       };
-      this.privacyCheckAndSend('command', JSON.stringify(relayMsg));
+      relayPayload = this._encryptPayloadIfNeeded(relayPayload);
+      this.privacyCheckAndSend('command', JSON.stringify({ type: 'event', payload: relayPayload }));
     });
   }
 
@@ -1732,24 +1939,22 @@ export class ApprovalBridge {
         if (this.consumePhoneCommandMatch(serverSessionId, entry.text)) continue;
 
         const prompt = entry.text.slice(0, MAX_PROMPT_LENGTH);
-        const relayMsg: SessionEventMessage = {
-          type: 'event',
-          payload: {
-            clientEventId: `prompt:${claudeSessionId}:${entry.index}`,
-            sessionId: serverSessionId,
-            agent: 'claude-code-hook',
-            eventType: 'user_prompt',
-            data: {
-              type: 'user_prompt',
-              prompt,
-              summary: entry.text.slice(0, 200),
-              timestamp: entry.timestamp,
-              index: entry.index,
-            },
-            ts: entry.timestamp || new Date().toISOString(),
+        let relayPayload: Record<string, unknown> = {
+          clientEventId: `prompt:${claudeSessionId}:${entry.index}`,
+          sessionId: serverSessionId,
+          agent: 'claude-code-hook',
+          eventType: 'user_prompt',
+          data: {
+            type: 'user_prompt',
+            prompt,
+            summary: entry.text.slice(0, 200),
+            timestamp: entry.timestamp,
+            index: entry.index,
           },
+          ts: entry.timestamp || new Date().toISOString(),
         };
-        const raw = JSON.stringify(relayMsg);
+        relayPayload = this._encryptPayloadIfNeeded(relayPayload);
+        const raw = JSON.stringify({ type: 'event', payload: relayPayload });
         const projected = projectHistoryEventForPolicy(raw, policy);
         if (projected === null) continue;
         this.privacyCheckAndSend('transcript', projected, undefined, undefined);
@@ -1777,6 +1982,7 @@ export class ApprovalBridge {
           ts: entry.timestamp || new Date().toISOString(),
         },
       };
+      relayMsg.payload = this._encryptPayloadIfNeeded(relayMsg.payload as Record<string, unknown>) as any;
       const raw = JSON.stringify(relayMsg);
       const projected = projectHistoryEventForPolicy(raw, policy);
       if (projected !== null) {
@@ -1826,24 +2032,22 @@ export class ApprovalBridge {
       if (this.consumePhoneCommandMatch(serverSessionId, entry.text)) continue;
 
       const prompt = entry.text.slice(0, MAX_PROMPT_LENGTH);
-      const relayMsg: SessionEventMessage = {
-        type: 'event',
-        payload: {
-          clientEventId: `prompt:${claudeSessionId}:${entry.index}`,
-          sessionId: serverSessionId,
-          agent: 'claude-code-hook',
-          eventType: 'user_prompt',
-          data: {
-            type: 'user_prompt',
-            prompt,
-            summary: entry.text.slice(0, 200),
-            timestamp: entry.timestamp,
-            index: entry.index,
-          },
-          ts: entry.timestamp,
+      let relayPayload: Record<string, unknown> = {
+        clientEventId: `prompt:${claudeSessionId}:${entry.index}`,
+        sessionId: serverSessionId,
+        agent: 'claude-code-hook',
+        eventType: 'user_prompt',
+        data: {
+          type: 'user_prompt',
+          prompt,
+          summary: entry.text.slice(0, 200),
+          timestamp: entry.timestamp,
+          index: entry.index,
         },
+        ts: entry.timestamp,
       };
-      const raw = JSON.stringify(relayMsg);
+      relayPayload = this._encryptPayloadIfNeeded(relayPayload);
+      const raw = JSON.stringify({ type: 'event', payload: relayPayload });
       const projected = projectHistoryEventForPolicy(raw, policy);
       if (projected !== null) {
         this.privacyCheckAndSend('transcript', projected, undefined, undefined);
@@ -1878,15 +2082,20 @@ export class ApprovalBridge {
         sessionId: serverSessionId,
         agent: 'claude-code-hook',
         eventType: 'command_started',
+        // Plan §5.1 + audit r2 P0-A: command_started is a STATE event, not a content
+        // event. The actual user input lives in the user_prompt event (encrypted into
+        // sealed_payload). Storing the same prompt verbatim here would bypass encryption,
+        // so we strip the body and only push safe_summary + preview_label.
         data: {
           type: 'command_started',
-          command: text,
+          safe_summary: 'Command sent',
+          preview_label: 'command_started',
         },
         ts: new Date().toISOString(),
       },
     };
-    console.error('[bridge] phone command claimed: sending command_started sessionId=%s text=%s',
-      serverSessionId, text.slice(0, 80));
+    console.error('[bridge] phone command claimed: sending command_started sessionId=%s textLen=%d',
+      serverSessionId, text.length);
     this.privacyCheckAndSend('command', JSON.stringify(relayMsg));
   }
 
@@ -2130,7 +2339,7 @@ export class ApprovalBridge {
         for (const csid of this._opencodeAttachedIds) {
           if (!this.sessions.has(csid)) {
             console.error('[bridge] reconcile: re-registering opencode session %s', csid);
-            this.ensureSession(csid, undefined, 'opencode', { agentType: 'opencode', runtime: 'opencode' }).then((ssid) => {
+            this.ensureSession(csid, undefined, 'opencode_attach', { agentType: 'opencode', runtime: 'opencode' }).then((ssid) => {
               this._onOpenCodeRegistered?.(csid, ssid);
             }).catch((err) => {
               console.error('[bridge] reconcile: opencode re-register failed for %s: %s', csid, err);

@@ -1,0 +1,73 @@
+page {
+  /* Warm palette (MuxAgent inspired) */
+  --ck-bg: #f5f0eb;
+  --ck-surface: #fcfaf8;
+  --ck-text: #1c1917;
+  --ck-muted: #78716c;
+  --ck-subtle: #a8a29e;
+  --ck-border: #e7e2dc;
+  --ck-primary: #2563eb;
+  --ck-primary-pressed: #1d4ed8;
+  --ck-success: #059669;
+  --ck-warning: #d97706;
+  --ck-danger: #dc2626;
+  --ck-code-bg: #292524;
+  --ck-code-text: #e7e5e4;
+
+  /* Radius tokens */
+  --ck-radius-sm: 8rpx;
+  --ck-radius-md: 14rpx;
+  --ck-radius-lg: 18rpx;
+  --ck-radius-xl: 24rpx;
+  --ck-radius-full: 999rpx;
+
+  /* Shadow tokens */
+  --ck-shadow-sm: 0 2rpx 8rpx rgba(28, 25, 23, 0.06);
+  --ck-shadow-md: 0 4rpx 16rpx rgba(28, 25, 23, 0.08);
+  --ck-shadow-lg: 0 8rpx 32rpx rgba(28, 25, 23, 0.1);
+
+  /* Transition */
+  --ck-transition: 140ms ease;
+
+  min-height: 100vh;
+  font-family: -apple-system, BlinkMacSystemFont, 'Helvetica Neue', 'PingFang SC', sans-serif;
+  background: var(--ck-bg);
+  color: var(--ck-text);
+  font-size: 28rpx;
+  line-height: 1.5;
+  box-sizing: border-box;
+}
+
+view,
+text,
+input,
+button,
+scroll-view {
+  box-sizing: border-box;
+}
+
+button {
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: none;
+  line-height: normal;
+}
+
+button::after {
+  border: none;
+}
+
+scroll-view {
+  -webkit-overflow-scrolling: touch;
+}
+
+.mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Courier New', monospace;
+}
+
+.ellipsis {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

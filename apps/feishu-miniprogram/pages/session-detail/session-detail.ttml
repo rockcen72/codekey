@@ -1,0 +1,275 @@
+<view class="page">
+  <view class="detail-topbar">
+    <button class="back-btn" bindtap="goBack"></button>
+    <view class="title-wrap">
+      <text class="detail-title ellipsis">{{session.metadataTitle || session.agentType || 'AI Agent'}}</text>
+    </view>
+    <view class="ws-indicator {{wsConnected ? 'online' : 'offline'}}">
+      <view class="ws-dot"></view>
+    </view>
+  </view>
+
+  <!-- Per-user monthly quota bar. Hidden when not on the free
+       tier (paid/trial return usage=null and the bar stays
+       hidden). Color shifts to warn the user as they approach
+       the 50/month cap. -->
+  <view class="quota-strip" tt:if="{{quotaState !== 'hidden'}}">
+    <view class="quota-strip-bar">
+      <view class="quota-strip-fill quota-{{quotaState}}" style="width: {{quotaPercent}}%"></view>
+    </view>
+    <text class="quota-strip-label quota-label-{{quotaState}}">
+      <text tt:if="{{quotaState === 'exhausted'}}">本月 {{usage.limit}} 次审批已用完</text>
+      <text tt:elif="{{quotaState === 'approaching'}}">本月 {{usage.used}}/{{usage.limit}} · 接近额度上限</text>
+      <text tt:else>本月 {{usage.used}}/{{usage.limit}}</text>
+    </text>
+  </view>
+
+  <view class="e2e-banner stale" tt:if="{{e2eStatus === 'stale'}}">
+    <text>桌面端 E2E 密钥已更新，请在设置页面重新配对手机。</text>
+  </view>
+
+  <scroll-view class="timeline {{hasPrimaryPendingEvent && !approvalSheetOpen ? 'timeline-with-dock' : ''}}" scroll-y scroll-into-view="{{scrollToId}}" scroll-top="{{scrollTop}}" scroll-with-animation bindscroll="onScroll">
+    <view class="empty" tt:if="{{chatMessages.length === 0}}">
+      <text class="empty-icon">◌</text>
+      <text class="empty-title">暂无消息</text>
+      <text class="empty-text">当 Agent 请求审批、完成任务或等待指令时，会显示在这里。</text>
+    </view>
+
+    <block tt:for="{{chatMessages}}" tt:key="id">
+      <!-- System markers (e.g. session idle) -->
+      <view tt:if="{{item.type === 'system'}}" class="marker-wrap" id="msg-{{item.id}}">
+        <view class="timeline-marker">
+          <text>{{item.content}}</text>
+        </view>
+      </view>
+
+      <!-- User message bubble -->
+      <view tt:elif="{{item.type === 'user'}}" class="msg-row right">
+        <view class="chat-stack user-stack" id="msg-{{item.id}}">
+          <text class="sender-name">{{item.senderName || '你'}}</text>
+          <view class="msg-bubble user">
+            <text class="msg-text">{{item.content}}</text>
+            <text tt:if="{{item.displayTime}}" class="msg-time">{{item.displayTime}}</text>
+          </view>
+        </view>
+      </view>
+
+      <!-- Agent message bubble -->
+      <view tt:elif="{{item.isCommandStarted}}" class="msg-row left">
+        <view class="chat-stack agent-stack" id="msg-{{item.id}}">
+          <text class="sender-name">{{item.senderName || 'agent'}}</text>
+          <view class="msg-bubble agent agent-{{item.agentClass}}">
+            <text class="msg-text">{{item.content}}</text>
+            <text tt:if="{{item.displayTime}}" class="msg-time">{{item.displayTime}}</text>
+          </view>
+        </view>
+      </view>
+
+      <!-- Agent event card -->
+      <view tt:else class="msg-row left">
+        <view class="chat-stack agent-stack" id="msg-{{item.id}}">
+          <text class="sender-name">{{item.senderName || 'agent'}}</text>
+          <view class="event-card accent-{{item.accent}} agent-{{item.agentClass}}">
+            <view class="event-head">
+              <view class="event-head-left">
+                <view class="event-glyph glyph-{{item.accent}}"></view>
+                <text class="event-type">{{item.typeLabel}}</text>
+                <text tt:if="{{item.toolName}}" class="tool-tag">{{item.toolName}}</text>
+              </view>
+              <text tt:if="{{item.kindBadge}}" class="kind-badge kind-{{item.accent}}">{{item.kindBadge}}</text>
+            </view>
+
+            <!-- Command single-line preview -->
+            <view tt:if="{{item.command}}" class="cmd-line">
+              <text class="cmd-line-text mono">{{item.command}}</text>
+            </view>
+            <!-- Summary: rich-text for markdown, plain text fallback -->
+            <rich-text tt:if="{{item.contentHtml}}" class="event-summary" nodes="{{item.contentHtml}}"></rich-text>
+            <view tt:elif="{{item.summary && item.summary !== item.command}}" class="event-summary">{{item.summary}}</view>
+            <view tt:if="{{item.requiresInput && item.inputOptions && item.inputOptions.length}}" class="input-options">
+              <button
+                tt:for="{{item.inputOptions}}"
+                tt:key="value"
+                class="input-option"
+                data-id="{{item.eventId}}"
+                data-value="{{item.value}}"
+                disabled="{{!item.pending}}"
+                catchtap="chooseInputOption"
+              >
+                <text class="input-option-label">{{item.label}}</text>
+                <text tt:if="{{item.description}}" class="input-option-desc">{{item.description}}</text>
+              </button>
+            </view>
+
+            <!-- Footer: status tags + time -->
+            <view class="event-foot">
+              <view class="foot-tags">
+                <!-- Pending: risk + wait pulse -->
+                <block tt:if="{{item.pending && item.riskText}}">
+                  <text class="risk-tag {{item.risk_level}}">{{item.riskText}}</text>
+                  <view class="pending-pulse">
+                    <view class="pulse-dot"></view>
+                    <text>等待处理</text>
+                  </view>
+                </block>
+                <!-- Resolved: decision -->
+                <text tt:elif="{{item.decisionText}}" class="decision-tag {{item.decision}}">{{item.decisionText}}</text>
+              </view>
+              <text tt:if="{{item.displayTime}}" class="event-time">{{item.displayTime}}</text>
+            </view>
+
+            <!-- Pending hint: action buttons live in the floating overlay -->
+            <view tt:if="{{item.pending}}" class="action-bar">
+              <view class="pending-hint">
+                <view class="pulse-dot"></view>
+                <text>请使用下方操作栏处理</text>
+              </view>
+            </view>
+          </view>
+        </view>
+      </view>
+    </block>
+    <view id="timeline-bottom"></view>
+  </scroll-view>
+
+  <!-- Floating approval command dock -->
+  <view class="approval-dock {{dockExpanded ? 'expanded' : ''}}" tt:if="{{hasPrimaryPendingEvent && !approvalSheetOpen}}">
+    <view class="dock-card agent-{{primaryPendingEvent.agentClass}}">
+      <!-- Collapsed summary bar: tap to expand -->
+      <view class="dock-bar" bindtap="toggleDockExpand">
+        <view class="dock-bar-left">
+          <view class="dock-pulse"></view>
+          <text class="dock-kicker">{{primaryPendingEvent.requiresInput ? '需要选择' : '等待审批'}}</text>
+          <text class="dock-title">{{primaryPendingEvent.summary || primaryPendingEvent.command || primaryPendingEvent.typeLabel}}</text>
+        </view>
+        <view class="dock-bar-right">
+          <text tt:if="{{primaryPendingEvent.riskText}}" class="risk-tag {{primaryPendingEvent.risk_level}}">{{primaryPendingEvent.riskText}}</text>
+          <text class="dock-chevron">{{dockExpanded ? '▼' : '▲'}}</text>
+        </view>
+      </view>
+
+      <!-- Expanded detail area -->
+      <view class="dock-body" tt:if="{{dockExpanded}}">
+        <!-- Command preview -->
+        <view tt:if="{{primaryPendingEvent.command}}" class="dock-command">
+          <text class="dock-command-text mono">{{primaryPendingEvent.command}}</text>
+        </view>
+
+        <!-- Input options for input_required -->
+        <view tt:if="{{primaryPendingEvent.requiresInput && primaryPendingEvent.inputOptions && primaryPendingEvent.inputOptions.length}}" class="dock-options">
+          <button
+            tt:for="{{primaryPendingEvent.inputOptions}}"
+            tt:key="value"
+            class="dock-option-btn"
+            data-id="{{primaryPendingEvent.eventId}}"
+            data-value="{{item.value}}"
+            catchtap="chooseInputOption"
+          >
+            <text class="dock-option-label">{{item.label}}</text>
+            <text tt:if="{{item.description}}" class="dock-option-desc">{{item.description}}</text>
+          </button>
+        </view>
+
+        <!-- Inline text reply -->
+        <view class="dock-reply">
+          <input
+            class="dock-reply-input"
+            placeholder="{{primaryPendingEvent.requiresInput ? '输入选择或说明...' : '回复 Agent...'}}"
+            value="{{dockReplyText}}"
+            bindinput="onDockReplyInput"
+            confirm-type="send"
+            bindconfirm="sendDockReply"
+          />
+          <view class="dock-reply-send {{dockReplyText ? 'active' : ''}}" bindtap="sendDockReply">
+            <text>发送</text>
+          </view>
+        </view>
+
+        <!-- Action buttons -->
+        <view tt:if="{{primaryPendingEvent.requiresInput}}" class="dock-actions">
+          <button class="dock-btn primary full" data-id="{{primaryPendingEvent.eventId}}" bindtap="openApprovalSheet">展开详情</button>
+        </view>
+        <view tt:elif="{{primaryPendingEvent.canApprove}}" class="dock-actions">
+          <button class="dock-btn primary" data-id="{{primaryPendingEvent.eventId}}" catchtap="approveEvent">批准</button>
+          <button class="dock-btn danger" data-id="{{primaryPendingEvent.eventId}}" catchtap="denyEvent">拒绝</button>
+          <button class="dock-btn ghost" data-id="{{primaryPendingEvent.eventId}}" catchtap="pauseEvent">暂缓</button>
+          <button class="dock-btn outline" data-id="{{primaryPendingEvent.eventId}}" bindtap="openApprovalSheet">详情</button>
+        </view>
+        <view tt:else class="dock-actions">
+          <button class="dock-btn outline" data-id="{{primaryPendingEvent.eventId}}" bindtap="openApprovalSheet">查看详情</button>
+          <button class="dock-btn ghost" data-id="{{primaryPendingEvent.eventId}}" catchtap="denyEvent">拒绝</button>
+          <button class="dock-btn ghost" data-id="{{primaryPendingEvent.eventId}}" catchtap="pauseEvent">暂缓</button>
+        </view>
+      </view>
+    </view>
+  </view>
+
+  <!-- Composer: input + circular send button -->
+  <view class="composer">
+    <view class="composer-inner">
+      <view class="composer-media-btn" aria-label="添加图片">
+        <view class="media-icon">
+          <view class="media-sun"></view>
+          <view class="media-mountain"></view>
+        </view>
+      </view>
+      <view class="composer-input-wrap">
+        <input class="composer-input" placeholder="给 Agent 发送指令..." value="{{commandText}}" bindinput="onCommandInput" />
+      </view>
+      <view class="composer-send {{canSendCommand ? 'active' : ''}}" bindtap="sendCommand">
+        <view class="send-arrow">
+          <view class="send-arrow-head"></view>
+          <view class="send-arrow-shaft"></view>
+        </view>
+      </view>
+    </view>
+  </view>
+
+  <!-- Approval detail modal -->
+  <view class="sheet-mask" tt:if="{{approvalSheetOpen}}" bindtap="closeApprovalSheet">
+    <view class="approval-sheet" catchtap="">
+      <view class="sheet-head">
+        <view class="event-head-left">
+          <text class="sheet-title">{{approvalEvent.requiresInput ? '选择请求' : '审批请求'}}</text>
+          <text tt:if="{{approvalEvent.toolName}}" class="tool-tag">{{approvalEvent.toolName}}</text>
+        </view>
+        <text tt:if="{{!approvalEvent.requiresInput}}" class="risk-tag {{approvalEvent.risk_level}}">{{approvalEvent.riskText}}</text>
+      </view>
+
+      <text class="sheet-summary" tt:if="{{approvalEvent.summary}}">{{approvalEvent.summary}}</text>
+
+      <view class="code-block large" tt:if="{{approvalEvent.command && approvalEvent.toolName === 'Bash' && approvalEvent.command !== approvalEvent.summary}}">
+        <text class="code-text">{{approvalEvent.command}}</text>
+      </view>
+
+      <view class="risk-notice" tt:if="{{approvalEvent.pending && !approvalEvent.requiresInput && !approvalEvent.canApprove}}">
+        <text>该请求风险较高，请在电脑端确认后处理。</text>
+      </view>
+
+      <view tt:if="{{approvalEvent.requiresInput && approvalEvent.inputOptions && approvalEvent.inputOptions.length}}" class="input-options sheet-options">
+        <button
+          tt:for="{{approvalEvent.inputOptions}}"
+          tt:key="value"
+          class="input-option"
+          data-id="{{approvalEvent.eventId}}"
+          data-value="{{item.value}}"
+          catchtap="chooseSheetInputOption"
+        >
+          <text class="input-option-label">{{item.label}}</text>
+          <text tt:if="{{item.description}}" class="input-option-desc">{{item.description}}</text>
+        </button>
+      </view>
+
+      <view class="sheet-reply">
+        <input class="sheet-reply-input" placeholder="{{approvalEvent.requiresInput ? '输入选择或补充说明...' : '回复 AI...'}}" value="{{sheetReplyText}}" bindinput="onSheetReplyInput" />
+        <button class="sheet-reply-btn" bindtap="sendSheetReply">发送</button>
+      </view>
+
+      <view tt:if="{{!approvalEvent.requiresInput}}" class="sheet-actions">
+        <button class="sheet-btn approve {{approvalEvent.canApprove ? '' : 'disabled'}}" disabled="{{!approvalEvent.canApprove}}" bindtap="approveSheet">批准</button>
+        <button class="sheet-btn deny" bindtap="denySheet">拒绝</button>
+        <button class="sheet-btn pause" bindtap="pauseSheet">暂缓</button>
+      </view>
+    </view>
+  </view>
+</view>

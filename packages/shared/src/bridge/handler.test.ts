@@ -4,8 +4,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ApprovalBridge } from './handler.js';
+import { decryptEventPayload } from './event-envelope.js';
 import { OpenCodeSessionManager } from './opencode-session-manager.js';
 import { HistorySharePolicy, setConfig } from './history-policy.js';
+import { stableHistoryEventId } from './opencode-history.js';
 
 /** Create a temp CLAUDE_CONFIG_DIR with a transcript for the given sessionId.
  *  Returns the temp dir path. Caller must set process.env.CLAUDE_CONFIG_DIR. */
@@ -202,7 +204,15 @@ describe('ApprovalBridge canonical sessions', () => {
 
     expect(started).toBeDefined();
     expect(started.payload.sessionId).toBe(serverSession);
-    expect(started.payload.data).toEqual({ type: 'command_started', command: 'phone prompt' });
+    // Audit r2 P0-A: command_started is a status event — body is stripped, not echoed.
+    // The actual user input lives in the user_prompt event (encrypted when key is set).
+    expect(started.payload.data).toEqual({
+      type: 'command_started',
+      safe_summary: 'Command sent',
+      preview_label: 'command_started',
+    });
+    expect(started.payload.data).not.toHaveProperty('command');
+    expect(started.payload.data).not.toHaveProperty('prompt');
     expect(events.some((m: any) => m.payload.eventType === 'task_complete')).toBe(false);
   });
 
@@ -752,7 +762,7 @@ describe('ApprovalBridge canonical sessions', () => {
     expect(registerMsg).toBeDefined();
     expect(registerMsg.payload.metadata.title).toBe('My OpenCode Task');
     expect(registerMsg.payload.metadata.runtime).toBe('opencode');
-    expect(registerMsg.payload.metadata.source).toBe('opencode');
+    expect(registerMsg.payload.metadata.source).toBe('opencode_attach');
     expect(sentTypes).not.toContain('update_session_label');
   });
 
@@ -770,6 +780,7 @@ describe('ApprovalBridge canonical sessions', () => {
 
     expect(registerMsg).toBeDefined();
     expect('title' in registerMsg.payload.metadata).toBe(false);
+    expect(registerMsg.payload.metadata.source).toBe('opencode_attach');
     expect(sentTypes).not.toContain('update_session_label');
   });
 
@@ -1502,5 +1513,564 @@ describe('sendErrorToRelay privacy pipeline', () => {
     expect(checked).toBeDefined();
     expect(checked).toContain('sk-ant-***');
     expect(checked).not.toContain('sk-ant-ABCDEF0123456789abcdef01234567');
+  });
+});
+
+// ── Audit r2 P0-A + P0-B: outbound user_prompt encryption + command_started sanitization ──
+describe('outbound encryption invariants', () => {
+  const TEST_KEY = 'a'.repeat(64);
+  const TEST_KEY_ID = 'keyid-test-aabbcc';
+  const TEST_DEVICE = 'device-test-1234567890abcdef';
+
+  it('command_started events NEVER contain user input fields (command/prompt/text/summary body)', async () => {
+    const relay = new FakeRelay();
+    const bridge = new ApprovalBridge(relay as any);
+    const serverSession = await bridge.ensureSession('claude-leak-test');
+
+    const SECRET_PROMPT = 'my secret password is hunter2';
+    bridge.listenRelayCommands();
+    relay.emit('command', { sessionId: serverSession, action: 'write_stdin', data: SECRET_PROMPT });
+
+    const [cmd] = bridge.commandQueue.peek();
+    bridge.recordClaimedPhoneCommand(cmd.sessionId, cmd.text);
+
+    const startedEvents = relay.sent
+      .map((m) => JSON.parse(m))
+      .filter((m: any) => m.type === 'event' && m.payload.eventType === 'command_started');
+
+    expect(startedEvents.length).toBeGreaterThan(0);
+    for (const evt of startedEvents) {
+      const data = evt.payload.data;
+      // Sanitization contract — body fields MUST be absent
+      expect(data).not.toHaveProperty('command');
+      expect(data).not.toHaveProperty('prompt');
+      expect(data).not.toHaveProperty('text');
+      expect(data).not.toHaveProperty('summary');
+      expect(data).not.toHaveProperty('summaryShort');
+      expect(data).not.toHaveProperty('output');
+      // Only allowlist markers remain
+      expect(data).toHaveProperty('safe_summary');
+      expect(data).toHaveProperty('preview_label');
+      // The serialized event must not contain the secret anywhere
+      const serialized = JSON.stringify(evt);
+      expect(serialized).not.toContain('hunter2');
+      expect(serialized).not.toContain('secret password');
+    }
+  });
+
+  it('user_prompt events from sendEventToRelay get encrypted when content key is set', () => {
+    const relay = new FakeRelay();
+    const bridge = new ApprovalBridge(relay as any);
+    bridge.setContentKey(TEST_KEY, TEST_KEY_ID, TEST_DEVICE);
+
+    const SECRET = 'audit-leak-canary-9f3a';
+    bridge.sendEventToRelay('srv-x', {
+      clientEventId: 'cevt:audit:1',
+      sessionId: 'srv-x',
+      agent: 'opencode',
+      eventType: 'user_prompt',
+      data: { type: 'user_prompt', prompt: SECRET, summary: SECRET },
+      ts: '2026-06-14T00:00:00.000Z',
+    }, 'history');
+
+    const sent = relay.sent.find((s) => s.includes('cevt:audit:1'));
+    expect(sent).toBeDefined();
+    const parsed = JSON.parse(sent!);
+
+    // sealed_payload populated, allowlist data only
+    expect(parsed.payload.sealed_payload).toBeDefined();
+    expect(typeof parsed.payload.sealed_payload).toBe('string');
+    expect(parsed.payload.key_id).toBe(TEST_KEY_ID);
+    expect(parsed.payload.encryption_version).toBe(1);
+    expect(parsed.payload.data).toEqual({ type: 'user_prompt', encrypted: true, safe_summary: 'User prompt' });
+    // Secret must not leak anywhere in the outbound bytes
+    expect(sent).not.toContain(SECRET);
+  });
+
+  it('user_prompt without a content key passes through plaintext (legacy backward-compat)', () => {
+    const relay = new FakeRelay();
+    const bridge = new ApprovalBridge(relay as any);
+    // No setContentKey() — pre-pairing / legacy state
+
+    bridge.sendEventToRelay('srv-y', {
+      clientEventId: 'cevt:nokey:1',
+      sessionId: 'srv-y',
+      agent: 'opencode',
+      eventType: 'user_prompt',
+      data: { type: 'user_prompt', prompt: 'plaintext ok', summary: 'plaintext ok' },
+      ts: '2026-06-14T00:00:00.000Z',
+    }, 'history');
+
+    const sent = relay.sent.find((s) => s.includes('cevt:nokey:1'));
+    expect(sent).toBeDefined();
+    const parsed = JSON.parse(sent!);
+    expect(parsed.payload.sealed_payload).toBeUndefined();
+    expect(parsed.payload.data.prompt).toBe('plaintext ok');
+  });
+
+  it('task_complete events from sendEventToRelay get encrypted when content key is set', () => {
+    const relay = new FakeRelay();
+    const bridge = new ApprovalBridge(relay as any);
+    bridge.setContentKey(TEST_KEY, TEST_KEY_ID, TEST_DEVICE);
+
+    bridge.sendEventToRelay('srv-z', {
+      clientEventId: 'cevt:tc:1',
+      sessionId: 'srv-z',
+      agent: 'opencode',
+      eventType: 'task_complete',
+      data: { type: 'task_complete', summary: 'done', output: 'all good' },
+      ts: '2026-06-14T00:00:00.000Z',
+    }, 'transcript');
+
+    const sent = relay.sent.find((s) => s.includes('cevt:tc:1'));
+    expect(sent).toBeDefined();
+    const parsed = JSON.parse(sent!);
+    // task_complete is now in ENCRYPTABLE_EVENT_TYPES
+    expect(parsed.payload.sealed_payload).toBeDefined();
+    expect(typeof parsed.payload.sealed_payload).toBe('string');
+    expect(parsed.payload.key_id).toBe(TEST_KEY_ID);
+    expect(parsed.payload.encryption_version).toBe(1);
+    expect(parsed.payload.data).toMatchObject({ type: 'task_complete', encrypted: true, safe_summary: 'Task complete' });
+    // Secret must not leak
+    expect(sent).not.toContain('done');
+    expect(sent).not.toContain('all good');
+  });
+
+  it('encryptOutboundPayload public hook mirrors private path (used by external session managers)', () => {
+    const relay = new FakeRelay();
+    const bridge = new ApprovalBridge(relay as any);
+    bridge.setContentKey(TEST_KEY, TEST_KEY_ID, TEST_DEVICE);
+
+    const out = bridge.encryptOutboundPayload({
+      clientEventId: 'cevt:hook:1',
+      sessionId: 'srv-hook',
+      agent: 'codex',
+      eventType: 'user_prompt',
+      data: { type: 'user_prompt', prompt: 'codex hook secret' },
+      ts: '2026-06-14T00:00:00.000Z',
+    });
+
+    expect(out).toHaveProperty('sealed_payload');
+    expect((out as any).data).toEqual({ type: 'user_prompt', encrypted: true });
+    expect(JSON.stringify(out)).not.toContain('codex hook secret');
+  });
+
+  it('fail-closed: when encryption throws, emits placeholder with encryption_error=true and NO plaintext', () => {
+    const relay = new FakeRelay();
+    const bridge = new ApprovalBridge(relay as any);
+    // Set an invalid key (wrong length — keyFromHex will throw in encryptEventPayload)
+    bridge.setContentKey('not-a-valid-hex-key', TEST_KEY_ID, TEST_DEVICE);
+
+    // Suppress the expected error log
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const SECRET = 'leak-canary-fc-9999';
+    bridge.sendEventToRelay('srv-fc', {
+      clientEventId: 'cevt:fc:1',
+      sessionId: 'srv-fc',
+      agent: 'opencode',
+      eventType: 'user_prompt',
+      data: { type: 'user_prompt', prompt: SECRET, summary: SECRET },
+      ts: '2026-06-14T00:00:00.000Z',
+    }, 'history');
+
+    errSpy.mockRestore();
+
+    const sent = relay.sent.find((s) => s.includes('cevt:fc:1'));
+    expect(sent).toBeDefined();
+    const parsed = JSON.parse(sent!);
+
+    // fail-closed contract:
+    expect(parsed.payload.data).toEqual({
+      type: 'user_prompt',
+      encryption_error: true,
+      safe_summary: 'Encryption failed',
+      preview_label: 'encryption_error',
+    });
+    expect(parsed.payload.sealed_payload).toBeNull();
+    // Secret MUST NOT appear anywhere in the outbound bytes
+    expect(sent).not.toContain(SECRET);
+  });
+
+  it('fail-closed: when key is set but AAD fields missing (no clientEventId), emits placeholder NOT plaintext (audit r3 P1)', () => {
+    const relay = new FakeRelay();
+    const bridge = new ApprovalBridge(relay as any);
+    bridge.setContentKey(TEST_KEY, TEST_KEY_ID, TEST_DEVICE);
+
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const SECRET = 'leak-canary-aad-7777';
+
+    // user_prompt with key set but NO clientEventId (programming error)
+    bridge.encryptOutboundPayload({
+      sessionId: 'srv-aad',
+      agent: 'opencode',
+      eventType: 'user_prompt',
+      data: { type: 'user_prompt', prompt: SECRET, summary: SECRET },
+      ts: '2026-06-14T00:00:00.000Z',
+    }) as any;
+
+    errSpy.mockRestore();
+
+    // Now exercise the public path (sendEventToRelay) which serializes & sends
+    const errSpy2 = vi.spyOn(console, 'error').mockImplementation(() => {});
+    bridge.sendEventToRelay('srv-aad2', {
+      // missing clientEventId — should fail-closed
+      sessionId: 'srv-aad2',
+      agent: 'opencode',
+      eventType: 'user_prompt',
+      data: { type: 'user_prompt', prompt: SECRET, summary: SECRET },
+      ts: '2026-06-14T00:00:00.000Z',
+    }, 'history');
+    errSpy2.mockRestore();
+
+    const sent = relay.sent.find((s) => s.includes('srv-aad2'));
+    expect(sent).toBeDefined();
+    const parsed = JSON.parse(sent!);
+    expect(parsed.payload.data).toEqual({
+      type: 'user_prompt',
+      encryption_error: true,
+      safe_summary: 'Encryption failed',
+      preview_label: 'encryption_error',
+    });
+    expect(parsed.payload.sealed_payload).toBeNull();
+    expect(sent).not.toContain(SECRET);
+  });
+
+  it('fail-closed: when key is set but data field missing, emits placeholder', () => {
+    const bridge = new ApprovalBridge(new FakeRelay() as any);
+    bridge.setContentKey(TEST_KEY, TEST_KEY_ID, TEST_DEVICE);
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const out = bridge.encryptOutboundPayload({
+      clientEventId: 'cevt:nodata:1',
+      sessionId: 'srv-nodata',
+      agent: 'opencode',
+      eventType: 'user_prompt',
+      // data missing
+      ts: '2026-06-14T00:00:00.000Z',
+    });
+
+    errSpy.mockRestore();
+    expect((out as any).data).toEqual({
+      type: 'user_prompt',
+      encryption_error: true,
+      safe_summary: 'Encryption failed',
+      preview_label: 'encryption_error',
+    });
+    expect((out as any).sealed_payload).toBeNull();
+  });
+
+  it('no-key path: missing AAD fields still pass-through (legacy backward-compat)', () => {
+    const bridge = new ApprovalBridge(new FakeRelay() as any);
+    // No setContentKey() — pre-pairing state, plaintext allowed
+
+    const out = bridge.encryptOutboundPayload({
+      sessionId: 'srv-legacy',
+      agent: 'opencode',
+      eventType: 'user_prompt',
+      data: { type: 'user_prompt', prompt: 'plaintext ok', summary: 'plaintext ok' },
+      ts: '2026-06-14T00:00:00.000Z',
+    });
+
+    // Should pass through unchanged — no fail-closed when key is not configured
+    expect((out as any).data.prompt).toBe('plaintext ok');
+    expect((out as any).sealed_payload).toBeUndefined();
+    expect((out as any).encryption_error).toBeUndefined();
+  });
+
+  it('task_complete roundtrip: decrypt matches input', () => {
+    const relay = new FakeRelay();
+    const bridge = new ApprovalBridge(relay as any);
+    bridge.setContentKey(TEST_KEY, TEST_KEY_ID, TEST_DEVICE);
+
+    const INPUT_DATA = { type: 'task_complete', summary: 'Roundtrip test', output: 'complete' };
+    bridge.sendEventToRelay('srv-rt', {
+      clientEventId: 'cevt:rt:1',
+      sessionId: 'srv-rt',
+      agent: 'opencode',
+      eventType: 'task_complete',
+      data: INPUT_DATA,
+      ts: '2026-06-14T00:00:00.000Z',
+    }, 'transcript');
+
+    const sent = relay.sent.find((s) => s.includes('cevt:rt:1'));
+    expect(sent).toBeDefined();
+    const parsed = JSON.parse(sent!);
+
+    const decrypted = decryptEventPayload(
+      parsed.payload.sealed_payload as string,
+      parsed.payload.data as Record<string, unknown>,
+      TEST_KEY,
+      {
+        v: 1,
+        keyId: TEST_KEY_ID,
+        deviceId: TEST_DEVICE,
+        sessionId: 'srv-rt',
+        eventId: 'cevt:rt:1',
+        eventType: 'task_complete',
+      },
+    );
+    expect(decrypted.summary).toBe('Roundtrip test');
+    expect(decrypted.output).toBe('complete');
+  });
+
+  it('task_complete without safe_summary gets it auto-injected after encryption', () => {
+    const relay = new FakeRelay();
+    const bridge = new ApprovalBridge(relay as any);
+    bridge.setContentKey(TEST_KEY, TEST_KEY_ID, TEST_DEVICE);
+
+    bridge.sendEventToRelay('srv-si', {
+      clientEventId: 'cevt:si:1',
+      sessionId: 'srv-si',
+      agent: 'opencode',
+      eventType: 'task_complete',
+      data: { type: 'task_complete', output: 'no summary field' },
+      ts: '2026-06-14T00:00:00.000Z',
+    }, 'transcript');
+
+    const sent = relay.sent.find((s) => s.includes('cevt:si:1'));
+    expect(sent).toBeDefined();
+    const parsed = JSON.parse(sent!);
+    expect(parsed.payload.data.safe_summary).toBe('Task complete');
+    expect(parsed.payload.data.encrypted).toBe(true);
+  });
+
+  it('AAD eventType isolation: task_complete AAD differs from user_prompt AAD', () => {
+    const relay = new FakeRelay();
+    const bridge = new ApprovalBridge(relay as any);
+    bridge.setContentKey(TEST_KEY, TEST_KEY_ID, TEST_DEVICE);
+
+    bridge.sendEventToRelay('srv-aad', {
+      clientEventId: 'cevt:aad:1',
+      sessionId: 'srv-aad',
+      agent: 'opencode',
+      eventType: 'task_complete',
+      data: { type: 'task_complete', summary: 'aad test payload' },
+      ts: '2026-06-14T00:00:00.000Z',
+    }, 'transcript');
+
+    const sent = relay.sent.find((s) => s.includes('cevt:aad:1'));
+    expect(sent).toBeDefined();
+    const parsed = JSON.parse(sent!);
+
+    // Decrypt with correct AAD succeeds
+    const ok = decryptEventPayload(
+      parsed.payload.sealed_payload as string,
+      parsed.payload.data as Record<string, unknown>,
+      TEST_KEY,
+      {
+        v: 1,
+        keyId: TEST_KEY_ID,
+        deviceId: TEST_DEVICE,
+        sessionId: 'srv-aad',
+        eventId: 'cevt:aad:1',
+        eventType: 'task_complete',
+      },
+    );
+    expect(ok.summary).toBe('aad test payload');
+
+    // Decrypt with user_prompt AAD fails (GCM auth tag mismatch)
+    expect(() => decryptEventPayload(
+      parsed.payload.sealed_payload as string,
+      parsed.payload.data as Record<string, unknown>,
+      TEST_KEY,
+      {
+        v: 1,
+        keyId: TEST_KEY_ID,
+        deviceId: TEST_DEVICE,
+        sessionId: 'srv-aad',
+        eventId: 'cevt:aad:1',
+        eventType: 'user_prompt',
+      },
+    )).toThrow();
+  });
+
+  it('handleHookEvent task_complete gets encrypted when content key is set', async () => {
+    const relay = new FakeRelay();
+    const bridge = new ApprovalBridge(relay as any);
+    await bridge.ensureSession('claude-e2e-hook', 'window-e2e-1');
+    bridge.setContentKey(TEST_KEY, TEST_KEY_ID, TEST_DEVICE);
+
+    await bridge.handleHookEvent({
+      eventType: 'task_complete',
+      claudeSessionId: 'claude-e2e-hook',
+      data: { type: 'task_complete', summary: 'claude-hook-secret-output', summaryShort: 'secret' },
+    });
+
+    const sent = relay.sent.find((s) => s.includes('claude-hook:'));
+    expect(sent).toBeDefined();
+    const parsed = JSON.parse(sent!);
+    expect(parsed.payload.sealed_payload).toBeDefined();
+    expect(typeof parsed.payload.sealed_payload).toBe('string');
+    expect(parsed.payload.key_id).toBe(TEST_KEY_ID);
+    expect(parsed.payload.encryption_version).toBe(1);
+    expect(sent).not.toContain('claude-hook-secret-output');
+  });
+
+  it('session_idle hook synthesizes encrypted task_complete when content key is set', async () => {
+    const relay = new FakeRelay();
+    const bridge = new ApprovalBridge(relay as any);
+    await bridge.ensureSession('claude-e2e-idle', 'window-e2e-2');
+    bridge.setContentKey(TEST_KEY, TEST_KEY_ID, TEST_DEVICE);
+
+    await bridge.handleHookEvent({
+      eventType: 'session_idle',
+      claudeSessionId: 'claude-e2e-idle',
+      lastAssistantMessage: 'idle-synth-secret-response',
+      data: { type: 'session_idle', idleMinutes: 0 },
+    });
+
+    const sent = relay.sent.find((s) => s.includes('claude-synth:'));
+    expect(sent).toBeDefined();
+    const parsed = JSON.parse(sent!);
+    expect(parsed.payload.sealed_payload).toBeDefined();
+    expect(typeof parsed.payload.sealed_payload).toBe('string');
+    expect(parsed.payload.key_id).toBe(TEST_KEY_ID);
+    expect(parsed.payload.encryption_version).toBe(1);
+    expect(sent).not.toContain('idle-synth-secret-response');
+  });
+
+  it('transcript assistant backfill task_complete gets encrypted when content key is set', async () => {
+    const tmpDir = createTranscriptFixture('claude-e2e-tc', 'E2E backfill test');
+    process.env.CLAUDE_CONFIG_DIR = tmpDir;
+    try {
+      const relay = new FakeRelay();
+      const bridge = new ApprovalBridge(relay as any);
+      bridge.setContentKey(TEST_KEY, TEST_KEY_ID, TEST_DEVICE);
+
+      await bridge.attachClaudeSession('claude-e2e-tc');
+      await new Promise(resolve => setTimeout(resolve, 200));
+
+      appendTranscriptLine(tmpDir, 'claude-e2e-tc', {
+        type: 'assistant',
+        timestamp: '2026-06-14T00:00:00.000Z',
+        message: { role: 'assistant', content: [{ type: 'text', text: 'transcript-backfill-secret' }] },
+      });
+
+      await (bridge as any).syncClaudeTranscript('claude-e2e-tc', 'server-claude-e2e-tc');
+
+      const sent = relay.sent.find((s) => s.includes('assistant:claude-e2e-tc:'));
+      expect(sent).toBeDefined();
+      const parsed = JSON.parse(sent!);
+      expect(parsed.payload.sealed_payload).toBeDefined();
+      expect(typeof parsed.payload.sealed_payload).toBe('string');
+      expect(parsed.payload.key_id).toBe(TEST_KEY_ID);
+      expect(parsed.payload.encryption_version).toBe(1);
+      expect(sent).not.toContain('transcript-backfill-secret');
+    } finally {
+      delete process.env.CLAUDE_CONFIG_DIR;
+    }
+  });
+
+  describe('stableHistoryEventId', () => {
+    it('returns same ID for identical inputs', () => {
+      const a = stableHistoryEventId('s1', 'user', 'hello', 100);
+      const b = stableHistoryEventId('s1', 'user', 'hello', 100);
+      expect(a).toBe(b);
+      expect(a).toMatch(/^oc-hist:s1:/);
+    });
+
+    it('returns different IDs for different text', () => {
+      const a = stableHistoryEventId('s1', 'user', 'hello', 100);
+      const b = stableHistoryEventId('s1', 'user', 'world', 100);
+      expect(a).not.toBe(b);
+    });
+
+    it('returns different IDs for different roles', () => {
+      const a = stableHistoryEventId('s1', 'user', 'hello', 100);
+      const b = stableHistoryEventId('s1', 'assistant', 'hello', 100);
+      expect(a).not.toBe(b);
+    });
+
+    it('returns different IDs for different session IDs', () => {
+      const a = stableHistoryEventId('s1', 'user', 'hello', 100);
+      const b = stableHistoryEventId('s2', 'user', 'hello', 100);
+      expect(a).not.toBe(b);
+    });
+
+    it('returns different IDs for different timestamps', () => {
+      const a = stableHistoryEventId('s1', 'user', 'hello', 100);
+      const b = stableHistoryEventId('s1', 'user', 'hello', 200);
+      expect(a).not.toBe(b);
+    });
+
+    it('handles undefined role', () => {
+      expect(stableHistoryEventId('s1', undefined, 'hello', 100)).toMatch(/^oc-hist:s1:/);
+    });
+
+    it('handles undefined text', () => {
+      expect(stableHistoryEventId('s1', 'user', undefined, 100)).toMatch(/^oc-hist:s1:/);
+    });
+
+    it('handles undefined createdAt', () => {
+      expect(stableHistoryEventId('s1', 'user', 'hello')).toMatch(/^oc-hist:s1:/);
+    });
+  });
+
+  describe('tryMarkOpenCodeHistorySent', () => {
+    it('returns false for unseen key, true for duplicate', () => {
+      const relay = new FakeRelay();
+      const bridge = new ApprovalBridge(relay as any);
+
+      expect(bridge.tryMarkOpenCodeHistorySent('s1', 'user', 'hello', 100)).toBe(false);
+      expect(bridge.tryMarkOpenCodeHistorySent('s1', 'user', 'hello', 100)).toBe(true);
+    });
+
+    it('returns false for different text', () => {
+      const relay = new FakeRelay();
+      const bridge = new ApprovalBridge(relay as any);
+
+      bridge.tryMarkOpenCodeHistorySent('s1', 'user', 'hello', 100);
+      expect(bridge.tryMarkOpenCodeHistorySent('s1', 'user', 'world', 100)).toBe(false);
+    });
+
+    it('differentiates user vs assistant for same text', () => {
+      const relay = new FakeRelay();
+      const bridge = new ApprovalBridge(relay as any);
+
+      bridge.tryMarkOpenCodeHistorySent('s1', 'user', 'hello', 100);
+      expect(bridge.tryMarkOpenCodeHistorySent('s1', 'assistant', 'hello', 100)).toBe(false);
+    });
+
+    it('isolates dedup per session ID', () => {
+      const relay = new FakeRelay();
+      const bridge = new ApprovalBridge(relay as any);
+
+      bridge.tryMarkOpenCodeHistorySent('session-A', 'user', 'hello', 100);
+      expect(bridge.tryMarkOpenCodeHistorySent('session-B', 'user', 'hello', 100)).toBe(false);
+    });
+  });
+
+  describe('_replayOpenCodeHistory dedup via attachOpenCodeSession', () => {
+    it('does not produce duplicate events on re-attach', async () => {
+      const relay = new FakeRelay();
+      const bridge = new ApprovalBridge(relay as any);
+      setConfig('*', { policy: HistorySharePolicy.Recent, updatedAt: Date.now() });
+
+      const messages = [
+        {
+          role: 'user',
+          content: [{ type: 'text', text: 'question' }],
+          info: { time: { created: 1000 } },
+        },
+      ];
+      const fetchMessages = async () => messages;
+
+      await bridge.attachOpenCodeSession('oc-dedup-test', fetchMessages);
+      await new Promise(r => setTimeout(r, 20));
+
+      const firstEvents = relay.sent.filter(s => {
+        try { return JSON.parse(s).type === 'event'; } catch { return false; }
+      }).length;
+
+      await bridge.attachOpenCodeSession('oc-dedup-test', fetchMessages);
+      await new Promise(r => setTimeout(r, 20));
+
+      const secondEvents = relay.sent.filter(s => {
+        try { return JSON.parse(s).type === 'event'; } catch { return false; }
+      }).length;
+
+      expect(secondEvents).toBe(firstEvents);
+    });
   });
 });

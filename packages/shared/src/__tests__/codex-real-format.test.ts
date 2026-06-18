@@ -16,6 +16,8 @@ import { discoverLocalSessions, loadCodexConversation, normalizeCodexSessionTitl
 import { CodexResumeManager } from '../bridge/codex-resume-manager.js';
 import { CodexTranscriptWatcher, type TranscriptEvent } from '../bridge/codex-transcript-watcher.js';
 import { HistorySharePolicy, setConfig } from '../bridge/history-policy.js';
+import { ApprovalBridge } from '../bridge/handler.js';
+import { decryptEventPayload } from '../bridge/event-envelope.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -429,10 +431,89 @@ describe('Codex real transcript format', () => {
       expect(userPrompt).toBeDefined();
       expect(started).toBeDefined();
       expect(started?.payload?.sessionId).toBe('server-codex');
+      // Audit r2 P0-A: command_started is a status event — body stripped, not echoed.
       expect(started?.payload?.data).toEqual({
         type: 'command_started',
-        command: '继续排查这个 bug',
+        safe_summary: 'Command sent',
+        preview_label: 'command_started',
       });
+      expect(started?.payload?.data).not.toHaveProperty('command');
+    });
+
+    it('decrypts sealed_command and delivers plaintext to handleCommand for resumed Codex sessions', async () => {
+      // Import live crypto helpers to produce a real sealed_command
+      const { encryptCommandPayload, normalizeCommandPayload } = await import('../bridge/command-envelope.js');
+
+      // Generate a deterministic test content key (32 bytes = 64 hex chars)
+      const contentKeyHex = 'a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2';
+      const deviceId = 'test-device-uuid';
+      const keyId = 'test-key-id';
+      const sessionId = 'server-codex-sealed';
+      const commandId = 'test-cmd-uuid-0000';
+      const commandText = '查询上海的天气';
+
+      // Produce a real sealed_command envelope
+      const envelope = encryptCommandPayload(commandText, contentKeyHex, keyId, deviceId, sessionId, commandId);
+
+      // Build a mock ApprovalBridge with resolveCommandData backed by the real helper
+      const mockBridge = {
+        resolveCommandData: (payload: any) => normalizeCommandPayload(payload, contentKeyHex, deviceId),
+        encryptOutboundPayload: (p: any) => p,
+      };
+
+      const sent: Record<string, any>[] = [];
+      const relay = Object.assign(new EventEmitter(), {
+        sendRaw(value: string) {
+          sent.push(JSON.parse(value));
+        },
+        sendCheckedPayload(p: { raw: string }) { this.sendRaw(p.raw); },
+      });
+      const resumedIds = new Set<string>([sessionId]);
+      const manager = new CodexResumeManager(relay as any, resumedIds, mockBridge as any);
+
+      // Set up a mock resumed session so handleCommand has a target
+      (manager as any).sessions.set(sessionId, {
+        localSession: {
+          sessionId: 'local-codex-sealed',
+          cwd: tmpHome,
+          title: 'sealed command test',
+          transcriptPath: path.join(tmpHome, 'dummy-sealed.jsonl'),
+          source: 'vscode',
+          updatedAt: '2026-06-01T08:00:00.000Z',
+          createdAt: '2026-06-01T07:00:00.000Z',
+        },
+        runtime: {
+          resumeOnce: async () => ({ success: true, exitCode: 0, timedOut: false, stderr: '', events: [] }),
+        },
+        watcher: null,
+        forwardedTextKeys: new Set(),
+      });
+
+      // Start listening — this registers the relay 'command' handler
+      manager.startListening();
+
+      // Emit a sealed_command from the relay
+      relay.emit('command', {
+        sessionId,
+        action: 'write_stdin',
+        sealed_command: envelope.sealed_command,
+        command_id: envelope.command_id,
+        key_id: envelope.key_id,
+        encryption_version: envelope.encryption_version,
+      });
+
+      // Wait a microtask for the async command handler
+      await new Promise(resolve => setTimeout(resolve, 50));
+
+      const userPrompt = sent.find((m) => m.type === 'event' && m.payload?.eventType === 'user_prompt');
+      const commandStarted = sent.find((m) => m.type === 'event' && m.payload?.eventType === 'command_started');
+
+      expect(userPrompt).toBeDefined();
+      // handleCommand routes through privacy pipeline — verify the decrypted
+      // text was used (exact data shape depends on pipeline normalization)
+      expect(JSON.stringify(userPrompt!.payload.data)).toContain(commandText);
+      expect(commandStarted).toBeDefined();
+      expect(commandStarted!.payload.sessionId).toBe(sessionId);
     });
   });
 
@@ -493,6 +574,61 @@ describe('Codex real transcript format', () => {
           }),
         }),
       ]));
+    });
+  });
+
+  describe('Codex _forwardEvent task_complete encryption', () => {
+    const TEST_KEY = 'b'.repeat(64);
+    const TEST_KEY_ID = 'keyid-codex-tc';
+    const TEST_DEVICE = 'device-codex-tc';
+
+    it('encrypts task_complete when _forwardEvent runs through ApprovalBridge', () => {
+      class FakeCodexRelay extends EventEmitter {
+        sentRaw: string[] = [];
+        sendRaw(value: string) { this.sentRaw.push(value); }
+        sendCheckedPayload(p: { raw: string }) { this.sendRaw(p.raw); }
+      }
+      const relay = new FakeCodexRelay() as any;
+      const bridge = new ApprovalBridge(relay as any);
+      bridge.setContentKey(TEST_KEY, TEST_KEY_ID, TEST_DEVICE);
+      setConfig('*', { policy: HistorySharePolicy.Recent, updatedAt: Date.now() });
+
+      const manager = new CodexResumeManager(relay, new Set(), bridge);
+
+      (manager as any).sessions.set('srv-codex-tc', {
+        localSession: { sessionId: 'codex-local-tc', title: 'test' },
+        forwardedTextKeys: new Set<string>(),
+        runtime: null,
+        watcher: null,
+      });
+
+      (manager as any)._forwardEvent('srv-codex-tc', {
+        type: 'event',
+        payload: {
+          clientEventId: 'cevt:codex-tc:1',
+          sessionId: 'srv-codex-tc',
+          agent: 'codex',
+          eventType: 'task_complete',
+          data: {
+            type: 'task_complete',
+            summary: 'SECRET CODEX OUTPUT',
+            output: 'do not leak this',
+          },
+        },
+      });
+
+      const raw = relay.sentRaw.find((s: string) => s.includes('cevt:codex-tc:1'));
+      expect(raw).toBeDefined();
+      const parsed = JSON.parse(raw!);
+      // Verify encryption envelope
+      expect(parsed.payload.sealed_payload).toBeDefined();
+      expect(typeof parsed.payload.sealed_payload).toBe('string');
+      expect(parsed.payload.key_id).toBe(TEST_KEY_ID);
+      expect(parsed.payload.encryption_version).toBe(1);
+      expect(parsed.payload.data.encrypted).toBe(true);
+      // Plaintext must not leak
+      expect(raw).not.toContain('SECRET CODEX OUTPUT');
+      expect(raw).not.toContain('do not leak this');
     });
   });
 });

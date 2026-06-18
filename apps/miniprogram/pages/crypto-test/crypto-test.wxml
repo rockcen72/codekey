@@ -1,0 +1,19 @@
+<view class="page">
+  <view class="header">
+    <text class="title">Crypto POC</text>
+    <text class="subtitle">AES-GCM cross-platform verification</text>
+  </view>
+  <view class="loading" wx:if="{{!ready}}"><text>Running...</text></view>
+  <view class="import-error" wx:if="{{importError}}"><text class="err-text">{{importError}}</text></view>
+  <view class="debug" wx:if="{{debugInfo}}"><text class="debug-text">{{debugInfo}}</text></view>
+  <view class="summary" wx:if="{{ready && !importError}}">
+    <text class="score">{{passed}} / {{passed + failed}} passed</text>
+    <text class="verdict {{failed === 0 ? 'ok' : 'fail'}}">{{failed === 0 ? '✅ All pass' : '❌ Some failed'}}</text>
+  </view>
+  <view class="results" wx:if="{{ready && !importError}}">
+    <view class="test-item {{item.passed ? 'pass' : 'fail'}}" wx:for="{{results}}" wx:key="name">
+      <view class="test-head"><text class="test-icon">{{item.passed ? '✅' : '❌'}}</text><text class="test-name">{{item.name}}</text></view>
+      <text class="test-detail">{{item.detail}}</text>
+    </view>
+  </view>
+</view>

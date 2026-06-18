@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { userRequest } from '../api/client';
+import { UnboundDeviceError, userRequest } from '../api/client';
 import type { UserDevice } from '../api/types';
 
 const POLL_INTERVAL = 5_000;
@@ -21,7 +21,13 @@ export function useDevices(enabled: boolean) {
       setDevices(await userRequest<UserDevice[]>('/api/v1/user/devices'));
     } catch (err) {
       setDevices([]);
-      setError(err instanceof Error ? err.message : 'Failed to load devices');
+      // UnboundDeviceError = no active clientToken on this Telegram
+      // session. Silent: the unbound state is conveyed by an empty
+      // devices array; surfacing the error message would spam the UI
+      // because the 5s poll re-fires it every tick.
+      if (!(err instanceof UnboundDeviceError)) {
+        setError(err instanceof Error ? err.message : 'Failed to load devices');
+      }
     } finally {
       setLoading(false);
       inFlight.current = false;

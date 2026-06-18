@@ -9,7 +9,6 @@
 </p>
 
 <br />
-
 <a href="https://marketplace.visualstudio.com/items?itemName=codekey.codekey-vscode"><img src="https://img.shields.io/visual-studio-marketplace/v/codekey.codekey-vscode?label=VS%20Code&logo=visualstudiocode&logoColor=white" alt="VS Code Marketplace" /></a>
 <a href="https://marketplace.visualstudio.com/items?itemName=codekey.codekey-vscode"><img src="https://img.shields.io/visual-studio-marketplace/d/codekey.codekey-vscode?label=Downloads&logo=visualstudiocode&logoColor=white" alt="Downloads" /></a>
 <a href="https://github.com/rockcen72/codekey"><img src="https://img.shields.io/github/stars/rockcen72/codekey?style=flat&logo=github&logoColor=white" alt="GitHub Stars" /></a>

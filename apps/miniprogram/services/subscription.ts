@@ -18,13 +18,18 @@ interface ApiError {
 function userRequest<T>(method: HttpMethod, url: string, data?: any): Promise<T> {
   return new Promise((resolve, reject) => {
     const token = getUserToken();
+    // wx.request 的 header 默认带 'content-type: application/json'。
+    // fastify 4.x 在收到 application/json + 空 body 时会返回 400
+    // FST_ERR_CTP_EMPTY_JSON_BODY。仅在有 body 时才用 json，否则显式
+    // 覆盖为 text/plain（参考 telegram-miniapp/src/api/client.ts）。
+    const hasBody = data !== undefined;
     wx.request({
       method,
       url,
       data,
       timeout: 10000,
       header: {
-        'Content-Type': 'application/json',
+        'content-type': hasBody ? 'application/json' : 'text/plain',
         ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
       },
       success(res: any) {

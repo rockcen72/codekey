@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { escapeClaudeProjectDir, extractUserPrompts, parseClaudeTranscriptLines } from './claude-transcripts.js';
+import { escapeClaudeProjectDir, extractUserPrompts, listRecentClaudeTranscripts, parseClaudeTranscriptLines } from './claude-transcripts.js';
 
 /** Create temp transcript with given lines. Returns tmp dir path. */
 function createTranscriptFixture(sessionId: string, lines: string[]): string {
@@ -59,6 +59,22 @@ describe('claude transcript parser', () => {
     const meta = parseClaudeTranscriptLines(lines, 'sid-2', 'C:\\Users\\me\\.claude\\projects\\x\\sid-2.jsonl');
 
     expect(meta.title).toBe('sid-2');
+  });
+
+  it('uses the latest meaningful user prompt for recent session display title', async () => {
+    const sessionId = 'sid-latest-title';
+    const tmpDir = createTranscriptFixture(sessionId, [
+      JSON.stringify({ type: 'user', session_id: sessionId, cwd: 'F:\\Work\\Codekey', timestamp: '2026-05-27T10:00:00.000Z', message: { role: 'user', content: '你好' } }),
+      JSON.stringify({ type: 'assistant', session_id: sessionId, timestamp: '2026-05-27T10:01:00.000Z', message: { role: 'assistant', content: '你好' } }),
+      JSON.stringify({ type: 'user', session_id: sessionId, timestamp: '2026-05-27T10:02:00.000Z', message: { role: 'user', content: '帮我修复侧边栏会话标题' } }),
+    ]);
+    process.env.CLAUDE_CONFIG_DIR = tmpDir;
+    try {
+      const sessions = await listRecentClaudeTranscripts(5);
+      expect(sessions.find(s => s.sessionId === sessionId)?.title).toBe('帮我修复侧边栏会话标题');
+    } finally {
+      delete process.env.CLAUDE_CONFIG_DIR;
+    }
   });
 
   it('escapes project directory using Claude transcript directory convention', () => {

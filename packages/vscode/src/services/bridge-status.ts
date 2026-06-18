@@ -1,7 +1,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
-import { spawn, execSync, type ChildProcess } from 'node:child_process';
+import { spawn, type ChildProcess } from 'node:child_process';
 import * as vscode from 'vscode';
 import { resolveCodexBinaryForVSCode } from './codex-binary-resolver.js';
 import { loadCredentials, clearCredentials } from '../auth/credentials.js';
@@ -437,8 +437,4 @@ function readHookConfigStatus(): HookConfigStatus {
   } catch {
     return 'not_found';
   }
-}
-
-function delay(ms: number): Promise<void> {
-  return new Promise(r => setTimeout(r, ms));
 }

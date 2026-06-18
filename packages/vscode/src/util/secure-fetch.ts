@@ -111,7 +111,6 @@ function rawHttpsRequest(
 
     // Accumulator for response data.
     const responseChunks: Buffer[] = [];
-    let responseHeadersBuf = Buffer.alloc(0);
 
     socket.on('data', (chunk: Buffer) => {
       // Response data after headers are fully received.
@@ -123,7 +122,7 @@ function rawHttpsRequest(
       if (init?.signal) init.signal.removeEventListener('abort', onAbort);
       if (aborted) return;
       // Parse the full response (headers + body).
-      const raw = Buffer.concat([responseHeadersBuf, ...responseChunks]);
+      const raw = Buffer.concat(responseChunks);
       const headerEnd = raw.indexOf('\r\n\r\n');
       if (headerEnd === -1) {
         return reject(new Error('secure-fetch: malformed response (no header terminator)'));
@@ -183,7 +182,6 @@ function rawHttpsRequest(
       }
       // The 'data' / 'end' events on the socket deliver the full TLS-decoded
       // HTTP response. We concatenate it in `responseChunks` and parse on 'end'.
-      void responseHeadersBuf; // silence unused
     });
   });
 }

@@ -1,0 +1,113 @@
+<view class="container">
+  <view class="header">
+    <text class="back" bindtap="goBack">返回</text>
+    <text class="title">设置</text>
+  </view>
+
+  <!-- 未配对：设备配对区块 -->
+  <view class="section pair-section" tt:if="{{!isPaired}}">
+    <text class="section-title">设备配对</text>
+    <button class="scan-btn" bindtap="startScan">扫码配对</button>
+    <view class="manual-row">
+      <input class="manual-input" placeholder="输入 8 位配对码" maxlength="8"
+             value="{{manualCode}}" bindinput="onCodeInput" />
+      <button class="manual-btn" bindtap="confirmManualCode">绑定</button>
+    </view>
+    <view class="pair-hint">
+      <text>在 VS Code 扩展中点击 CodeKey 图标获取配对码</text>
+    </view>
+  </view>
+
+  <view class="section" tt:if="{{loaded}}">
+    <text class="section-title">订阅</text>
+    <view class="info-row info-row-warning" tt:if="{{tier === 'paid' && isExpiringSoon}}">
+      <text class="label">Pro 即将到期</text>
+      <text class="value">还剩 {{daysRemaining}} 天 · 续期使用下方兑换码</text>
+    </view>
+    <view class="info-row" tt:elif="{{tier === 'paid'}}">
+      <text class="label">Pro 已开通</text>
+      <text class="value">有效期至 {{expiresAt}}</text>
+    </view>
+    <view class="info-row" tt:elif="{{tier === 'trial'}}">
+      <text class="label">Pro 试用中</text>
+      <text class="value" tt:if="{{daysRemaining != null && daysRemaining > 0}}">还剩 {{daysRemaining}} 天</text>
+      <text class="value" tt:elif="{{daysRemaining === 0}}">今天到期</text>
+      <text class="value" tt:else>{{expiresAt}} 到期</text>
+    </view>
+    <view class="info-row" tt:elif="{{tier === 'free'}}">
+      <text class="label">当前为 Free</text>
+      <text class="value" tt:if="{{usage}}">本月已用 {{usage.used}}/{{usage.limit}} 次</text>
+      <text class="value" tt:else>本月初级版</text>
+    </view>
+    <view class="info-row" tt:elif="{{tier === 'unauthenticated'}}">
+      <text class="label">未登录</text>
+      <text class="value">配对设备后查看</text>
+    </view>
+    <view class="info-row" tt:elif="{{tier === 'load_failed'}}">
+      <text class="label">加载失败</text>
+      <text class="value" bindtap="refreshSubscription">点击重试</text>
+    </view>
+
+    <!-- Quota progress bar (free tier only). Hidden for paid/trial
+         since the server returns usage=null for those tiers. -->
+    <view class="quota-card" tt:if="{{quotaState !== 'hidden'}}">
+      <view class="quota-bar">
+        <view class="quota-fill quota-{{quotaState}}" style="width: {{quotaPercent}}%"></view>
+      </view>
+      <text class="quota-status quota-status-{{quotaState}}">
+        <text tt:if="{{quotaState === 'approaching'}}">接近额度上限 (≥80%)</text>
+        <text tt:elif="{{quotaState === 'exhausted'}}">本月 {{usage.limit}} 次审批已用完</text>
+        <text tt:else>本月已用 {{usage.used}}/{{usage.limit}} 次</text>
+      </text>
+    </view>
+
+    <view class="redeem-row" tt:if="{{isPaired}}">
+      <input
+        class="redeem-input"
+        placeholder="输入兑换码 (CK-XXXX-XXXX-XXXX)"
+        value="{{redeemInput}}"
+        bindinput="onRedeemInput"
+        maxlength="20"
+        confirm-type="done"
+      />
+      <button
+        class="redeem-btn"
+        bindtap="submitRedeem"
+        loading="{{redeemBusy}}"
+        disabled="{{redeemBusy || !redeemInput}}"
+      >兑换</button>
+    </view>
+  </view>
+
+  <view class="section" tt:if="{{isPaired}}">
+    <text class="section-title">已绑定设备</text>
+    <view class="info-row">
+      <text class="label">设备 ID</text>
+      <text class="value code">{{deviceId}}</text>
+      <text class="copy-btn" bindtap="copyDeviceId">复制</text>
+    </view>
+  </view>
+
+  <view class="section" tt:if="{{isPaired}}">
+    <button class="unbind-btn" bindtap="unbindDevice">解绑设备</button>
+  </view>
+
+  <view class="section" tt:if="{{isPaired}}">
+    <text class="section-title">端到端加密</text>
+    <view class="info-row">
+      <text class="label">加密状态</text>
+      <text tt:if="{{e2eStatus === 'stale'}}" class="value e2e-stale">需要重新配对</text>
+      <text tt:elif="{{e2eStatus === 'enabled'}}" class="value e2e-ok">已启用</text>
+      <text tt:else class="value e2e-missing">未启用</text>
+    </view>
+    <view tt:if="{{e2eStatus === 'stale'}}" class="e2e-hint stale-hint">
+      <text>桌面端密钥已更新，请在电脑上重新配对手机以继续使用加密功能。</text>
+    </view>
+  </view>
+
+  <view class="section about">
+    <text class="section-title">关于</text>
+    <text class="about-text">CodeKey v1.0.6</text>
+    <text class="about-text">AI 远程控制工具</text>
+  </view>
+</view>

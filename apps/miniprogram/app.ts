@@ -17,6 +17,7 @@ App({
     deviceId: getDeviceId() || '',
     ws: null as WsClient | null,
     wsConnected: false,
+    deviceOnline: false,
   },
 
   onLaunch() {
@@ -57,6 +58,7 @@ App({
     });
     ws.on('disconnected', () => {
       this.globalData.wsConnected = false;
+      this.globalData.deviceOnline = false;
       this._emit('ws_disconnected');
     });
     ws.on('auth_failed', (payload?: { code?: string }) => {
@@ -66,13 +68,15 @@ App({
         _deviceReplaced = true;
         wx.showModal({
           title: '设备已替换',
-          content: '你的账号已绑定新的主机，当前设备已自动解绑。请重新配对。',
+          content: '账号已绑定新主机，当前设备已自动解绑，请重新配对。',
           showCancel: false,
           success: () => {
             clearAuth();
             this.globalData.ws = null;
             this.globalData.wsConnected = false;
-            wx.redirectTo({ url: '/pages/login/login' });
+            this.globalData.deviceOnline = false;
+            this._emit('paired_state_changed');
+            wx.reLaunch({ url: '/pages/sessions/sessions' });
           },
         });
         return;
@@ -80,9 +84,13 @@ App({
       clearAuth();
       this.globalData.ws = null;
       this.globalData.wsConnected = false;
-      wx.redirectTo({ url: '/pages/login/login' });
+      this.globalData.deviceOnline = false;
+      this._emit('paired_state_changed');
+      wx.reLaunch({ url: '/pages/sessions/sessions' });
     });
     ws.on('*', (msg: any) => {
+      if (msg.type === 'device_online') this.globalData.deviceOnline = true;
+      if (msg.type === 'device_offline') this.globalData.deviceOnline = false;
       this._emit(msg.type, msg.payload ?? msg);
     });
     // Phase 3: when the server blocks an approval because the free
@@ -119,6 +127,7 @@ App({
       ws.disconnect();
       this.globalData.ws = null;
       this.globalData.wsConnected = false;
+      this.globalData.deviceOnline = false;
     }
     this._eventBus.clear();
   },
@@ -129,7 +138,15 @@ App({
 
   _emit(event: string, payload?: any) {
     const handlers = this._eventBus.get(event);
-    if (handlers) handlers.forEach((fn) => fn(payload));
+    if (handlers) {
+      handlers.forEach((fn) => {
+        if (typeof fn !== 'function') {
+          console.warn('[app._emit] skipping non-function handler for', event);
+          return;
+        }
+        fn(payload);
+      });
+    }
   },
 
   onWsEvent(event: string, handler: EventHandler) {

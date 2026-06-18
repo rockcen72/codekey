@@ -380,22 +380,24 @@
           <h1>Code<span>Key</span></h1>
           <p class="lead lang-en">
             Approve, monitor, and continue Claude Code, Codex, and OpenCode from your phone.
-            Your desktop agent keeps working, while history sharing and privacy rules stay under your control.
+            Your desktop agent keeps working, while E2E-protected prompts, commands, task summaries, and history sharing stay under your control.
           </p>
           <p class="lead lang-zh">
             在手机上审批、查看和接续 Claude Code、Codex、OpenCode。
-            桌面端继续执行，历史同步和隐私策略都由你控制。
+            桌面端继续执行，用户 prompt、手机命令、任务总结的 E2E 加密，以及历史同步和隐私策略都由你控制。
           </p>
           <div class="hero-actions">
             <a class="button primary lang-en" href="#quick-start">Get started</a>
             <a class="button primary lang-zh" href="#quick-start">开始使用</a>
+            <a class="button lang-en" href="https://pay.ldxp.cn/shop/6T7QKRTE">Upgrade to Pro</a>
+            <a class="button lang-zh" href="https://pay.ldxp.cn/shop/6T7QKRTE">升级 Pro</a>
             <a class="button lang-en" href="#privacy">Privacy design</a>
             <a class="button lang-zh" href="#privacy">查看隐私设计</a>
           </div>
           <div class="proof">
             <div><strong>3</strong><span>agent integrations</span></div>
             <div><strong>Off / Summary / Full</strong><span>history policies</span></div>
-            <div><strong>Local first</strong><span>privacy pipeline</span></div>
+            <div><strong>E2E</strong><span>prompt, command, and summary sealing</span></div>
           </div>
         </div>
         <div class="device-stack">
@@ -427,8 +429,8 @@
           <div class="feature accent-green">
             <b class="lang-en">Remote prompts</b>
             <b class="lang-zh">远程 prompt</b>
-            <p class="lang-en">Type from mobile and your local VS Code agent continues the task.</p>
-            <p class="lang-zh">在手机上输入新指令，VS Code 里的本地 agent 会继续执行当前工作流。</p>
+            <p class="lang-en">Type from mobile and your local VS Code agent continues the task through an encrypted command envelope.</p>
+            <p class="lang-zh">在手机上输入新指令，通过加密命令 envelope 发送给 VS Code 里的本地 agent。</p>
           </div>
           <div class="feature accent-amber">
             <b class="lang-en">Session sync</b>
@@ -449,10 +451,10 @@
             <p class="lang-zh">支持微信小程序和 Telegram Mini App，适合国内外不同使用环境。</p>
           </div>
           <div class="feature accent-green">
-            <b class="lang-en">Instant policy changes</b>
-            <b class="lang-zh">即时生效</b>
-            <p class="lang-en">History policies and agent state updates apply without restarting the workspace.</p>
-            <p class="lang-zh">历史同步策略和 agent 状态变化即时应用，不需要重启工作区。</p>
+            <b class="lang-en">E2E protected content</b>
+            <b class="lang-zh">E2E 内容保护</b>
+            <p class="lang-en">User prompts, phone-to-desktop commands, and task summaries are encrypted before relay forwarding.</p>
+            <p class="lang-zh">用户 prompt、手机发往电脑的命令、任务总结会先加密，再经过 relay 转发。</p>
           </div>
         </div>
       </section>
@@ -462,12 +464,12 @@
           <h2 class="lang-en">Privacy is a product feature, not a slogan</h2>
           <h2 class="lang-zh">隐私保护是产品能力，不是标语</h2>
           <p class="lang-en">
-            Remote control requires relay forwarding. CodeKey projects, sanitizes, and blocks events locally first,
-            then only shares the history level you choose.
+            Remote control requires relay forwarding. CodeKey encrypts user prompt bodies, command bodies, and task summaries,
+            projects safe summaries, and blocks sensitive events locally before sharing the history level you choose.
           </p>
           <p class="lang-zh">
-            远程控制需要 relay 转发消息，但 CodeKey 在本机先做策略判断、脱敏和拦截。
-            之后只按你选择的历史级别同步。
+            远程控制需要 relay 转发消息，但 CodeKey 会先加密用户 prompt、命令正文和任务总结，
+            再在本机做安全摘要、策略判断、脱敏和拦截，最后只按你选择的历史级别同步。
           </p>
         </div>
         <div class="privacy">
@@ -489,35 +491,41 @@
                 </tr>
                 <tr>
                   <td><strong>Summary</strong></td>
-                  <td class="lang-en">Safe status summaries without raw prompt or agent output text.</td>
-                  <td class="lang-zh">同步安全摘要和状态，不带原始 prompt 或 agent 输出。</td>
+                  <td class="lang-en">Safe status summaries. Raw user prompts and task completion content stay sealed when E2E is enabled.</td>
+                  <td class="lang-zh">同步安全摘要和状态；启用 E2E 时原始用户 prompt 和任务完成内容保持密文。</td>
                 </tr>
                 <tr>
                   <td><strong>Full</strong></td>
-                  <td class="lang-en">Full session history after local secret scanning and blocklist checks.</td>
-                  <td class="lang-zh">同步完整会话内容，但会先经过本机 secret scanning 和 blocklist 检查。</td>
+                  <td class="lang-en">Richer history after local scanning. User prompts, mobile commands, and task summaries remain encrypted on protected paths.</td>
+                  <td class="lang-zh">同步更完整的会话历史；受保护路径中的用户 prompt、手机命令和任务总结仍保持加密。</td>
                 </tr>
               </tbody>
             </table>
           </div>
           <div class="steps">
             <ul class="lang-en">
+              <li>E2E envelopes seal user prompt bodies, phone-to-desktop command text, and task completion summaries/results with AES-GCM.</li>
+              <li>Telegram pairing uses ECDH key exchange; WeChat QR pairing transfers the content key directly to the phone.</li>
+              <li>The relay forwards encrypted payloads and routing metadata; it does not need raw protected text for protected paths.</li>
               <li>Secret scanning redacts API keys, tokens, passwords, and similar values locally.</li>
               <li>Blocklist / .codekeyignore prevents selected files and paths from being forwarded.</li>
               <li>Field projection keeps Summary mode limited to safe event type, state, and summary fields.</li>
               <li>Audit panel shows forwarded, blocked, and sanitized event counts in the sidebar.</li>
               <li>Per-agent policy lets Claude Code, Codex, and OpenCode use different history modes.</li>
-              <li>Current model is policy-based filtering and redaction, not full end-to-end encryption.</li>
-              <li>When Summary or Full is enabled, the relay may receive and store event data needed for mobile history and remote actions.</li>
+              <li>Stale-key detection warns the phone when it needs to re-pair after key rotation.</li>
+              <li>Intermediate agent streaming output and broader history visibility still follow the Off / Summary / Full policy you choose.</li>
             </ul>
             <ul class="lang-zh">
+              <li>E2E envelope：用户 prompt 正文、手机发往电脑的命令正文、任务完成总结/结果使用 AES-GCM 加密。</li>
+              <li>Telegram 配对使用 ECDH 交换密钥；微信扫码配对把 content key 直接交给手机。</li>
+              <li>Relay 只转发密文和路由 metadata，受保护路径不需要看到原始受保护正文。</li>
               <li>Secret scanning：API key、token、password 等敏感字段先脱敏。</li>
               <li>Blocklist / .codekeyignore：指定路径和文件不会被转发。</li>
               <li>Field projection：Summary 模式只保留类型、状态和安全摘要。</li>
               <li>Audit panel：侧栏展示 forwarded、blocked、sanitized 的统计和原因。</li>
               <li>Per-agent policy：每个 agent 可独立设置历史同步模式。</li>
-              <li>当前是基于策略的过滤和脱敏，不是完整端到端加密。</li>
-              <li>开启 Summary 或 Full 时，relay 可能接收并保存手机历史和远程操作所需的事件数据。</li>
+              <li>Stale-key 检测：密钥轮换后，手机端会提示需要重新配对。</li>
+              <li>过程中的 agent 流式输出和更广泛的历史可见性仍由 Off / Summary / Full 策略控制。</li>
             </ul>
           </div>
         </div>

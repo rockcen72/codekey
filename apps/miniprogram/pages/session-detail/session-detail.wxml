@@ -24,6 +24,10 @@
     </text>
   </view>
 
+  <view class="e2e-banner stale" wx:if="{{e2eStatus === 'stale'}}">
+    <text>桌面端 E2E 密钥已更新，请在设置页面重新配对手机。</text>
+  </view>
+
   <scroll-view class="timeline {{hasPrimaryPendingEvent && !approvalSheetOpen ? 'timeline-with-dock' : ''}}" scroll-y scroll-into-view="{{scrollToId}}" scroll-top="{{scrollTop}}" scroll-with-animation bindscroll="onScroll">
     <view class="empty" wx:if="{{chatMessages.length === 0}}">
       <text class="empty-icon">◌</text>
@@ -125,6 +129,7 @@
         </view>
       </view>
     </block>
+    <view id="timeline-bottom"></view>
   </scroll-view>
 
   <!-- Floating approval command dock -->

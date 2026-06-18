@@ -18,6 +18,8 @@
     "typescript": "^5.7.0"
   },
   "dependencies": {
+    "@noble/curves": "^2.2.0",
+    "@noble/hashes": "^2.2.0",
     "mp-html": "^2.5.2"
   }
 }

@@ -4,11 +4,22 @@ import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = path.dirname(fileURLToPath(import.meta.url));
+const feishuInvitePath = path.join(root, 'src', 'webview', 'assets', 'feishu-org-invite.jpeg');
+const feishuInviteDataUrl = fs.existsSync(feishuInvitePath)
+  ? `data:image/jpeg;base64,${fs.readFileSync(feishuInvitePath).toString('base64')}`
+  : '';
 
 // Clean and recreate dist to avoid stale tsc artifacts (dist/commands/**, dist/services/**, etc.)
 const distDir = path.join(root, 'dist');
 fs.rmSync(distDir, { recursive: true, force: true });
 fs.mkdirSync(distDir, { recursive: true });
+
+const webviewAssetsSrc = path.join(root, 'src', 'webview', 'assets');
+const webviewAssetsDist = path.join(distDir, 'webview', 'assets');
+if (fs.existsSync(webviewAssetsSrc)) {
+  fs.mkdirSync(webviewAssetsDist, { recursive: true });
+  fs.cpSync(webviewAssetsSrc, webviewAssetsDist, { recursive: true });
+}
 
 // 1. Extension bundle (runs inside VS Code extension host)
 await esbuild.build({
@@ -20,6 +31,9 @@ await esbuild.build({
   external: ['vscode'],
   sourcemap: false,
   minify: false,
+  define: {
+    __FEISHU_ORG_INVITE_SRC__: JSON.stringify(feishuInviteDataUrl),
+  },
 });
 
 // 1b. Copy admin panel HTML
@@ -42,4 +56,7 @@ await esbuild.build({
   external: [],
   sourcemap: false,
   minify: false,
+  define: {
+    __FEISHU_ORG_INVITE_SRC__: JSON.stringify(feishuInviteDataUrl),
+  },
 });

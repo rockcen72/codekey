@@ -1,5 +1,5 @@
 import type { RelayClient } from './relay-client.js';
-import { runPrivacyPipeline, toCheckedPayload } from './privacy-pipeline.js';
+import { runPrivacyPipeline, toCheckedPayload, ensureSafeSummary } from './privacy-pipeline.js';
 import type { AuditSink } from './privacy-pipeline.js';
 
 export class CodexRelay {
@@ -31,7 +31,24 @@ export class CodexRelay {
   private relay: RelayClient;
   private _auditSink?: AuditSink;
 
-  constructor(relay: RelayClient, auditSink?: AuditSink) {
+  /**
+   * @param relay RelayClient
+   * @param auditSink Optional audit sink
+   * @param resolveCommandData Optional callback to resolve sealed_command to plaintext.
+   *                          Pass ApprovalBridge.resolveCommandData when available.
+   */
+  constructor(
+    relay: RelayClient,
+    auditSink?: AuditSink,
+    private resolveCommandData?: (payload: {
+      data?: string;
+      sealed_command?: string;
+      command_id?: string;
+      key_id?: string;
+      encryption_version?: number;
+      sessionId?: string;
+    }) => string | null,
+  ) {
     this.relay = relay;
     this._auditSink = auditSink;
 
@@ -50,9 +67,27 @@ export class CodexRelay {
     });
 
     relay.on('command', (payload: unknown) => {
-      const cmd = payload as { sessionId: string; action: string; data: string };
-      if (cmd.sessionId === this.sessionId && cmd.action === 'write_stdin' && cmd.data) {
-        this.prompts.push(cmd.data);
+      const cmd = payload as {
+        sessionId: string;
+        action: string;
+        data?: string;
+        sealed_command?: string;
+        command_id?: string;
+        key_id?: string;
+        encryption_version?: number;
+      };
+      if (cmd.sessionId !== this.sessionId || cmd.action !== 'write_stdin') return;
+
+      // Phase 4B: resolve sealed_command via callback or fall back to plain data
+      let text: string | null = null;
+      if (this.resolveCommandData) {
+        text = this.resolveCommandData(cmd);
+      } else {
+        text = cmd.data ?? null;
+      }
+
+      if (text) {
+        this.prompts.push(text);
       }
     });
   }
@@ -150,7 +185,7 @@ export class CodexRelay {
 
   private _pushApproval(correlationId: string, command: string, risk: string): void {
     if (!this.sessionId) return;
-    const rawPayload = JSON.stringify({
+    const rawPayload = ensureSafeSummary(JSON.stringify({
       type: 'event',
       payload: {
         sessionId: this.sessionId,
@@ -159,7 +194,7 @@ export class CodexRelay {
         risk,
         clientEventId: correlationId,
       },
-    });
+    }));
     const decision = runPrivacyPipeline({ source: 'approval', rawPayload }, undefined, this._auditSink);
     if (decision.action === 'block') return;
     this.pendingByCorrelationId.set(correlationId, { type: 'approval', command, risk, createdAt: Date.now() });
@@ -173,10 +208,10 @@ export class CodexRelay {
       ? data.requestId
       : undefined;
     const source: 'approval' | 'transcript' = eventType === 'input_required' ? 'approval' : 'transcript';
-    const rawPayload = JSON.stringify({
+    const rawPayload = ensureSafeSummary(JSON.stringify({
       type: 'event',
       payload: { sessionId: this.sessionId, eventType, data, ...(requestId ? { clientEventId: requestId } : {}) },
-    });
+    }));
     const decision = runPrivacyPipeline({ source, rawPayload }, undefined, this._auditSink);
     if (decision.action === 'block') return;
     if (eventType === 'input_required' && requestId) {

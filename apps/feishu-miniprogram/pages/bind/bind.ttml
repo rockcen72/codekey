@@ -1,0 +1,20 @@
+<view class="container">
+  <block tt:if="{{status === 'binding'}}">
+    <view class="loading-icon"></view>
+    <text class="status-text">正在绑定设备...</text>
+    <text class="code-display">配对码：{{code}}</text>
+  </block>
+
+  <block tt:elif="{{status === 'success'}}">
+    <view class="success-icon">成功</view>
+    <text class="status-text">设备绑定成功！</text>
+    <text class="hint-text">正在跳转...</text>
+  </block>
+
+  <block tt:elif="{{status === 'failed'}}">
+    <view class="fail-icon">失败</view>
+    <text class="status-text">绑定失败</text>
+    <text class="error-msg">{{errorMsg}}</text>
+    <button class="retry-btn" bindtap="retry">返回</button>
+  </block>
+</view>

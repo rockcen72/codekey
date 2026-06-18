@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { randomUUID, createHash } from 'node:crypto';
 import { get as httpGet } from 'node:http';
 import { createEventStreamParser } from './sse-parser.js';
 import { ApprovalBridge } from './handler.js';
@@ -7,8 +7,9 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { discoverOpenCodePort } from './platform.js';
 import { tryFormatInputRequiredEvent } from './input-card.js';
-import { checkHistoryPolicy, DEFAULT_RECENT_COUNT } from './history-policy.js';
+import { checkHistoryPolicy, type PolicyResult, DEFAULT_RECENT_COUNT } from './history-policy.js';
 import { projectHistoryEventForPolicy } from './privacy-pipeline.js';
+import { stableHistoryEventId } from './opencode-history.js';
 
 interface OpenCodeSessionInfo {
   id: string;
@@ -87,11 +88,18 @@ export class OpenCodeSessionManager {
   private _messageRoles = new Map<string, 'user' | 'assistant'>();
   /** Cache part text from onMessagePartUpdated so onMessageUpdated uses actual prompt text, not summary.title. */
   private _messageTexts = new Map<string, string>();
+  /** Cache message info.time.created (epoch ms) so onMessagePartUpdated can stamp
+   *  user_prompt with the actual user-input time, not the bridge's wall clock at
+   *  part-update arrival (which can land *after* the assistant's task_complete
+   *  for the same turn — see plan §6 vertical slice ordering bug). */
+  private _messageCreatedTimes = new Map<string, number>();
 
   private _abortController: AbortController | null = null;
   private _stopped = false;
   private _reconnectDelay = INITIAL_RECONNECT_DELAY;
   private _reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Debounce timer for assistant text task_complete emission. Clears on each streaming update. */
+  private _pendingAssistantTextTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(opencodeBaseUrl: string, bridge: ApprovalBridge) {
     this.opencodeBaseUrl = opencodeBaseUrl;
@@ -153,6 +161,10 @@ export class OpenCodeSessionManager {
       clearTimeout(this._reconnectTimer);
       this._reconnectTimer = null;
     }
+    if (this._pendingAssistantTextTimer) {
+      clearTimeout(this._pendingAssistantTextTimer);
+      this._pendingAssistantTextTimer = null;
+    }
     if (this._abortController) {
       this._abortController.abort();
       this._abortController = null;
@@ -164,6 +176,7 @@ export class OpenCodeSessionManager {
     this.deliveredMessageParts.clear();
     this._messageRoles.clear();
     this._messageTexts.clear();
+    this._messageCreatedTimes.clear();
   }
 
   async attachSession(localSessionId: string, title?: string, knownServerSessionId?: string): Promise<string> {
@@ -274,35 +287,36 @@ export class OpenCodeSessionManager {
         const info = m.info || {};
         const role = getOpenCodeHistoryMessageRole(m);
         const text = extractOpenCodeHistoryText(m);
+        if (!text) continue;
+        const createdAt = role === 'assistant' ? info.time?.completed || info.time?.created : info.time?.created;
+        if (this.bridge.tryMarkOpenCodeHistorySent(localSessionId, role, text, createdAt)) continue;
         if (role === 'user') {
-          if (text) {
-            const raw = JSON.stringify({ type: 'event', payload: {
-              clientEventId: `oc-hist:${localSessionId}:${Date.now()}:${Math.random()}`,
-              sessionId: serverSessionId,
-              agent: 'opencode',
-              eventType: 'user_prompt',
-              data: { type: 'user_prompt', prompt: text, summary: text.slice(0, 200) },
-              ts: info.time?.created ? new Date(info.time.created).toISOString() : new Date().toISOString(),
-            }});
-            const projected = projectHistoryEventForPolicy(raw, policy);
-            if (projected !== null) {
-              this.bridge.privacyCheckAndSend('history', projected, undefined, undefined);
-            }
+          const encryptedPayload = this.bridge.encryptOutboundPayload({
+            clientEventId: stableHistoryEventId(localSessionId, role, text, info.time?.created),
+            sessionId: serverSessionId,
+            agent: 'opencode',
+            eventType: 'user_prompt',
+            data: { type: 'user_prompt', prompt: text, summary: text.slice(0, 200) },
+            ts: info.time?.created ? new Date(info.time.created).toISOString() : new Date().toISOString(),
+          });
+          const raw = JSON.stringify({ type: 'event', payload: encryptedPayload });
+          const projected = projectHistoryEventForPolicy(raw, policy);
+          if (projected !== null) {
+            this.bridge.privacyCheckAndSend('history', projected, undefined, undefined);
           }
         } else if (role === 'assistant') {
-          if (text) {
-            const raw = JSON.stringify({ type: 'event', payload: {
-              clientEventId: `oc-hist:${localSessionId}:${Date.now()}:${Math.random()}`,
-              sessionId: serverSessionId,
-              agent: 'opencode',
-              eventType: 'task_complete',
-              data: { type: 'task_complete', summary: text, summaryShort: text.slice(0, 200), output: text },
-              ts: info.time?.completed || info.time?.created ? new Date((info.time.completed || info.time.created) as number).toISOString() : new Date().toISOString(),
-            }});
-            const projected = projectHistoryEventForPolicy(raw, policy);
-            if (projected !== null) {
-              this.bridge.privacyCheckAndSend('history', projected, undefined, undefined);
-            }
+          const encryptedPayload = this.bridge.encryptOutboundPayload({
+            clientEventId: stableHistoryEventId(localSessionId, role, text, info.time?.completed || info.time?.created),
+            sessionId: serverSessionId,
+            agent: 'opencode',
+            eventType: 'task_complete',
+            data: { type: 'task_complete', summary: text, summaryShort: text.slice(0, 200), output: text },
+            ts: info.time?.completed || info.time?.created ? new Date((info.time.completed || info.time.created) as number).toISOString() : new Date().toISOString(),
+          });
+          const raw = JSON.stringify({ type: 'event', payload: encryptedPayload });
+          const projected = projectHistoryEventForPolicy(raw, policy);
+          if (projected !== null) {
+            this.bridge.privacyCheckAndSend('history', projected, undefined, undefined);
           }
         }
       }
@@ -500,7 +514,11 @@ export class OpenCodeSessionManager {
     // Skip subagent sessions — their permissions belong to the parent session.
     if (this._subagentSessions.has(sessionID)) return;
 
-    const serverSessionId = await this.ensureRelaySession(sessionID);
+    const serverSessionId = this.opencodeSessionToRelayId.get(sessionID);
+    if (!serverSessionId) {
+      console.error('[opencode] permission event ignored for unsynced session %s', sessionID);
+      return;
+    }
 
     const command = permissionToCommand(permissionType, metadata);
     const rawRisk = this.bridge.evaluateRisk(command);
@@ -617,6 +635,22 @@ export class OpenCodeSessionManager {
 
     const policy = checkHistoryPolicy(sessionID, 'opencode');
 
+    // Flush pending debounced assistant text synchronously, so the phone
+    // sees the final output even if session.idle fires within the 100ms
+    // debounce window.
+    if (this._pendingAssistantTextTimer) {
+      clearTimeout(this._pendingAssistantTextTimer);
+      this._pendingAssistantTextTimer = null;
+      // Find the last messageID for this session and flush
+      let lastMsgId = '';
+      for (const [mid] of this._messageTexts) {
+        if (this._messageRoles.get(mid) !== 'user') lastMsgId = mid;
+      }
+      if (lastMsgId) {
+        this._emitAssistantTextTaskComplete(sessionID, lastMsgId, undefined, serverSessionId, policy);
+      }
+    }
+
     const errorObj = props.error as Record<string, unknown> | undefined;
     if (errorObj) {
       const message = (errorObj.message as string) || 'Session idle with error';
@@ -632,15 +666,17 @@ export class OpenCodeSessionManager {
       }
     }
 
-    const idleRaw = JSON.stringify({ type: 'event', payload: {
+    const idleEncrypted = this.bridge.encryptOutboundPayload({
       sessionId: serverSessionId,
+      clientEventId: `oc-idle:${sessionID}:${Date.now()}`,
       agent: 'opencode',
       eventType: 'task_complete',
       data: {
         type: 'task_complete',
         summary: errorObj ? (errorObj.message as string) || 'Session idle with error' : 'Session idle',
       },
-    }});
+    });
+    const idleRaw = JSON.stringify({ type: 'event', payload: idleEncrypted });
     const idleProjected = projectHistoryEventForPolicy(idleRaw, policy);
     if (idleProjected !== null) {
       this.bridge.privacyCheckAndSend('transcript', idleProjected, undefined, undefined);
@@ -695,6 +731,15 @@ export class OpenCodeSessionManager {
       this._messageRoles.set(messageID, info.role as 'user' | 'assistant');
     }
 
+    // Cache info.time.created so the part-path can stamp user_prompt with the
+    // user-input time (avoids ordering bug where part.updated arrives later
+    // than the assistant's task_complete for the same turn).
+    const infoTime = info.time as Record<string, unknown> | undefined;
+    const createdMs = typeof infoTime?.created === 'number' ? infoTime.created : undefined;
+    if (createdMs !== undefined) {
+      this._messageCreatedTimes.set(messageID, createdMs);
+    }
+
     const key = `msg:${messageID}`;
     if (this.deliveredMessageParts.has(key)) return;
     this.deliveredMessageParts.add(key);
@@ -729,14 +774,19 @@ export class OpenCodeSessionManager {
         : '';
       const text = cachedText || (summary?.body as string) || (summary?.title as string) || partsText || '';
       if (text && !this._isRecentPhoneCommand(sessionID, text)) {
-        const raw = JSON.stringify({ type: 'event', payload: {
+        const ts = createdMs !== undefined
+          ? new Date(createdMs).toISOString()
+          : new Date().toISOString();
+        // Audit r3 P0: encrypt user_prompt at unified outbound entry. Plan §6.2.
+        const encryptedPayload = this.bridge.encryptOutboundPayload({
           clientEventId: `oc-user:${messageID}:${Date.now()}`,
           sessionId: serverSessionId,
           agent: 'opencode',
           eventType: 'user_prompt',
           data: { type: 'user_prompt', prompt: text, summary: text.slice(0, 200) },
-          ts: new Date().toISOString(),
-        }});
+          ts,
+        });
+        const raw = JSON.stringify({ type: 'event', payload: encryptedPayload });
         const projected = projectHistoryEventForPolicy(raw, policy);
         if (projected !== null) {
           this.bridge.privacyCheckAndSend('history', projected, undefined, undefined);
@@ -779,30 +829,17 @@ export class OpenCodeSessionManager {
     if (!sessionID || !messageID) return;
     let serverSessionId = this.opencodeSessionToRelayId.get(sessionID);
 
-    // Check for input_required BEFORE the unmapped-session gate — approvals
-    // need to auto-register (same as CC's handleApproval), but regular
-    // text/tool events for unmapped sessions must NOT create new relay
-    // sessions. Without this check, every assistant reply on any local
-    // OpenCode session would appear as a new session on the phone.
+    // Unmapped sessions must not create relay sessions. OpenCode is opt-in:
+    // the user must click Sync before any chat, permission, or input event
+    // leaves the desktop.
     const key = `part:${partID}`;
     const inputCard = tryFormatInputRequiredEvent(part, 'opencode')
       || tryFormatInputRequiredEvent(props, 'opencode');
 
     if (!serverSessionId) {
       if (inputCard && !this._subagentSessions.has(sessionID)) {
-        // Auto-register for approval events only — matches CC pattern
-        console.error('[opencode] onMessagePartUpdated: auto-registering session %s for input_required', sessionID);
-        this.ensureRelaySession(sessionID).then((sid) => {
-          this.bridge.sendEventToRelay(sid, {
-            clientEventId: inputCard.requestId || `oc-input:${partID || messageID}`,
-            sessionId: sid,
-            agent: 'opencode',
-            eventType: 'input_required',
-            data: inputCard,
-          }, "approval");
-        }).catch(() => {});
+        console.error('[opencode] input_required ignored for unsynced session %s', sessionID);
       }
-      // Skip all other events for unmapped sessions (text, tool, etc.)
       return;
     }
 
@@ -836,24 +873,6 @@ export class OpenCodeSessionManager {
       // not the AI-generated summary.title (e.g. "Snake game generation request").
       this._messageTexts.set(messageID, text);
 
-      // Dedup key includes the text content, not just the partID, so
-      // streaming updates with growing text are not collapsed. The
-      // previous key was `part:${partID}` alone, which had two
-      // failure modes:
-      //   1. OpenCode often creates a part with text="" first, then
-      //      updates it with the real content. The old code added
-      //      partID to the dedup set BEFORE the empty check, so the
-      //      first event consumed the slot and the agent's actual
-      //      response was dropped on the floor. The phone then only
-      //      saw the generic "Session idle" task_complete.
-      //   2. Streaming updates (text="H" → "He" → "Hello") were
-      //      suppressed after the first chunk.
-      // With the new key, same-content re-fires still dedup, but
-      // empty-then-non-empty and incremental updates both pass.
-      const dedupKey = `part:${partID}:${text}`;
-      if (this.deliveredMessageParts.has(dedupKey)) return;
-      this.deliveredMessageParts.add(dedupKey);
-
       // User message typed on desktop: OpenCode may surface it first as a
       // message.part.updated event. Preserve the role so mobile can render it
       // as the user's right-side bubble instead of an agent reply.
@@ -861,17 +880,28 @@ export class OpenCodeSessionManager {
       // in case OpenCode didn't include role in the part SSE event.
       const messageRole = getOpenCodeMessageRole(props, part)
         || this._messageRoles.get(messageID) as 'user' | 'assistant' | undefined;
-      console.error('[opencode] onMessagePartUpdated: role=%s text=%s', messageRole || 'unknown', text.slice(0, 80).replace(/\n/g, '\\n'));
+      console.error('[opencode] onMessagePartUpdated: role=%s len=%d hash=%s', messageRole || 'unknown', text.length, createHash('sha256').update(text).digest('hex').slice(0, 8));
       if (messageRole === 'user') {
         if (this._isRecentPhoneCommand(sessionID, text)) return;
-        const rawUser = JSON.stringify({ type: 'event', payload: {
+        // Use info.time.created (cached from onMessageUpdated) when available
+        // so the user_prompt event sorts before the assistant's task_complete
+        // for the same turn — OpenCode may surface message.part.updated for the
+        // user message *after* the assistant's text part, which would put the
+        // bridge's wall clock past task_complete's now() at server insert time.
+        const createdMs = this._messageCreatedTimes.get(messageID);
+        const ts = createdMs !== undefined
+          ? new Date(createdMs).toISOString()
+          : new Date().toISOString();
+        // Audit r3 P0: encrypt user_prompt at unified outbound entry. Plan §6.2.
+        const encryptedPayload = this.bridge.encryptOutboundPayload({
           clientEventId: `oc-user-part:${messageID}:${partID || 'unknown'}:${Date.now()}`,
           sessionId: serverSessionId,
           agent: 'opencode',
           eventType: 'user_prompt',
           data: { type: 'user_prompt', prompt: text, summary: text.slice(0, 200) },
-          ts: new Date().toISOString(),
-        }});
+          ts,
+        });
+        const rawUser = JSON.stringify({ type: 'event', payload: encryptedPayload });
         const projectedUser = projectHistoryEventForPolicy(rawUser, policy);
         if (projectedUser !== null) {
           this.bridge.privacyCheckAndSend('history', projectedUser, undefined, undefined);
@@ -881,28 +911,15 @@ export class OpenCodeSessionManager {
         return;
       }
 
-      // Role not found in SSE event — defer via microtask so onMessageUpdated
-      // can mark this messageID (from the same TCP packet) before we decide.
-      queueMicrotask(() => {
-        if (this._messageRoles.get(messageID) === 'user') return;
-        if (this._isRecentPhoneCommand(sessionID, text)) return;
-        const raw = JSON.stringify({ type: 'event', payload: {
-          clientEventId: `oc-part:${partID}:${Date.now()}`,
-          sessionId: serverSessionId,
-          agent: 'opencode',
-          eventType: 'task_complete',
-          data: {
-            type: 'task_complete',
-            summary: text,
-            summaryShort: text.slice(0, 200),
-            output: text,
-          },
-        }});
-        const projected = projectHistoryEventForPolicy(raw, policy);
-        if (projected !== null) {
-          this.bridge.privacyCheckAndSend('transcript', projected, undefined, undefined);
-        }
-      });
+      // Debounce assistant text to avoid emitting a task_complete per
+      // streaming update. Each new text resets the 100ms timer; when the
+      // stream settles, the timer fires and emits a single task_complete
+      // with the LATEST cached text.
+      if (this._pendingAssistantTextTimer) clearTimeout(this._pendingAssistantTextTimer);
+      this._pendingAssistantTextTimer = setTimeout(() => {
+        this._pendingAssistantTextTimer = null;
+        this._emitAssistantTextTaskComplete(sessionID, messageID, partID, serverSessionId, policy);
+      }, 100);
     } else if (partType === 'tool') {
       const state = part.state as Record<string, unknown> | undefined;
       if (state?.status === 'completed') {
@@ -910,20 +927,57 @@ export class OpenCodeSessionManager {
         const title = (state.title as string) || (part.tool as string) || 'Tool completed';
         const policy = checkHistoryPolicy(sessionID, 'opencode');
         if (!policy.allowed) return;
-        const rawTool = JSON.stringify({ type: 'event', payload: {
+        const toolEncrypted = this.bridge.encryptOutboundPayload({
           sessionId: serverSessionId,
+          clientEventId: `oc-tool:${sessionID}:${partID || 'unknown'}:${Date.now()}`,
           agent: 'opencode',
           eventType: 'task_complete',
           data: {
             type: 'task_complete',
             summary: title,
           },
-        }});
+        });
+        const rawTool = JSON.stringify({ type: 'event', payload: toolEncrypted });
         const projectedTool = projectHistoryEventForPolicy(rawTool, policy);
         if (projectedTool !== null) {
           this.bridge.privacyCheckAndSend('transcript', projectedTool, undefined, undefined);
         }
       }
+    }
+  }
+
+  /** Emit a task_complete with the latest cached assistant text for a message.
+   *  Used as the debounced callback for streaming text, and flushed synchronously
+   *  from onSessionIdle when the session ends before the 100ms timer. */
+  private _emitAssistantTextTaskComplete(
+    sessionID: string,
+    messageID: string,
+    partID: string | undefined,
+    serverSessionId: string,
+    policy: PolicyResult,
+  ): void {
+    if (this._messageRoles.get(messageID) === 'user') return;
+    const latestText = this._messageTexts.get(messageID);
+    if (!latestText || latestText === '') return;
+    if (this._isRecentPhoneCommand(sessionID, latestText)) return;
+    const taskTs = new Date().toISOString();
+    const encryptedPayload = this.bridge.encryptOutboundPayload({
+      clientEventId: `oc-part:${partID}:${Date.now()}`,
+      sessionId: serverSessionId,
+      agent: 'opencode',
+      eventType: 'task_complete',
+      data: {
+        type: 'task_complete',
+        summary: latestText,
+        summaryShort: latestText.slice(0, 200),
+        output: latestText,
+      },
+      ts: taskTs,
+    });
+    const raw = JSON.stringify({ type: 'event', payload: encryptedPayload });
+    const projected = projectHistoryEventForPolicy(raw, policy);
+    if (projected !== null) {
+      this.bridge.privacyCheckAndSend('transcript', projected, undefined, undefined);
     }
   }
 
@@ -1026,7 +1080,14 @@ export class OpenCodeSessionManager {
       sessionId,
       agent: 'opencode',
       eventType: 'command_started',
-      data: { type: 'command_started', command: text },
+      // Plan §5.1 + audit r2 P0-A: command_started is a status event, not a
+      // content event. The user prompt body lives in the user_prompt above
+      // (encrypted). Storing it here verbatim would bypass encryption.
+      data: {
+        type: 'command_started',
+        safe_summary: 'Command sent',
+        preview_label: 'command_started',
+      },
       ts: new Date().toISOString(),
     }, "transcript");
 

@@ -7,7 +7,7 @@ import { startCodexSession } from './commands/start-codex.js';
 import { findExistingClaudeTerminal, classifyTerminal, startClaudeCode, ensureCcSessionSync } from './commands/start-claude.js';
 import { enableHook } from './commands/enable-hook.js';
 import { installCodexHook, isCodexHookInstalled, isCodexExtensionActive, uninstallCodexHook } from './hook/codex-installer.js';
-import { installOpenCodePlugin, isOpenCodePluginInstalled, isOpenCodeCliInstalled, uninstallOpenCodePlugin } from './hook/opencode-installer.js';
+import { installOpenCodePlugin, isOpenCodePluginInstalled, isOpenCodeCliInstalled } from './hook/opencode-installer.js';
 import { startOpenCodeTerminal } from './commands/start-opencode.js';
 import { SidebarProvider } from './webview/sidebar-provider.js';
 import { CommandRelayService } from './services/command-relay.js';

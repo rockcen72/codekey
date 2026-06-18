@@ -1,10 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { userRequest } from '../api/client';
+import { UnboundDeviceError, userRequest } from '../api/client';
 import type { ApprovalResponseResult, UserEvent, UserSession } from '../api/types';
 import type { AuthState } from '../hooks/useAuth';
 import { compactMarkdownWhitespace, markdownToHtml } from '../utils/markdown';
 import { agentChatName, agentColorClass, agentLabel } from '../utils/session-display';
+import { decryptEventPayload, encryptCommandPayload } from '../utils/encryption';
+import { getContentKey, getKeyId, getDeviceId, getE2EStatus, getE2EState, setE2EStatus, setE2EState } from '../auth/device-storage';
+import { WsClient } from '../services/ws-client';
 
 const POLL_INTERVAL = 5_000;
 
@@ -111,6 +114,100 @@ function getEventData(event: UserEvent): Record<string, unknown> {
   return (event.data ?? {}) as Record<string, unknown>;
 }
 
+/** Module-level cache for decrypted event bodies, keyed by event id.
+ *  Decryption is deterministic + idempotent, so caching across re-polls is
+ *  safe and avoids re-running Web Crypto on every 5s tick. */
+const decryptedEventCache = new Map<string, Record<string, unknown>>();
+const decryptionFailureLogged = new Set<string>();
+
+/** Decrypt all encrypted events in-place (mutates the event.data field).
+ *
+ *  Behavior matrix (mirrors PC plan §5.3):
+ *    - sealed_payload missing                  → leave event untouched (legacy plaintext)
+ *    - data.encryption_error === true          → leave event as-is (PC failed encryption, show placeholder)
+ *    - encryption_version unknown              → leave + log once (treat as undecryptable placeholder)
+ *    - no contentKey / no deviceId stored      → leave + log once (user not paired with E2E)
+ *    - decrypt throws                          → leave + log once
+ *    - decrypt succeeds                        → merge decrypted body into event.data
+ */
+async function decryptEvents(events: UserEvent[]): Promise<UserEvent[]> {
+  const contentKey = getContentKey();
+  const deviceId = getDeviceId();
+  if (!contentKey || !deviceId) return events;
+
+  const storedKeyId = getKeyId();
+  const tasks: Promise<void>[] = [];
+  const out = events.map((event) => ({ ...event }));
+
+  for (const event of out) {
+    if (!event.sealed_payload || !event.key_id) continue;
+
+    // Phase 4C: detect keyId mismatch — PC rotated keys, phone has stale key
+    if (storedKeyId && event.key_id !== storedKeyId) {
+      if (!decryptionFailureLogged.has(event.id)) {
+        console.warn('[session-detail] stale keyId: event.key_id=', event.key_id, 'stored=', storedKeyId);
+        decryptionFailureLogged.add(event.id);
+      }
+      event.data = { ...(event.data ?? {}), e2eKeyStale: true };
+      continue;
+    }
+    if (event.encryption_version !== 1) {
+      if (!decryptionFailureLogged.has(event.id)) {
+        console.warn('[session-detail] unknown encryption_version', event.encryption_version, 'for event', event.id);
+        decryptionFailureLogged.add(event.id);
+      }
+      continue;
+    }
+    const data = (event.data ?? {}) as Record<string, unknown>;
+    if (data.encryption_error === true) continue; // PC fail-closed placeholder — render as-is
+
+    const cached = decryptedEventCache.get(event.id);
+    if (cached) {
+      event.data = cached;
+      continue;
+    }
+
+    const sealed = event.sealed_payload;
+    const allowlist = data;
+    const aadFields = {
+      v: 1,
+      keyId: event.key_id,
+      deviceId,
+      sessionId: event.session_id,
+      eventId: (data.clientEventId as string) || event.id, // Phase 4 AAD = clientEventId; fall back to server id only for legacy events
+      eventType: event.type,
+    };
+
+    tasks.push(
+      decryptEventPayload(sealed, allowlist, contentKey, aadFields)
+        .then((merged) => {
+          decryptedEventCache.set(event.id, merged);
+          event.data = merged;
+        })
+        .catch((err) => {
+          if (!decryptionFailureLogged.has(event.id)) {
+            console.error('[session-detail] decrypt failed for event', event.id, err);
+            decryptionFailureLogged.add(event.id);
+          }
+          event.data = { ...(event.data ?? {}), e2eKeyStale: true };
+        }),
+    );
+  }
+
+  if (tasks.length > 0) await Promise.all(tasks);
+  return out;
+}
+
+function getEncryptedPlaceholder(data: Record<string, unknown>): string | null {
+  // Phase 4C: key rotated on desktop, phone needs re-pair
+  if (data.e2eKeyStale === true) return 'Encrypted content unavailable (keys updated, please re-pair)';
+  // PC fail-closed event — actual prompt couldn't be encrypted
+  if (data.encryption_error === true) return 'Encrypted content unavailable (encryption failed on desktop)';
+  // Phone-side: still encrypted because key missing or decrypt blew up
+  if (data.encrypted === true) return 'Encrypted content unavailable';
+  return null;
+}
+
 function isUserPromptEvent(event: UserEvent, data: Record<string, unknown>): boolean {
   return event.type === 'user_prompt'
     || data.type === 'user_prompt'
@@ -148,6 +245,7 @@ function decisionLabel(decision?: string | null): string {
 
 function buildChatMessages(events: UserEvent[], session: UserSession | null, resolvedMap: Map<string, string>): ChatMessage[] {
   const messages: ChatMessage[] = [];
+  const seenClientEventIds = new Set<string>();
   let lastUserPrompt = '';
   let lastCommandStarted = false;
   let pendingCommandStarted: ChatMessage | null = null;
@@ -159,8 +257,13 @@ function buildChatMessages(events: UserEvent[], session: UserSession | null, res
 
   for (const event of events) {
     if (!ALLOWED_EVENT_TYPES.has(event.type)) continue;
-
     const data = getEventData(event);
+    const clientEventId = String(data.clientEventId || '');
+    if (clientEventId.startsWith('oc-hist:')) {
+      if (seenClientEventIds.has(clientEventId)) continue;
+      seenClientEventIds.add(clientEventId);
+    }
+
     const eventAgentType = String(data.agent || data.agentType || session?.agent_type || session?.metadata.runtime || '');
     const agentClass = agentColorClass(eventAgentType);
     const risk = event.risk_level || (data.risk ? String(data.risk) : null);
@@ -198,7 +301,12 @@ function buildChatMessages(events: UserEvent[], session: UserSession | null, res
 
     if (isUserPrompt) {
       lastCommandStarted = false;
-      const prompt = String(data.prompt || data.summary || rawSummary || '');
+      // Plan §5.3: when sealed_payload couldn't be decrypted, data only has
+      // allowlist fields (encrypted=true / encryption_error=true). Render a
+      // placeholder string instead of empty to keep the bubble visible.
+      const placeholder = getEncryptedPlaceholder(data);
+      const prompt = placeholder
+        ?? String(data.prompt || data.summary || rawSummary || '');
       if (!prompt || prompt === lastUserPrompt) continue;
       lastUserPrompt = prompt;
       messages.push({
@@ -562,22 +670,52 @@ export function SessionDetailPage({ auth }: Props) {
   const [session, setSession] = useState<UserSession | null>(null);
   const [events, setEvents] = useState<UserEvent[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [e2eStatus, setE2eStatus] = useState<'enabled' | 'stale' | 'disabled'>('disabled');
   const [resolvedMap, setResolvedMap] = useState<Map<string, string>>(new Map());
   const [promptText, setPromptText] = useState('');
   const [promptBusy, setPromptBusy] = useState(false);
+  const [wsConnected, setWsConnected] = useState(false);
+  const [deviceOnline, setDeviceOnline] = useState(false);
   const loadingRef = useRef(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const userScrolledRef = useRef(false);
+  const wsRef = useRef<WsClient | null>(null);
 
   const load = useCallback(async () => {
     if (!auth.token || !id || loadingRef.current) return;
     loadingRef.current = true;
     try {
-      const [nextSession, nextEvents] = await Promise.all([
+      const [nextSession, rawEvents] = await Promise.all([
         userRequest<UserSession>(`/api/v1/user/sessions/${id}`),
         userRequest<UserEvent[]>(`/api/v1/user/sessions/${id}/events`),
       ]);
+
+      // Decrypt encrypted events before sorting/dedup so downstream logic sees
+      // the merged plaintext data. Plan §5.3 / §5.4 — sealed_payload events
+      // get their data field populated with decrypted body; legacy plaintext
+      // events pass through untouched.
+      const nextEvents = await decryptEvents(rawEvents);
+
+      // Phase 4C: compute E2E status from the latest sealed event only.
+      // Old historical events with a prior keyId do NOT pollute the status.
+      {
+        const ck = getContentKey();
+        let status: 'enabled' | 'stale' | 'disabled';
+        let latestSealed: any = null;
+        if (!ck) { status = 'disabled'; }
+        else {
+          latestSealed = nextEvents
+            .filter((ev) => ev.sealed_payload)
+            .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())[0];
+          status = latestSealed && getEventData(latestSealed).e2eKeyStale === true ? 'stale' : 'enabled';
+        }
+        if (status === 'stale') {
+          setE2EState({ state: 'stale', localKeyId: getKeyId(), lastServerKeyId: latestSealed?.key_id ?? null });
+        } else {
+          setE2EStatus(status);
+        }
+      }
 
       nextEvents.sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
 
@@ -609,11 +747,18 @@ export function SessionDetailPage({ auth }: Props) {
       setSession(nextSession);
       setError(null);
     } catch (err) {
+      // Device became unbound during a polling tick — kick to root so
+      // the user lands on the unbound view (or pairing prompt) instead
+      // of staring at a stale session detail with a noisy error.
+      if (err instanceof UnboundDeviceError) {
+        navigate('/', { replace: true });
+        return;
+      }
       setError(err instanceof Error ? err.message : 'Failed to load session');
     } finally {
       loadingRef.current = false;
     }
-  }, [auth.token, id]);
+  }, [auth.token, id, navigate]);
 
   const messages = useMemo(() => buildChatMessages(events, session, resolvedMap), [events, session, resolvedMap]);
   const primaryPending = useMemo(() => {
@@ -629,8 +774,8 @@ export function SessionDetailPage({ auth }: Props) {
   const targetEventId = searchParams.get('eventId');
 
   useEffect(() => {
-    const hasPending = messages.some((message) => message.pending);
-    if ((!userScrolledRef.current || hasPending) && scrollRef.current) {
+    if (!scrollRef.current) return;
+    if (!userScrolledRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
   }, [messages]);
@@ -681,6 +826,37 @@ export function SessionDetailPage({ auth }: Props) {
     };
   }, [auth.token, id, load]);
 
+  useEffect(() => {
+    const relayUrl = import.meta.env.VITE_RELAY_URL || '';
+    if (!auth.deviceId || !auth.clientToken || !relayUrl) {
+      wsRef.current?.disconnect();
+      wsRef.current = null;
+      setWsConnected(false);
+      setDeviceOnline(false);
+      return;
+    }
+
+    const ws = new WsClient(relayUrl, auth.deviceId, auth.clientToken);
+    ws.on('connected', () => setWsConnected(true));
+    ws.on('disconnected', () => {
+      setWsConnected(false);
+      setDeviceOnline(false);
+    });
+    ws.on('device_online', () => setDeviceOnline(true));
+    ws.on('device_offline', () => setDeviceOnline(false));
+    ws.on('auth_failed', () => {
+      setWsConnected(false);
+      setDeviceOnline(false);
+    });
+    ws.connect();
+    wsRef.current = ws;
+
+    return () => {
+      ws.disconnect();
+      wsRef.current = null;
+    };
+  }, [auth.deviceId, auth.clientToken]);
+
   function handleScroll() {
     const el = scrollRef.current;
     if (!el) return;
@@ -715,9 +891,36 @@ export function SessionDetailPage({ auth }: Props) {
     if (!promptText.trim() || !id) return;
     setPromptBusy(true);
     try {
+      const contentKeyHex = getContentKey();
+      const keyId = getKeyId();
+      const deviceId = getDeviceId();
+      let body: Record<string, unknown>;
+
+      if (contentKeyHex && keyId && deviceId) {
+        const e2eState = getE2EState();
+        if (e2eState.state === 'stale') {
+          const sameSession = e2eState.lastToastSessionId === (id ?? null);
+          if (sameSession && Date.now() - e2eState.lastToastAt < 30_000) {
+            setPromptBusy(false);
+            return;
+          }
+          setE2EState({ state: 'stale', localKeyId: keyId, lastToastAt: Date.now(), lastToastSessionId: id ?? null });
+          showToast('E2E keys are stale — re-pair phone to send encrypted commands');
+          setPromptBusy(false);
+          return;
+        }
+        const commandId = crypto.randomUUID();
+        const envelope = await encryptCommandPayload(
+          promptText.trim(), contentKeyHex, keyId, deviceId, id, commandId,
+        );
+        body = { ...envelope };
+      } else {
+        body = { text: promptText.trim() };
+      }
+
       await userRequest(`/api/v1/user/sessions/${id}/command`, {
         method: 'POST',
-        body: JSON.stringify({ text: promptText.trim() }),
+        body: JSON.stringify(body),
       });
       setPromptText('');
       showToast('Sent to desktop');
@@ -741,12 +944,19 @@ export function SessionDetailPage({ auth }: Props) {
           <h1 className="detail-title">{title}</h1>
           <span className="detail-subtitle">{session?.metadata.cwd || session?.metadata.runtime || session?.agent_type || ''}</span>
         </div>
-        <button className="ws-indicator online" type="button" onClick={() => void load()} aria-label="Refresh">
+        <button className={`ws-indicator ${wsConnected && deviceOnline ? 'online' : 'offline'}`} type="button" onClick={() => void load()} aria-label="Refresh">
           <span className="ws-dot" />
         </button>
       </header>
 
       {error ? <div className="notice error-text detail-notice">{error}</div> : null}
+
+      {e2eStatus === 'stale' ? (
+        <div className="e2e-banner stale">
+          <span className="e2e-banner-icon">⚠️</span>
+          <span>E2E keys updated on desktop. <button className="link-btn" type="button" onClick={() => navigate('/')}>Re-pair phone</button> to send encrypted commands.</span>
+        </div>
+      ) : null}
 
       <section className="timeline" ref={scrollRef} onScroll={handleScroll}>
         {messages.length === 0 ? (

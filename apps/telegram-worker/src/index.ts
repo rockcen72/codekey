@@ -41,7 +41,7 @@ export default {
       if (isProxyRoute(url.pathname)) {
         return await proxyToRelay(request, env, normalizeRelayPath(url.pathname));
       }
-      return env.ASSETS.fetch(request);
+      return withAssetCacheHeaders(await env.ASSETS.fetch(request), request);
     } catch (err) {
       const message = err instanceof Error ? err.message : 'internal error';
       return json({ error: message }, request, env, 500);
@@ -231,6 +231,20 @@ async function proxyToRelay(request: Request, env: Env, relayPath: string): Prom
   const target = new URL(`${trimSlash(env.RELAY_BACKEND_URL)}${relayPath}`);
   target.search = source.search;
 
+  if (relayPath === '/api/v1/devices/confirm' && request.method === 'POST') {
+    const body = await request.clone().json().catch(() => null) as {
+      code?: string;
+      phonePublicKeyHex?: string;
+      e2eKeyReceived?: boolean;
+    } | null;
+    console.log('confirm proxy e2e status', JSON.stringify({
+      codeSuffix: typeof body?.code === 'string' ? body.code.slice(-2) : '',
+      hasPhonePublicKeyHex: !!body?.phonePublicKeyHex,
+      phonePublicKeyHexLen: typeof body?.phonePublicKeyHex === 'string' ? body.phonePublicKeyHex.length : 0,
+      hasE2eKeyReceived: body?.e2eKeyReceived === true,
+    }));
+  }
+
   const headers = new Headers(request.headers);
   headers.delete('host');
   const proxied = new Request(target, {
@@ -284,6 +298,16 @@ function withCors(response: Response, request: Request, env: Env): Response {
   const headers = new Headers(response.headers);
   for (const [key, value] of Object.entries(corsHeaders(request))) {
     headers.set(key, value);
+  }
+  return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
+}
+
+function withAssetCacheHeaders(response: Response, request: Request): Response {
+  const headers = new Headers(response.headers);
+  const url = new URL(request.url);
+  const contentType = headers.get('content-type') || '';
+  if (url.pathname === '/' || contentType.includes('text/html')) {
+    headers.set('cache-control', 'no-store');
   }
   return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
 }

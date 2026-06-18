@@ -8,26 +8,39 @@ import { LoginPage } from './pages/LoginPage';
 import { SessionDetailPage } from './pages/SessionDetailPage';
 import { SessionsPage } from './pages/SessionsPage';
 import { SettingsPage } from './pages/SettingsPage';
+import { getTelegramStartParam, parsePairingStartParam } from './auth/pairing-start-param';
 
-// Module-level flag — persists across component mounts for the lifetime of the Mini App.
-// Prevents start_param from being processed more than once (avoids redirect loop).
-let processedStartParam = false;
+const PROCESSED_KEY = 'ck:processed_start_param';
+const SUPPRESSED_PAIRING_PARAM_KEY = 'ck:suppressed_pairing_start_param';
 
 function DeepLinkRedirect({ auth }: { auth: ReturnType<typeof useAuth> }) {
   const [params] = useSearchParams();
   const sessionId = params.get('sessionId');
   const eventId = params.get('eventId');
 
-  // auth.loading must come first — don't jump during login recovery
   if (auth.loading) return null;
 
-  // Detect start_param from Telegram deep link (QR code scan)
-  // Only process ONCE to avoid redirect loop after bind completes
-  const startParam = window.Telegram?.WebApp?.initDataUnsafe?.start_param || '';
-  const hasCode = /^[A-Z0-9]{8}$/.test(startParam);
-  if (hasCode && !processedStartParam) {
-    processedStartParam = true;
-    const target = `/bind?code=${startParam}`;
+  const startParam = getTelegramStartParam(params);
+  // Use sessionStorage to track processed startParams — survives component
+  // mount/unmount cycles and allows processing if Telegram navigates to a
+  // new deep link within the same WebView (different startParam value).
+  const alreadyProcessed = sessionStorage.getItem(PROCESSED_KEY) === startParam
+    || localStorage.getItem(SUPPRESSED_PAIRING_PARAM_KEY) === startParam;
+
+  const parsedStartParam = parsePairingStartParam(startParam);
+
+  if (parsedStartParam?.contentKey && parsedStartParam.keyId && !alreadyProcessed) {
+    sessionStorage.setItem(PROCESSED_KEY, startParam);
+    const target = `/bind?code=${parsedStartParam.code}&key_id=${encodeURIComponent(parsedStartParam.keyId)}&content_key=${encodeURIComponent(parsedStartParam.contentKey)}`;
+    if (!auth.token) {
+      return <Navigate to={`/login?redirect=${encodeURIComponent(target)}`} replace />;
+    }
+    return <Navigate to={target} replace />;
+  }
+
+  if (parsedStartParam?.code && !alreadyProcessed) {
+    sessionStorage.setItem(PROCESSED_KEY, startParam);
+    const target = `/bind?code=${parsedStartParam.code}`;
     if (!auth.token) {
       return <Navigate to={`/login?redirect=${encodeURIComponent(target)}`} replace />;
     }
@@ -62,9 +75,15 @@ export default function App() {
     }
 
     const ws = new WsClient(relayUrl, auth.deviceId, auth.clientToken);
-    ws.on('auth_failed', () => {
+    ws.on('auth_failed', (payload?: { code?: string; replacedByPlatform?: string }) => {
+      const startParam = getTelegramStartParam(new URLSearchParams(window.location.search));
+      const replacedByTelegram = payload?.code === 'DEVICE_REPLACED' && payload.replacedByPlatform === 'telegram';
+      if (startParam && !replacedByTelegram) {
+        sessionStorage.setItem(PROCESSED_KEY, startParam);
+        localStorage.setItem(SUPPRESSED_PAIRING_PARAM_KEY, startParam);
+      }
       auth.clearBinding();
-      navigate('/bind', { replace: true });
+      navigate('/', { replace: true });
     });
     ws.connect();
     wsRef.current = ws;

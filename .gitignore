@@ -17,6 +17,10 @@ packages/server/
 packages/shared/src/bridge/claude-transcripts.js
 packages/shared/src/bridge/claude-transcripts.js.map
 
+# Compiled TypeScript outputs (feishu miniprogram)
+apps/feishu-miniprogram/**/*.js
+apps/feishu-miniprogram/vendor/
+
 # Private project config
 project.private.config.json
 
@@ -25,6 +29,7 @@ docs/superpowers/
 
 # Tooling caches
 .codegraph/
+.codegraphignore
 .superpowers/
 .codex/
 
@@ -41,6 +46,7 @@ data/
 # Temp / PoC
 tmp/
 .tmp/
+.tmp-deploy/
 
 # Pre-deploy server backups (timestamped snapshots, see docs/server-deployment.md)
 backups/

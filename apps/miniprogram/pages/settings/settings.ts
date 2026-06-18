@@ -1,4 +1,4 @@
-import { getDeviceId, clearAuth, getUserToken } from '../../services/storage';
+import { getDeviceId, clearAuth, getUserToken, getClientToken, getContentKey, getE2EStatus, getServerUrl, hasAuth } from '../../services/storage';
 import {
   getSubscription,
   redeemCode,
@@ -23,6 +23,8 @@ type SubscriptionUiState = Tier | 'unauthenticated' | 'load_failed';
 type QuotaState = 'normal' | 'approaching' | 'exhausted' | 'hidden';
 
 interface PageData {
+  isPaired: boolean;
+  manualCode: string;
   deviceId: string;
   tier: SubscriptionUiState;
   plan: string;
@@ -35,10 +37,14 @@ interface PageData {
   redeemInput: string;
   redeemBusy: boolean;
   loaded: boolean;
+  hasE2EKey: boolean;
+  e2eStatus: 'enabled' | 'stale' | 'disabled';
 }
 
 Page({
   data: {
+    isPaired: false,
+    manualCode: '',
     deviceId: '',
     tier: 'unauthenticated',
     plan: '',
@@ -51,13 +57,23 @@ Page({
     redeemInput: '',
     redeemBusy: false,
     loaded: false,
+    hasE2EKey: false,
+    e2eStatus: 'disabled',
   } as PageData,
 
   onShow() {
+    const paired = hasAuth();
     this.setData({
+      isPaired: paired,
       deviceId: getDeviceId() || '',
+      hasE2EKey: !!getContentKey(),
+      e2eStatus: getE2EStatus(),
     });
-    this.refreshSubscription();
+    if (paired) {
+      this.refreshSubscription();
+    } else {
+      this.setData({ tier: 'unauthenticated', loaded: true });
+    }
   },
 
   onUnload() {
@@ -73,18 +89,97 @@ Page({
     wx.navigateBack();
   },
 
+  startScan() {
+    wx.scanCode({
+      onlyFromCamera: true,
+      success: (res) => {
+        const raw = res.result.trim();
+        let code = raw;
+        let keyId = '';
+        let contentKey = '';
+        const urlMatch = raw.match(/[?&]code=([A-Z2-9]{8})(?:$|&)/i);
+        if (urlMatch) {
+          code = urlMatch[1].toUpperCase();
+          const keyIdMatch = raw.match(/[?&]key_id=([^&]+)/i);
+          const contentKeyMatch = raw.match(/[?&]content_key=([^&]+)/i);
+          if (keyIdMatch) keyId = keyIdMatch[1];
+          if (contentKeyMatch) contentKey = contentKeyMatch[1];
+        }
+        if (code.length === 8 && /^[A-Z2-9]+$/.test(code)) {
+          let url = `/pages/bind/bind?code=${code}`;
+          if (keyId) url += `&key_id=${encodeURIComponent(keyId)}`;
+          if (contentKey) url += `&content_key=${encodeURIComponent(contentKey)}`;
+          wx.navigateTo({ url });
+        } else {
+          wx.showToast({ title: '无效的配对码', icon: 'none' });
+        }
+      },
+      fail: (err) => {
+        wx.showToast({ title: '扫码失败：' + (err.errMsg || '未知错误'), icon: 'none' });
+      },
+    });
+  },
+
+  onCodeInput(e: any) {
+    this.setData({ manualCode: e.detail.value.toUpperCase() });
+  },
+
+  confirmManualCode() {
+    const code = this.data.manualCode.trim().toUpperCase();
+    if (code.length === 8 && /^[A-Z2-9]+$/.test(code)) {
+      wx.navigateTo({ url: `/pages/bind/bind?code=${code}` });
+    } else {
+      wx.showToast({ title: '配对码必须为 8 位字符', icon: 'none' });
+    }
+  },
+
   unbindDevice() {
     wx.showModal({
       title: '解绑设备',
       content: '确定要解绑此设备吗？',
       success: (res) => {
         if (res.confirm) {
-          // Local-only unbind: mini program uses clientToken which the
-          // server's DELETE /devices/:id endpoint does not accept.
-          // Clear local auth and disconnect WS.
-          clearAuth();
-          app.destroyWs();
-          wx.reLaunch({ url: '/pages/login/login' });
+          const deviceId = this.data.deviceId || getDeviceId();
+          const token = getUserToken();
+          const clientToken = getClientToken();
+          if (!deviceId || !token) {
+            wx.showToast({ title: '未登录', icon: 'none' });
+            return;
+          }
+          const base = getServerUrl();
+          const api = base.endsWith('/api/v1') ? base : `${base}/api/v1`;
+          wx.request({
+            method: 'DELETE',
+            url: `${api}/user/devices/${deviceId}`,
+            timeout: 10000,
+            // 注意：DELETE 不带 body。wx.request header 默认带 'content-type: application/json',
+            // 而 fastify 4.x 看到 application/json + 空 body 会返回 400 FST_ERR_CTP_EMPTY_JSON_BODY。
+            // 显式覆盖 content-type 为 text/plain 来绕过这个默认行为。
+            // 参考 telegram-miniapp/src/api/client.ts: 仅在有 body 时才设 application/json。
+            header: {
+              'content-type': 'text/plain',
+              'Authorization': `Bearer ${token}`,
+              ...(clientToken ? { 'X-Codekey-Client-Token': clientToken } : {}),
+            },
+            success: (resp: any) => {
+              if (resp.statusCode >= 400) {
+                // 后端 200/4xx 都返回 JSON; fastify 的默认 400 形如
+                // { statusCode, error: 'Bad Request', message: '...' }
+                // 应用层错误形如 { error: 'client_token_required' }
+                const message = resp.data?.message || resp.data?.error || `解绑失败 (${resp.statusCode})`;
+                wx.showToast({ title: message, icon: 'none', duration: 3000 });
+                console.warn('[settings] unbind failed', resp.statusCode, resp.data);
+                return;
+              }
+              clearAuth();
+              app.destroyWs();
+              wx.reLaunch({ url: '/pages/sessions/sessions' });
+            },
+            fail: (err: any) => {
+              console.warn('[settings] unbind network error', err);
+              wx.showToast({ title: '网络错误：' + (err?.errMsg || '解绑失败'), icon: 'none', duration: 3000 });
+            },
+          });
         }
       },
     });

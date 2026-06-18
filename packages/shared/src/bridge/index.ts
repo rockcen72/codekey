@@ -28,11 +28,21 @@ export type { ResumeResult, ResumeEvent, CodexResumeRuntimeOptions } from './cod
 export { CodexTranscriptWatcher } from './codex-transcript-watcher.js';
 export type { TranscriptEvent, CodexTranscriptWatcherOptions } from './codex-transcript-watcher.js';
 
+export { generateEcdhKeyPair, computeSharedSecret, deriveKeyMaterial } from './e2e-key-exchange.js';
+export {
+  stripSensitiveFields,
+  buildEventAad,
+  encryptEventPayload,
+  decryptEventPayload,
+} from './event-envelope.js';
+export type { AadFields } from './event-envelope.js';
+export type { EcdhKeyPair, DerivedKeyMaterial } from './e2e-key-exchange.js';
+
 export { CodexResumeManager } from './codex-resume-manager.js';
 export { OpenCodeSessionManager } from './opencode-session-manager.js';
 
 // Privacy pipeline
-export { runPrivacyPipeline, toCheckedPayload, projectAllowedFields, projectHistoryEventForPolicy, safeSummary, type PrivacyContext, type PrivacyDecision, type PrivacyCheckedPayload, type AuditEntry, type AuditSink, type SourceType, type ContentPolicy } from './privacy-pipeline.js';
+export { runPrivacyPipeline, toCheckedPayload, projectAllowedFields, projectHistoryEventForPolicy, safeSummary, ensureSafeSummary, DEFAULT_SAFE_SUMMARIES, type PrivacyContext, type PrivacyDecision, type PrivacyCheckedPayload, type AuditEntry, type AuditSink, type SourceType, type ContentPolicy } from './privacy-pipeline.js';
 export { scan, replace, scanAndReplace, type Finding, type Rule } from './secret-scanner.js';
 export { CodeKeyIgnore } from './codekeyignore.js';
 export { DEFAULT_BLOCKED_PATTERNS, matchesAny } from './blocklist.js';

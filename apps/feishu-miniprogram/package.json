@@ -1,0 +1,13 @@
+{
+  "name": "codekey-feishu-miniprogram",
+  "version": "1.0.0",
+  "description": "CodeKey Feishu Mini Program",
+  "main": "app.js",
+  "scripts": {
+    "build:npm": "echo 'Run \"构建 npm\" in Feishu Developer Tool'"
+  },
+  "dependencies": {
+    "@noble/ciphers": "^2.2.0"
+  },
+  "miniprogram": "miniprogram_npm"
+}

@@ -1,6 +1,7 @@
 import type { SessionResponse, EventResponse } from '../api/client.js';
 import type { AgentDef } from '../agents/registry.js';
 import type { BridgeState } from '../services/bridge-status.js';
+import { FEISHU_APP_ID_CONST } from '../constants.js';
 
 export interface PendingApprovalItem {
   id: string;
@@ -22,6 +23,8 @@ export interface PairingState {
   statusText: string;
   expiresAt: number;
   pairUrl?: string;
+  contentKeyHex?: string;
+  keyId?: string;
 }
 
 export interface SubscriptionInfo {
@@ -318,6 +321,7 @@ export function renderPrivacyDetailContent(state: SidebarState, filter: string):
     forwarded: i18n(state.lang, 'Forwarded', '已发'),
     blocked: i18n(state.lang, 'Blocked', '已拦截'),
     sanitized: i18n(state.lang, 'Sanitized', '已脱敏'),
+    redacted_path: i18n(state.lang, 'Path Redacted', '路径已擦除'),
   };
   const sourceLabels: Record<string, string> = {
     approval: i18n(state.lang, 'Approval', '审批'),
@@ -380,7 +384,7 @@ function renderPrivacy(state: SidebarState): string {
 }
 
 const HISTORY_AGENTS: { key: string; label: string; labelZh: string }[] = [
-  { key: '*', label: 'Default (All agents)', labelZh: '默认（所有助手）' },
+  { key: '*', label: 'All agents', labelZh: '全局策略' },
   { key: 'claude-code-hook', label: 'Claude Code', labelZh: 'Claude Code' },
   { key: 'codex', label: 'Codex', labelZh: 'Codex' },
   { key: 'opencode', label: 'OpenCode', labelZh: 'OpenCode' },
@@ -397,10 +401,11 @@ export function renderHistoryPolicyContent(state: SidebarState): string {
     sanitized: i18n(state.lang, 'Summary', '任务摘要'),
   };
   const opts = ['off', 'recent', 'sanitized'];
+  const defaultPolicy = lookup.get('*')?.policy || 'off';
 
   return HISTORY_AGENTS.map(({ key, label, labelZh }) => {
     const entry = lookup.get(key);
-    const current = entry?.policy || 'off';
+    const current = key === '*' ? (entry?.policy || 'off') : (entry?.policy || defaultPolicy);
     const labelText = i18n(state.lang, label, labelZh);
     return `<div class="hp-row" data-hp-key="${key}">
       <span class="hp-label">${labelText}</span>
@@ -581,6 +586,12 @@ export function renderSubscribe(state: SidebarState): string {
     }
   }
   const qqHtml = `<div class="qq-group-row"><span class="qq-icon">QQ</span> <a class="qq-link" href="https://qm.qq.com/q/ryWvbgYpNY" target="_blank">827453239</a></div>`;
+  // Upgrade-to-Pro CTA: only show to free-tier users (paid/trial users
+  // already see their plan or trial countdown in the sub-row above).
+  // Link still points to the external shop page.
+  const upgradeCtaHtml = sub && sub.tier === 'free'
+    ? `<a class="upgrade-cta" href="https://pay.ldxp.cn/shop/6T7QKRTE" target="_blank">${i18n(state.lang, 'Upgrade to Pro', '升级 Pro')}</a>`
+    : '';
   const notPairedHint = state.deviceStatus !== 'paired'
     ? `<div class="redeem-hint">${i18n(state.lang, 'Pair a device first, then redeem your code here.', '请先配对设备，配对成功后再来此输入兑换码激活。')}</div>`
     : '';
@@ -593,7 +604,7 @@ export function renderSubscribe(state: SidebarState): string {
     </div>
     <div class="redeem-status" id="redeemStatus"></div>
   </div>`;
-  return `<div class="footer" id="subscriptionFooter">${qqHtml}<div class="sub-row" data-action="toggleRedeem"><span class="sub-label${planClass}">${planLabel}</span><span class="expand-icon">▸</span></div>${expandedHtml}</div>`;
+  return `<div class="footer" id="subscriptionFooter">${qqHtml}${upgradeCtaHtml}<div class="sub-row" data-action="toggleRedeem"><span class="sub-label${planClass}">${planLabel}</span><span class="expand-icon">▸</span></div>${expandedHtml}</div>`;
 }
 
 // ── Pairing card ─────────────────────────────────────────
@@ -609,6 +620,9 @@ type QrCodeConstructor = new (typeNumber: number, errorCorrectLevel: number) => 
 
 const QRCode = require('qrcode-terminal/vendor/QRCode') as QrCodeConstructor;
 const QRErrorCorrectLevel = require('qrcode-terminal/vendor/QRCode/QRErrorCorrectLevel') as { L: number };
+const FEISHU_ORG_INVITE_SRC = typeof __FEISHU_ORG_INVITE_SRC__ !== 'undefined'
+  ? __FEISHU_ORG_INVITE_SRC__
+  : '';
 
 /**
  * Render a standards-compliant QR matrix as SVG so wx.scanCode can decode it.
@@ -641,6 +655,14 @@ ${rects.join('\n')}
 </svg>`;
 }
 
+function hexToBase64Url(hex: string): string {
+  return Buffer.from(hex, 'hex')
+    .toString('base64')
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/g, '');
+}
+
 export function renderPairingContent(state: SidebarState): string {
   const p = state.pairing;
   const isWaiting = p?.status === 'waiting';
@@ -649,7 +671,11 @@ export function renderPairingContent(state: SidebarState): string {
   const codeDigits = p?.code || '--------';
   const codeExpires = p?.expiresAt || 0;
   const platform = p?.platform || state.pairingPlatform || 'telegram';
-  const feishuAppId = state.feishuAppId || '';
+  // undefined or empty string → fallback to built-in constant
+  const rawFeishuAppId = state.feishuAppId;
+  const feishuAppId = (rawFeishuAppId === undefined || rawFeishuAppId === '')
+    ? FEISHU_APP_ID_CONST
+    : rawFeishuAppId;
   const hasFeishu = !!feishuAppId;
   const hasPartialCreds = !!(state.deviceId || state.deviceSecret);
   const wechatName = i18n(state.lang, 'WeChat', '微信');
@@ -677,15 +703,19 @@ export function renderPairingContent(state: SidebarState): string {
   }
 
   // Generate QR SVGs
-  const qrSize = 200;
-  const wechatQrSvg = p?.code ? generateQrSvg(p.code, qrSize) : '';
-  const feishuQrSvg = p?.code && feishuAppId
-    ? generateQrSvg(`feishu://app/${feishuAppId}/pages/login/login?code=${p.code}&platform=feishu`, qrSize)
+  const qrSize = platform === 'feishu' ? 208 : 200;
+  const wechatQrSvg = p?.pairUrl && p?.platform === 'wechat' ? generateQrSvg(p.pairUrl, qrSize)
+    : p?.code && !p?.pairUrl ? generateQrSvg(p.code, qrSize) : '';
+  const feishuQrSvg = p?.pairUrl && p?.platform === 'feishu'
+    ? generateQrSvg(p.pairUrl, qrSize)
     : '';
   const tgDeepLink = p?.code
-    ? `https://t.me/CodekeyAiBot?startapp=${p.code}`
+    ? (p?.contentKeyHex && p?.keyId
+        ? `https://t.me/CodekeyAiBot?startapp=ck_${hexToBase64Url(p.contentKeyHex)}_${p.code}`
+        : `https://t.me/CodekeyAiBot?startapp=${p.code}`)
     : '';
   const tgQrSvg = tgDeepLink ? generateQrSvg(tgDeepLink, qrSize) : '';
+  const tgKeyInfo = '';
 
   // Platform toggle — all neutral, no default selection
   const platToggleHtml = `<div class="platform-toggle">
@@ -729,8 +759,9 @@ export function renderPairingContent(state: SidebarState): string {
   const tgGuide = platform === 'telegram' && hasCode
     ? `<div class="tg-guide">
       <div class="guide-step">1. Scan QR with phone camera or open Telegram</div>
-      <div class="guide-step">2. Mini App opens → code auto-filled</div>
-      <div class="guide-step">3. Tap <strong>Confirm</strong> to pair</div>
+      <div class="guide-step">2. Mini App opens → auto-filled &amp; pairs</div>
+      <div class="guide-step">3. Done — no manual entry needed</div>
+      ${tgKeyInfo}
     </div>` : '';
   const wechatGuide = platform === 'wechat' && hasCode
     ? `<div class="tg-guide">
@@ -738,16 +769,40 @@ export function renderPairingContent(state: SidebarState): string {
       <div class="guide-step">${i18n(state.lang, 'Search for <strong>CodeKey</strong> mini program', '搜索「<strong>码钥</strong>」小程序')}</div>
       <div class="guide-step">${i18n(state.lang, 'Tap <strong>Scan QR</strong> on the home page to pair', '点击首页「<strong>扫码</strong>」完成配对')}</div>
     </div>` : '';
+  const feishuGuide = platform === 'feishu' && hasCode
+    ? `<div class="feishu-pairing">
+      <div class="feishu-pair-card">
+        <div class="feishu-pair-step feishu-step-line">${i18n(state.lang, 'Step 1: Scan to join the workspace', '第 1 步：扫码加入企业组织')}</div>
+        <div class="feishu-pair-qr">
+          ${FEISHU_ORG_INVITE_SRC
+            ? `<img class="feishu-pair-img" src="${FEISHU_ORG_INVITE_SRC}" alt="${i18n(state.lang, 'Join Workspace QR', '加入组织二维码')}" />`
+            : `<div class="feishu-pair-empty">${i18n(state.lang, 'Add invite QR asset', '请补充组织邀请码')}</div>`
+          }
+        </div>
+      </div>
+      <div class="feishu-pair-instructions">
+        <div class="guide-step one-line">${i18n(state.lang, 'Step 2: Open Feishu home, find "Developer Helper", then tap "Launch Mini Program"', '第 2 步：进入飞书首页，找到“开发小助手”，点击里面的“启动小程序”')}</div>
+      </div>
+      <div class="feishu-pair-card">
+        <div class="feishu-pair-step feishu-step-line">${i18n(state.lang, 'Step 3: Scan to pair the device', '第 3 步：扫码绑定设备')}</div>
+        <div class="feishu-pair-qr">${qrHtml}</div>
+        <div class="feishu-pair-note">${i18n(state.lang, 'Scan after launching CodeKey', '启动 CodeKey 小程序后再扫码')}</div>
+      </div>
+    </div>`
+    : '';
   const guideHtml = tgGuide || wechatGuide;
 
   // Hide actions/guide when no code generated yet — platforms auto-generate on click
   return `<div class="pairing-content">
     ${platToggleHtml}
     ${hasCode ? `<div class="pairing-code-area">
-      ${codeHtml}
+      ${platform === 'feishu'
+        ? `${codeHtml}${feishuGuide}`
+        : `${codeHtml}
       <div class="pairing-divider"><span>${i18n(state.lang, 'or scan QR', '或扫码')}</span></div>
       ${qrHtml}
-      ${guideHtml}
+      ${guideHtml}`
+      }
       ${actionHtml}
     </div>` : `<div class="pairing-placeholder">${i18n(state.lang, 'Select a platform above to pair', '选择一个平台开始配对')}</div>`}
   </div>`;
@@ -830,7 +885,13 @@ ${renderSubscribe(state)}
           var payload = msg.payload || {};
           var token = payload.deviceToken || msg.deviceToken || msg.token;
           var deviceId = payload.deviceId || msg.deviceId;
-          api.postMessage({ action: 'pairedDevice', token: token, deviceId: deviceId });
+          api.postMessage({
+            action: 'pairedDevice',
+            token: token,
+            deviceId: deviceId,
+            phonePublicKeyHex: payload.phonePublicKeyHex,
+            e2eKeyReceived: payload.e2eKeyReceived
+          });
           ws.close(); _pairingWs = null;
           var ps = document.getElementById('pairingStatus');
           if (ps) { ps.textContent = 'Paired successfully!'; ps.className = 'pairing-status success'; }
@@ -1269,6 +1330,13 @@ ${renderSubscribe(state)}
       var key = row ? row.dataset.hpKey : '';
       if (!key) return;
       var policy = target.value;
+      if (key === '*') {
+        document.querySelectorAll('.hp-select').forEach(function(select) {
+          if (select instanceof HTMLSelectElement && select.dataset.hpKey !== '*') {
+            select.value = policy;
+          }
+        });
+      }
       api.postMessage({ action: 'setHistoryPolicy', key: key, policy: policy });
       return;
     }
@@ -1637,6 +1705,8 @@ body{
 .sub-label.sub-approaching{color:var(--vscode-terminal-ansiYellow,#e2b714)}
 .sub-label.sub-exhausted{color:var(--vscode-terminal-ansiRed,#f14c4c)}
 .sub-label.sub-expiring{color:var(--vscode-terminal-ansiYellow,#e2b714)}
+.upgrade-cta{display:inline-flex;align-items:center;justify-content:center;margin:6px 0 8px;padding:4px 8px;border:1px solid var(--vscode-button-border,rgba(92,156,245,.45));border-radius:4px;background:var(--vscode-button-background,#5c9cf5);color:var(--vscode-button-foreground,#fff);font-size:10px;font-weight:700;letter-spacing:0;text-decoration:none}
+.upgrade-cta:hover{background:var(--vscode-button-hoverBackground,#4a8ae8);text-decoration:none}
 .sub-row{display:flex;align-items:center;justify-content:center;gap:6px;cursor:pointer}
 .sub-row:hover .expand-icon{opacity:1}
 .expand-icon{font-size:10px;opacity:0.4;transition:transform .2s,opacity .2s;color:var(--vscode-descriptionForeground,#888)}
@@ -1656,7 +1726,6 @@ body{
 .redeem-status.err{color:var(--vscode-terminal-ansiRed,#e74c3c)}
 .redeem-hint{text-align:center;font-size:10px;color:var(--vscode-descriptionForeground,#888);margin-bottom:6px;line-height:1.4}
 .redeem-input:disabled{opacity:0.4;cursor:not-allowed}
-.redeem-btn:disabled{opacity:0.4;cursor:not-allowed}
 .qq-group-row{display:flex;align-items:center;justify-content:center;gap:4px;font-size:10px;margin-bottom:3px;color:var(--vscode-descriptionForeground,#888)}
 .qq-icon{font-size:9px;font-weight:600;background:var(--vscode-badge-background,#333);color:var(--vscode-badge-foreground,#fff);padding:0 3px;border-radius:2px;line-height:1.4}
 .qq-number{color:var(--vscode-descriptionForeground,#888)}
@@ -1702,6 +1771,63 @@ body{
 .qr-bottom{display:flex;align-items:center}
 .qr-status{font-size:10px;color:var(--vscode-descriptionForeground,#50506e);min-height:16px}
 .qr-status.success{color:#2ecc71}
+.feishu-pairing{display:flex;flex-direction:column;gap:10px;margin-top:10px}
+.feishu-pair-card{
+  display:flex;flex-direction:column;align-items:center;gap:6px;
+  padding:10px 8px;border-radius:8px;
+  border:1px solid var(--vscode-panel-border,#1e1e2e);
+  background:rgba(255,255,255,.02);
+}
+.feishu-pair-step{
+  font-size:9px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;
+  color:var(--vscode-textLink-foreground,#00ffe0);
+}
+.feishu-step-line{
+  width:100%;
+  text-align:center;
+  white-space:nowrap;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  text-transform:none;
+  letter-spacing:0;
+  font-size:10px;
+}
+.feishu-pair-title{
+  font-size:11px;font-weight:600;color:var(--vscode-editor-foreground,#e8e8f0);
+  text-align:center;
+}
+.feishu-pair-qr{
+  width:100%;display:flex;align-items:center;justify-content:center;
+  min-height:176px;
+}
+.feishu-pair-img{
+  width:100%;max-width:184px;height:auto;display:block;
+  border-radius:6px;background:#fff;
+}
+.feishu-pair-empty{
+  width:100%;max-width:184px;min-height:184px;
+  display:flex;align-items:center;justify-content:center;
+  padding:10px;border-radius:6px;border:1px dashed var(--vscode-panel-border,#333);
+  color:var(--vscode-descriptionForeground,#50506e);font-size:10px;text-align:center;
+}
+.feishu-pair-note{
+  font-size:10px;line-height:1.5;color:var(--vscode-descriptionForeground,#8888a8);
+  text-align:center;min-height:30px;
+}
+.feishu-pair-instructions{
+  padding:10px 12px;border-radius:8px;
+  border:1px solid rgba(0,255,224,.08);
+  background:rgba(0,255,224,.03);
+}
+.feishu-pair-instructions .guide-step{font-size:10px;line-height:1.6;color:var(--vscode-textLink-foreground,#00ffe0);font-weight:700}
+.feishu-pair-instructions .guide-step.muted{color:var(--vscode-descriptionForeground,#8888a8)}
+.feishu-pair-instructions .guide-step.one-line{
+  white-space:normal;
+  overflow:visible;
+  text-overflow:clip;
+  line-height:1.5;
+  text-align:center;
+}
 
 /* paired-compact: shown when device is already paired */
 .paired-compact{padding:2px 0}
@@ -1724,6 +1850,7 @@ body{
 .plat-opt svg{width:14px;height:14px}
 .plat-badge{font-size:7px;padding:1px 4px;border-radius:99px;background:rgba(255,255,255,.06);color:var(--vscode-descriptionForeground,#50506e);white-space:nowrap}
 .tg-guide{margin-top:8px;text-align:left;font-size:10px;color:var(--vscode-descriptionForeground,#50506e);line-height:1.6}
+.key-text{font-family:monospace;font-size:11px;word-break:break-all;background:var(--vscode-editor-background,#1a1a2e);padding:6px 8px;border-radius:4px;margin:4px 0;color:var(--vscode-editor-foreground,#ccc)}
 .guide-step strong{color:var(--vscode-editor-foreground)}
 
 /* ═══════════════════════════════════════════════
@@ -1770,6 +1897,7 @@ body{
 .privacy-tag.forwarded{background:#86efac22;color:#86efac}
 .privacy-tag.blocked{background:#f74d4d22;color:#f74d4d}
 .privacy-tag.sanitized{background:#f59e0b22;color:#f59e0b}
+.privacy-tag.redacted_path{background:#f59e0b22;color:#f59e0b}
 .privacy-source{color:var(--vscode-descriptionForeground,#7878a0)}
 .privacy-len{margin-left:auto;color:var(--vscode-descriptionForeground,#50506e)}
 .privacy-preview{font-size:10px;color:var(--vscode-descriptionForeground,#7878a0);margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:monospace}
