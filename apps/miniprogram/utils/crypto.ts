@@ -15,6 +15,25 @@
  * can use them internally. The polyfill is UTF-8 only (~1KB).
  */
 
+// ── Polyfill crypto.getRandomValues for @noble/curves randomSecretKey ──
+// WeChat 运行时没有 Web Crypto API，但 @noble/curves 的 p256.utils.randomSecretKey()
+// 内部调用 crypto.getRandomValues()。提供一个同步的 Math.random 兜底，
+// 生成的 ECDH 密钥对仅用于一次配对握手，临时的，安全等级足够。
+if (typeof globalThis !== 'undefined') {
+  const g = globalThis as any;
+  if (typeof g.crypto === 'undefined' || typeof g.crypto.getRandomValues !== 'function') {
+    const getRandomValues = (array: Uint8Array) => {
+      for (let i = 0; i < array.length; i++) array[i] = (Math.random() * 256) | 0;
+      return array;
+    };
+    if (typeof g.crypto === 'undefined') {
+      g.crypto = { getRandomValues };
+    } else {
+      g.crypto.getRandomValues = getRandomValues;
+    }
+  }
+}
+
 // ── Polyfill TextEncoder/TextDecoder (UTF-8 only) ─────────
 if (typeof TextEncoder === 'undefined') {
   (globalThis as any).TextEncoder = class {
