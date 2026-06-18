@@ -10,10 +10,25 @@ export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
 
-    if (request.method === 'GET' && url.pathname === '/') {
-      return new Response(renderPage(env), {
-        headers: { 'content-type': 'text/html; charset=utf-8' },
+    // CORS / health-check preflight: respond cheap, never fall through to 404.
+    if (request.method === 'OPTIONS') {
+      return new Response(null, {
+        status: 204,
+        headers: {
+          allow: 'GET, HEAD, POST, OPTIONS',
+          'cache-control': 'public, max-age=86400',
+        },
       });
+    }
+
+    if ((request.method === 'GET' || request.method === 'HEAD') && url.pathname === '/') {
+      const html = renderPage(env);
+      const headers = {
+        'content-type': 'text/html; charset=utf-8',
+        'cache-control': 'public, max-age=300',
+      };
+      // HEAD must not return a body, but should expose the same headers.
+      return new Response(request.method === 'HEAD' ? null : html, { headers });
     }
 
     if (request.method === 'POST' && url.pathname === '/api/paypal/create-order') {
@@ -143,7 +158,6 @@ function renderPage(env: Env): string {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>CodeKey Pro</title>
-<script src="https://www.paypal.com/sdk/js?client-id=${env.PAYPAL_CLIENT_ID}&currency=USD" data-sdk-integration-source="button-factory"></script>
 <style>
 :root {
   --bg: #f5f0eb;
@@ -316,6 +330,9 @@ footer { text-align: center; padding: 20px 0; color: var(--muted); font-size: 12
 </div>
 
 <script>
+const PAYPAL_CLIENT_ID = ${JSON.stringify(env.PAYPAL_CLIENT_ID || '')};
+const PAYPAL_CONFIGURED = !!PAYPAL_CLIENT_ID && !PAYPAL_CLIENT_ID.includes('placeholder') && !PAYPAL_CLIENT_ID.startsWith('sandbox-');
+const CHINA_PAY_URL = ${JSON.stringify(env.CHINA_PAY_URL || 'https://pay.ldxp.cn/shop/6T7QKRTE')};
 const i18n = {
   zh: {
     'title': 'CodeKey Pro',
@@ -423,6 +440,24 @@ function applyLang(lang) {
   });
   document.getElementById('langToggle').textContent = dict['lang-label'];
   document.documentElement.lang = lang === 'zh' ? 'zh-CN' : 'en';
+
+  // When PayPal is not yet configured, downgrade the CTA copy so the
+  // button doesn't promise something we can't deliver, and hint at the
+  // China redeem-code path which always works.
+  if (!PAYPAL_CONFIGURED) {
+    const downgrade = lang === 'zh' ? '即将开放 \u00b7 暂用兑换码' : 'Coming soon \u00b7 use redeem code';
+    document.querySelectorAll('.subscribe-btn.primary').forEach(btn => {
+      btn.textContent = downgrade;
+      btn.style.background = '#94a3b8';
+      btn.style.cursor = 'not-allowed';
+    });
+    const note = document.querySelector('.paypal-note');
+    if (note) {
+      note.textContent = lang === 'zh'
+        ? '\ud83d\udca1 PayPal \u63a5\u5165\u4e2d\u3002\u56fd\u5185\u7528\u6237\u53ef\u76f4\u63a5\u8d2d\u4e70\u5151\u6362\u7801\uff08\u4e0b\u65b9\uff09\u3002'
+        : '\ud83d\udca1 PayPal coming soon. China users can buy a redeem code below right now.';
+    }
+  }
 }
 
 function toggleLang() {
@@ -446,7 +481,42 @@ function startPayPal(plan) {
   container.scrollIntoView({ behavior: 'smooth', block: 'center' });
   if (container.dataset.rendered) return;
   container.dataset.rendered = '1';
-  renderPayPal('paypal-button-' + plan, plan);
+
+  // PayPal Client ID not configured yet — show a friendly notice instead
+  // of trying to load the SDK with a placeholder ID (which would either
+  // fail or stall the page on networks that block paypal.com).
+  if (!PAYPAL_CONFIGURED) {
+    container.innerHTML = '<div style="padding:14px;border:1px dashed var(--border);border-radius:8px;color:var(--muted);font-size:13px;text-align:center;line-height:1.6">'
+      + (currentLang === 'zh'
+        ? 'PayPal 支付正在接入中，请暂时使用<a href="' + CHINA_PAY_URL + '" target="_blank" style="color:var(--primary);font-weight:600">兑换码购买</a>，或加 QQ 群 827453239 联系客服'
+        : 'PayPal checkout is being set up. Please use <a href="' + CHINA_PAY_URL + '" target="_blank" style="color:var(--primary);font-weight:600">redeem code</a> for now, or contact support (QQ Group 827453239)')
+      + '</div>';
+    return;
+  }
+
+  loadPayPalSdk()
+    .then(() => renderPayPal('paypal-button-' + plan, plan))
+    .catch(() => {
+      container.innerHTML = '<div style="padding:12px;color:var(--muted);font-size:13px;text-align:center">'
+        + (currentLang === 'zh' ? 'PayPal 加载失败，请检查网络或使用兑换码购买' : 'Failed to load PayPal. Check your network or use a redeem code.')
+        + '</div>';
+    });
+}
+
+let paypalSdkPromise = null;
+function loadPayPalSdk() {
+  if (paypalSdkPromise) return paypalSdkPromise;
+  paypalSdkPromise = new Promise((resolve, reject) => {
+    const script = document.createElement('script');
+    script.src = 'https://www.paypal.com/sdk/js?client-id=' + encodeURIComponent(PAYPAL_CLIENT_ID) + '&currency=USD';
+    script.async = true;
+    script.dataset.sdkIntegrationSource = 'button-factory';
+    const timer = setTimeout(() => reject(new Error('PayPal SDK timeout')), 12000);
+    script.onload = () => { clearTimeout(timer); resolve(); };
+    script.onerror = () => { clearTimeout(timer); reject(new Error('PayPal SDK load error')); };
+    document.head.appendChild(script);
+  });
+  return paypalSdkPromise;
 }
 
 async function createOrder(plan) {
