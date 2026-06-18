@@ -187,6 +187,22 @@ Page({
             },
             success: (resp: any) => {
               if (resp.statusCode >= 400) {
+                // client_token_invalid / client_token_required 都意味着服务端
+                // 已经认为这个设备解绑了（token 被撤销，或绑定记录已 unbound_at）。
+                // 用户的目标就是解绑，本地静默清理即可，不要弹错误提示。
+                // 404 device not found 同理（绑定已被删除）。
+                const errCode = resp.data?.error;
+                const treatAsUnbound =
+                  errCode === 'client_token_invalid' ||
+                  errCode === 'client_token_required' ||
+                  resp.statusCode === 404;
+                if (treatAsUnbound) {
+                  console.warn('[settings] device already unbound on server, clearing local auth', errCode);
+                  clearAuth();
+                  app.destroyWs();
+                  tt.reLaunch({ url: '/pages/sessions/sessions' });
+                  return;
+                }
                 // 后端 200/4xx 都返回 JSON; fastify 的默认 400 形如
                 // { statusCode, error: 'Bad Request', message: '...' }
                 // 应用层错误形如 { error: 'client_token_required' }

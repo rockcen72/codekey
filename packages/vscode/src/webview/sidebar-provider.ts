@@ -1437,14 +1437,22 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
           signal: AbortSignal.timeout(5000),
         });
         if (!res.ok) {
-          let message = res.statusText || `HTTP ${res.status}`;
-          try {
-            const body = await res.json() as { error?: string };
-            message = body.error || message;
-          } catch {
-            // Keep the HTTP status message when the response body is not JSON.
+          // 401/403/404 都意味着服务端已经认为这台设备解绑了（token 已撤销，
+          // 或绑定关系已不存在，或换了 deviceId）。用户的目标就是解绑，
+          // 本地静默清理即可，不应当卡在错误状态阻止用户继续。
+          // 只有 5xx / 网络错误才提示用户重试。
+          if (res.status === 401 || res.status === 403 || res.status === 404) {
+            log(`[CodeKey] unpair: server reports already unbound (${res.status}), clearing local`);
+          } else {
+            let message = res.statusText || `HTTP ${res.status}`;
+            try {
+              const body = await res.json() as { error?: string };
+              message = body.error || message;
+            } catch {
+              // Keep the HTTP status message when the response body is not JSON.
+            }
+            throw new Error(message);
           }
-          throw new Error(message);
         }
       } catch (err) {
         const msg = err instanceof Error ? err.message : 'server request failed';
