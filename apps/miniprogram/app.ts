@@ -111,7 +111,7 @@ App({
       const used = payload?.used ?? 0;
       const limit = payload?.limit ?? 50;
       wx.showToast({
-        title: `本月审批已用完 (${used}/${limit})，升级 Pro 解锁无限`,
+        title: `本月审批已用完 (${used}/${limit})，升级专业版解锁无限`,
         icon: 'none',
         duration: 3000,
       });

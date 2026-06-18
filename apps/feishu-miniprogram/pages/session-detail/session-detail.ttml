@@ -2,7 +2,7 @@
   <view class="detail-topbar">
     <button class="back-btn" bindtap="goBack"></button>
     <view class="title-wrap">
-      <text class="detail-title ellipsis">{{session.metadataTitle || session.agentType || 'AI Agent'}}</text>
+      <text class="detail-title ellipsis">{{session.metadataTitle || session.agentType || 'VS Code 会话'}}</text>
     </view>
     <view class="ws-indicator {{wsConnected ? 'online' : 'offline'}}">
       <view class="ws-dot"></view>
@@ -25,14 +25,14 @@
   </view>
 
   <view class="e2e-banner stale" tt:if="{{e2eStatus === 'stale'}}">
-    <text>桌面端 E2E 密钥已更新，请在设置页面重新配对手机。</text>
+    <text>桌面端 加密密钥已更新，请在设置页面重新配对手机。</text>
   </view>
 
   <scroll-view class="timeline {{hasPrimaryPendingEvent && !approvalSheetOpen ? 'timeline-with-dock' : ''}}" scroll-y scroll-into-view="{{scrollToId}}" scroll-top="{{scrollTop}}" scroll-with-animation bindscroll="onScroll">
     <view class="empty" tt:if="{{chatMessages.length === 0}}">
       <text class="empty-icon">◌</text>
       <text class="empty-title">暂无消息</text>
-      <text class="empty-text">当 Agent 请求审批、完成任务或等待指令时，会显示在这里。</text>
+      <text class="empty-text">当 编程助手 请求审批、完成任务或等待指令时，会显示在这里。</text>
     </view>
 
     <block tt:for="{{chatMessages}}" tt:key="id">
@@ -57,7 +57,7 @@
       <!-- Agent message bubble -->
       <view tt:elif="{{item.isCommandStarted}}" class="msg-row left">
         <view class="chat-stack agent-stack" id="msg-{{item.id}}">
-          <text class="sender-name">{{item.senderName || 'agent'}}</text>
+          <text class="sender-name">{{item.senderName || '编程助手'}}</text>
           <view class="msg-bubble agent agent-{{item.agentClass}}">
             <text class="msg-text">{{item.content}}</text>
             <text tt:if="{{item.displayTime}}" class="msg-time">{{item.displayTime}}</text>
@@ -68,7 +68,7 @@
       <!-- Agent event card -->
       <view tt:else class="msg-row left">
         <view class="chat-stack agent-stack" id="msg-{{item.id}}">
-          <text class="sender-name">{{item.senderName || 'agent'}}</text>
+          <text class="sender-name">{{item.senderName || '编程助手'}}</text>
           <view class="event-card accent-{{item.accent}} agent-{{item.agentClass}}">
             <view class="event-head">
               <view class="event-head-left">
@@ -174,7 +174,7 @@
         <view class="dock-reply">
           <input
             class="dock-reply-input"
-            placeholder="{{primaryPendingEvent.requiresInput ? '输入选择或说明...' : '回复 Agent...'}}"
+            placeholder="{{primaryPendingEvent.requiresInput ? '输入选择或说明...' : '回复...'}}"
             value="{{dockReplyText}}"
             bindinput="onDockReplyInput"
             confirm-type="send"
@@ -214,7 +214,7 @@
         </view>
       </view>
       <view class="composer-input-wrap">
-        <input class="composer-input" placeholder="给 Agent 发送指令..." value="{{commandText}}" bindinput="onCommandInput" />
+        <input class="composer-input" placeholder="发送指令..." value="{{commandText}}" bindinput="onCommandInput" />
       </view>
       <view class="composer-send {{canSendCommand ? 'active' : ''}}" bindtap="sendCommand">
         <view class="send-arrow">
@@ -261,7 +261,7 @@
       </view>
 
       <view class="sheet-reply">
-        <input class="sheet-reply-input" placeholder="{{approvalEvent.requiresInput ? '输入选择或补充说明...' : '回复 AI...'}}" value="{{sheetReplyText}}" bindinput="onSheetReplyInput" />
+        <input class="sheet-reply-input" placeholder="{{approvalEvent.requiresInput ? '输入选择或补充说明...' : '回复...'}}" value="{{sheetReplyText}}" bindinput="onSheetReplyInput" />
         <button class="sheet-reply-btn" bindtap="sendSheetReply">发送</button>
       </view>
 

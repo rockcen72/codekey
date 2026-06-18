@@ -1,9 +1,10 @@
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { UnboundDeviceError, userRequest } from '../api/client';
 import type { UserDevice } from '../api/types';
 import type { AuthState } from '../hooks/useAuth';
 import { useDevices } from '../hooks/useDevices';
+import { useSubscription } from '../hooks/useSubscription';
 import { DeviceBadge } from '../components/DeviceBadge';
 import { formatDate } from '../utils/format';
 import { getContentKey, getE2EStatus } from '../auth/device-storage';
@@ -16,6 +17,7 @@ interface Props {
 export function SettingsPage({ auth }: Props) {
   const enabled = !!auth.token && !auth.loading;
   const devices = useDevices(enabled);
+  const subscription = useSubscription(enabled);
   const navigate = useNavigate();
   const [unbindTarget, setUnbindTarget] = useState<UserDevice | null>(null);
   const [busy, setBusy] = useState(false);
@@ -81,6 +83,34 @@ export function SettingsPage({ auth }: Props) {
           ))}
         </section>
       )}
+
+      <Link to="/pro" className="settings-sub-row">
+        <div className="settings-sub-info">
+          <span className="settings-sub-title">Subscription</span>
+          <span className="settings-sub-meta">
+            {(() => {
+              const sub = subscription.subscription;
+              if (!sub) return 'Loading...';
+              if (sub.tier === 'pro') {
+                return sub.expiresAt
+                  ? `Pro \u00b7 renews ${formatDate(sub.expiresAt)}`
+                  : 'Pro active';
+              }
+              if (sub.tier === 'trial') {
+                return sub.expiresAt
+                  ? `Trial \u00b7 ends ${formatDate(sub.expiresAt)}`
+                  : 'Trial active';
+              }
+              return sub.usage
+                ? `Free \u00b7 ${sub.usage.used}/${sub.usage.limit} approvals used`
+                : 'Free plan';
+            })()}
+          </span>
+        </div>
+        <span className="settings-sub-action">
+          {subscription.subscription?.tier === 'pro' ? 'Manage' : 'Upgrade'} {'\u2192'}
+        </span>
+      </Link>
 
       <div className="e2e-section">
         <span className="e2e-section-title">E2E Encryption</span>

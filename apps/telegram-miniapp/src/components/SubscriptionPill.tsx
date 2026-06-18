@@ -1,3 +1,4 @@
+import { Link } from 'react-router-dom';
 import type { SubscriptionStatus } from '../api/types';
 
 interface Props {
@@ -28,12 +29,16 @@ export function SubscriptionPill({ subscription }: Props) {
   const isExpiringSoon = tier !== 'free' && days !== null && days >= 0 && days <= 3;
   const label = tier === 'free' && usage
     ? quotaState === 'exhausted'
-      ? 'Free · Used up'
-      : `Free · ${usage.used}/${usage.limit}`
+      ? 'Free \u00b7 Used up'
+      : `Free \u00b7 ${usage.used}/${usage.limit}`
     : tier === 'trial' && days !== null && days >= 0
-      ? `Trial · ${days}d`
+      ? `Trial \u00b7 ${days}d`
       : TIER_LABEL[tier] || tier.toUpperCase();
   const className = isExpiringSoon ? 'sub-pill-expiring' : `sub-pill-${quotaState === 'hidden' ? `tier-${tier}` : quotaState}`;
 
-  return <span className={`sub-pill ${className}`}>{label}</span>;
+  return (
+    <Link to="/pro" className={`sub-pill sub-pill-link ${className}`} aria-label="Manage subscription">
+      {label}
+    </Link>
+  );
 }

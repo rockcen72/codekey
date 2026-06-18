@@ -6,16 +6,16 @@ import { ensureUserToken } from '../../services/auth';
 const app = getApp<any>();
 
 const AGENT_LABELS: Record<string, string> = {
-  'claude-code': 'Claude Code',
-  'claude-code-hook': 'Claude Code',
-  'codex': 'Codex',
-  'opencode': 'OpenCode',
+  'claude-code': 'Claude 编程',
+  'claude-code-hook': 'Claude 编程',
+  'codex': 'Codex 编程',
+  'opencode': 'OpenCode 编程',
 };
 
 type DisplaySession = Session & { displayRuntime?: string; agentClass?: 'claude' | 'codex' | 'opencode' | 'unknown' };
 
 function agentLabel(agentType: string | undefined): string {
-  return agentType ? (AGENT_LABELS[agentType] || agentType) : 'Agent';
+  return agentType ? (AGENT_LABELS[agentType] || agentType) : '编程助手';
 }
 
 function collectAgentTabs(sessions: DisplaySession[]): { key: string; label: string }[] {
@@ -368,11 +368,11 @@ Page({
     // Compact text for the top-bar pill (≤ 8 Chinese chars or
     // ~12 Latin chars). Tapping the pill opens settings.
     if (tier === 'paid') {
-      const planLabel = plan === 'yearly' ? '年付' : plan === 'monthly' ? '月付' : (plan || 'Pro');
+      const planLabel = plan === 'yearly' ? '年付' : plan === 'monthly' ? '月付' : (plan || '专业版');
       if (isExpiringSoon && daysRemaining != null) {
-        return `Pro · ${planLabel} · 剩${daysRemaining}天`;
+        return `专业版 · ${planLabel} · 剩${daysRemaining}天`;
       }
-      return `Pro · ${planLabel}`;
+      return `专业版 · ${planLabel}`;
     }
     if (tier === 'trial') {
       if (daysRemaining != null && daysRemaining > 0) return `试用 · ${daysRemaining}天`;
@@ -382,11 +382,11 @@ Page({
     // free — show the count for both normal and approaching so the
     // user can see exactly how close they are; the pill's amber
     // background (sub-pill-approaching) does the warning work.
-    if (quotaState === 'exhausted') return 'Free · 已用完';
+    if (quotaState === 'exhausted') return '免费版 · 已用完';
     if ((quotaState === 'normal' || quotaState === 'approaching') && usage) {
-      return `Free · ${usage.used}/${usage.limit}`;
+      return `免费版 · ${usage.used}/${usage.limit}`;
     }
-    return 'Free';
+    return '免费版';
   },
 
   formatTime(iso: string): string {

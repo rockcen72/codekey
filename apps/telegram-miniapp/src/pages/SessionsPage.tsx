@@ -2,7 +2,6 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { SessionCard } from '../components/SessionCard';
 import { SubscriptionPill } from '../components/SubscriptionPill';
-import { RedeemCode } from '../components/RedeemCode';
 import { UnboundDeviceError, userRequest } from '../api/client';
 import type { UserDevice } from '../api/types';
 import type { AuthState } from '../hooks/useAuth';
@@ -164,16 +163,63 @@ export function SessionsPage({ auth }: Props) {
 
       {devices.error || sessions.error || unbindError ? <div className="notice error-text">{devices.error || sessions.error || unbindError}</div> : null}
 
-      {subscription.subscription && subscription.subscription.tier === 'free' ? (
-        <section className="subscription-summary compact-redeem">
-          <div style={{display:'flex', gap:8, marginBottom:10}}>
-            <a className="primary-button link-button" style={{flex:1, textAlign:'center', fontSize:13, textDecoration:'none'}} href="https://tinymoney.ccwu.cc" target="_blank">
-              Subscribe to Pro →
-            </a>
-          </div>
-          <RedeemCode onRedeemed={() => void subscription.refresh()} />
-        </section>
-      ) : null}
+      {(() => {
+        const sub = subscription.subscription;
+        if (!sub) return null;
+        const usage = sub.usage;
+        const days = sub.expiresAt
+          ? Math.ceil((new Date(sub.expiresAt).getTime() - Date.now()) / 86_400_000)
+          : null;
+        const exhausted = sub.tier === 'free' && usage && usage.used >= usage.limit;
+        const approaching = sub.tier === 'free' && usage && !exhausted && usage.used >= Math.floor(usage.limit * 0.8);
+        const expiringSoon = sub.tier !== 'free' && days !== null && days >= 0 && days <= 3;
+
+        if (exhausted) {
+          return (
+            <Link to="/pro" className="upgrade-banner upgrade-banner-exhausted">
+              <span className="upgrade-banner-icon">{'\u26A0'}</span>
+              <span className="upgrade-banner-text">
+                <strong>Approval limit reached.</strong> Upgrade to Pro for unlimited approvals.
+              </span>
+              <span className="upgrade-banner-arrow">{'\u2192'}</span>
+            </Link>
+          );
+        }
+        if (expiringSoon) {
+          return (
+            <Link to="/pro" className="upgrade-banner upgrade-banner-warn">
+              <span className="upgrade-banner-icon">{'\u23F3'}</span>
+              <span className="upgrade-banner-text">
+                {sub.tier === 'trial' ? 'Trial' : 'Pro'} ends in {days} {days === 1 ? 'day' : 'days'}. Subscribe to keep Pro features.
+              </span>
+              <span className="upgrade-banner-arrow">{'\u2192'}</span>
+            </Link>
+          );
+        }
+        if (approaching) {
+          return (
+            <Link to="/pro" className="upgrade-banner upgrade-banner-warn">
+              <span className="upgrade-banner-icon">{'\u26A0'}</span>
+              <span className="upgrade-banner-text">
+                Only {usage!.limit - usage!.used} approvals left this month. Go unlimited with Pro.
+              </span>
+              <span className="upgrade-banner-arrow">{'\u2192'}</span>
+            </Link>
+          );
+        }
+        if (sub.tier === 'free') {
+          return (
+            <Link to="/pro" className="upgrade-banner upgrade-banner-soft">
+              <span className="upgrade-banner-icon">{'\u2728'}</span>
+              <span className="upgrade-banner-text">
+                <strong>Unlock unlimited approvals</strong> with CodeKey Pro.
+              </span>
+              <span className="upgrade-banner-arrow">{'\u2192'}</span>
+            </Link>
+          );
+        }
+        return null;
+      })()}
 
       {devices.devices.length === 0 ? (
         <section className="empty-state">

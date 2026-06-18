@@ -8,6 +8,7 @@ import { LoginPage } from './pages/LoginPage';
 import { SessionDetailPage } from './pages/SessionDetailPage';
 import { SessionsPage } from './pages/SessionsPage';
 import { SettingsPage } from './pages/SettingsPage';
+import { ProPage } from './pages/ProPage';
 import { getTelegramStartParam, parsePairingStartParam } from './auth/pairing-start-param';
 
 const PROCESSED_KEY = 'ck:processed_start_param';
@@ -98,6 +99,7 @@ export default function App() {
       <Routes>
         <Route path="/login" element={<LoginPage auth={auth} />} />
         <Route path="/bind" element={<BindPage auth={auth} />} />
+        <Route path="/pro" element={auth.token ? <ProPage auth={auth} /> : <Navigate to="/login" replace />} />
         <Route path="/settings" element={auth.token ? <SettingsPage auth={auth} /> : <Navigate to="/login" replace />} />
         <Route path="/sessions/:id" element={auth.token ? <SessionDetailPage auth={auth} /> : <Navigate to="/login" replace />} />
         <Route path="/" element={<DeepLinkRedirect auth={auth} />} />

@@ -2022,3 +2022,345 @@ a {
 .composer-send.active {
   opacity: 1;
 }
+
+/* ── Upgrade Banner (SessionsPage CTA) ───────────── */
+
+.upgrade-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 14px;
+  padding: 12px 14px;
+  border: 1px solid var(--ck-border);
+  border-radius: var(--ck-radius-lg);
+  background: var(--ck-surface);
+  color: var(--ck-text);
+  text-decoration: none;
+  font-size: 13px;
+  line-height: 1.4;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.upgrade-banner:active {
+  background: rgba(31, 37, 35, 0.04);
+}
+
+.upgrade-banner-icon {
+  flex-shrink: 0;
+  font-size: 16px;
+  line-height: 1;
+}
+
+.upgrade-banner-text {
+  flex: 1;
+  min-width: 0;
+  color: var(--ck-text);
+}
+
+.upgrade-banner-text strong {
+  font-weight: 700;
+}
+
+.upgrade-banner-arrow {
+  flex-shrink: 0;
+  color: var(--ck-muted);
+  font-size: 16px;
+  line-height: 1;
+}
+
+.upgrade-banner-soft {
+  border-color: var(--ck-border);
+  background: var(--ck-surface);
+}
+
+.upgrade-banner-warn {
+  border-color: rgba(217, 119, 6, 0.3);
+  background: rgba(217, 119, 6, 0.06);
+}
+
+.upgrade-banner-warn .upgrade-banner-arrow {
+  color: var(--ck-warning);
+}
+
+.upgrade-banner-exhausted {
+  border-color: rgba(220, 38, 38, 0.3);
+  background: rgba(220, 38, 38, 0.06);
+}
+
+.upgrade-banner-exhausted .upgrade-banner-text strong {
+  color: var(--ck-danger);
+}
+
+.upgrade-banner-exhausted .upgrade-banner-arrow {
+  color: var(--ck-danger);
+}
+
+/* ── Subscription Pill (clickable) ───────────────── */
+
+.sub-pill-link {
+  text-decoration: none;
+  cursor: pointer;
+}
+
+/* ── Settings: Subscription Row ──────────────────── */
+
+.settings-sub-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 14px;
+  padding: 14px;
+  border: 1px solid var(--ck-border);
+  border-radius: var(--ck-radius-lg);
+  background: var(--ck-surface);
+  text-decoration: none;
+  color: var(--ck-text);
+  transition: background 0.15s;
+}
+
+.settings-sub-row:active {
+  background: rgba(31, 37, 35, 0.04);
+}
+
+.settings-sub-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.settings-sub-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--ck-text);
+}
+
+.settings-sub-meta {
+  font-size: 12px;
+  color: var(--ck-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-sub-action {
+  flex-shrink: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ck-primary);
+}
+
+/* ── Pro Page ────────────────────────────────────── */
+
+.pro-page {
+  padding-bottom: 40px;
+}
+
+.pro-status-tag {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 0 10px;
+  border-radius: var(--ck-radius-full);
+  border: 1px solid var(--ck-border);
+  background: var(--ck-surface);
+  color: var(--ck-muted);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+}
+
+.pro-status-pro {
+  border-color: rgba(5, 150, 105, 0.3);
+  background: rgba(5, 150, 105, 0.08);
+  color: var(--ck-success);
+}
+
+.pro-status-trial {
+  border-color: rgba(217, 119, 6, 0.3);
+  background: rgba(217, 119, 6, 0.08);
+  color: var(--ck-warning);
+}
+
+.pro-hero {
+  margin: 8px 0 28px;
+}
+
+.pro-hero .eyebrow {
+  margin-bottom: 8px;
+  color: var(--ck-primary);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 1.2px;
+  text-transform: uppercase;
+}
+
+.pro-title {
+  margin: 0 0 10px;
+  font-size: 28px;
+  font-weight: 800;
+  line-height: 1.15;
+  letter-spacing: -0.5px;
+  color: var(--ck-text);
+}
+
+.pro-tagline {
+  margin: 0 0 22px;
+  color: var(--ck-muted);
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+.pro-compare {
+  display: flex;
+  align-items: stretch;
+  gap: 0;
+  padding: 18px 14px;
+  border: 1px solid var(--ck-border);
+  border-radius: var(--ck-radius-lg);
+  background: var(--ck-surface);
+}
+
+.pro-compare-col {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  text-align: center;
+}
+
+.pro-compare-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.8px;
+  text-transform: uppercase;
+  color: var(--ck-subtle);
+}
+
+.pro-compare-value {
+  font-size: 32px;
+  font-weight: 800;
+  line-height: 1;
+  color: var(--ck-text);
+  letter-spacing: -1px;
+}
+
+.pro-compare-value-pro {
+  color: var(--ck-primary);
+  font-size: 38px;
+}
+
+.pro-compare-unit {
+  margin-left: 4px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ck-muted);
+  letter-spacing: 0;
+}
+
+.pro-compare-foot {
+  font-size: 11px;
+  color: var(--ck-muted);
+  font-weight: 600;
+}
+
+.pro-compare-divider {
+  display: flex;
+  align-items: center;
+  padding: 0 8px;
+  color: var(--ck-subtle);
+  font-size: 18px;
+}
+
+.pro-compare-col-pro .pro-compare-label {
+  color: var(--ck-primary);
+}
+
+.pro-section-title {
+  margin: 0 0 14px;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: var(--ck-muted);
+}
+
+.pro-features {
+  margin-bottom: 28px;
+}
+
+.pro-feature-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.pro-feature-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  padding: 14px 4px;
+  border-bottom: 1px solid var(--ck-border);
+}
+
+.pro-feature-item:last-child {
+  border-bottom: 0;
+}
+
+.pro-feature-icon {
+  flex-shrink: 0;
+  width: 28px;
+  font-size: 18px;
+  line-height: 1.4;
+  color: var(--ck-text);
+}
+
+.pro-feature-text {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.pro-feature-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--ck-text);
+}
+
+.pro-feature-desc {
+  font-size: 13px;
+  color: var(--ck-muted);
+  line-height: 1.5;
+}
+
+.pro-cta {
+  margin: 8px 0 28px;
+}
+
+.pro-cta-button {
+  width: 100%;
+  min-height: 50px;
+  font-size: 15px;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.pro-cta-hint {
+  margin: 10px 0 0;
+  text-align: center;
+  font-size: 12px;
+  color: var(--ck-muted);
+}
+
+.pro-redeem {
+  padding-top: 24px;
+  border-top: 1px solid var(--ck-border);
+}
+

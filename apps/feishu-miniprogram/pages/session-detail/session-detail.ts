@@ -774,7 +774,7 @@ Page({
           id: e.id + '-sys',
           type: 'system',
           side: 'left',
-          content: 'AI 代理等待指令中...',
+          content: '等待指令中...',
           displayTime: time,
           typeLabel: '',
           isTaskComplete: false,
@@ -802,13 +802,13 @@ Page({
           id: e.id,
           type: 'ai',
           side: 'left',
-          content: 'Agent 正在处理...',
+          content: '正在处理...',
           displayTime: time,
           typeLabel: '',
           isTaskComplete: false,
           isCommandStarted: true,
           command: '',
-          summary: 'Agent 正在处理...',
+          summary: '正在处理...',
           risk_level: '',
           riskText: '',
           pending: false,
@@ -853,7 +853,7 @@ Page({
           eventId: e.id,
           accent: 'complete',
           agentClass,
-          kindBadge: 'DONE',
+          kindBadge: '已完成',
           senderName: agentName,
         });
         continue;
@@ -890,7 +890,7 @@ Page({
           eventId: e.id,
           accent,
           agentClass,
-          kindBadge: e.pending ? 'REQUEST' : (this.getDecisionText(e.decision) || 'DONE'),
+          kindBadge: e.pending ? '审批中' : (this.getDecisionText(e.decision) || '已完成'),
           toolName: e.data?.toolName || '',
           senderName: agentName,
         });
@@ -938,7 +938,7 @@ Page({
           typeLabel: '选择请求',
           isTaskComplete: false,
           command: '',
-          summary: e.data?.summary || 'Agent 需要你的选择',
+          summary: e.data?.summary || '需要你的选择',
           risk_level: e.risk_level || 'medium',
           riskText: '',
           pending: e.pending,
@@ -948,7 +948,7 @@ Page({
           eventId: e.id,
           accent,
           agentClass,
-          kindBadge: e.pending ? 'INPUT' : (this.getDecisionText(e.decision) || 'DONE'),
+          kindBadge: e.pending ? '待选择' : (this.getDecisionText(e.decision) || '已完成'),
           senderName: agentName,
           requiresInput: true,
           inputOptions,
@@ -1556,7 +1556,7 @@ Page({
         if (label) lines.push(desc ? `- ${label}: ${desc}` : `- ${label}`);
       }
     }
-    return lines.join('\n') || 'Agent 需要你的选择';
+    return lines.join('\n') || '需要你的选择';
   },
 
   extractInputOptions(questions: any[]): { label: string; value: string; description?: string }[] {
@@ -1574,26 +1574,26 @@ Page({
 });
 
 const AGENT_DISPLAY_NAMES: Record<string, string> = {
-  'claude-code': 'Claude Code',
-  'claude-code-hook': 'Claude Code',
-  'codex': 'Codex',
-  'opencode': 'OpenCode',
+  'claude-code': 'Claude 编程',
+  'claude-code-hook': 'Claude 编程',
+  'codex': 'Codex 编程',
+  'opencode': 'OpenCode 编程',
 };
 
 const AGENT_CHAT_NAMES: Record<string, string> = {
-  'claude-code': 'claude code',
-  'claude-code-hook': 'claude code',
-  'codex': 'codex',
-  'opencode': 'opencode',
+  'claude-code': 'Claude 编程',
+  'claude-code-hook': 'Claude 编程',
+  'codex': 'Codex 编程',
+  'opencode': 'OpenCode 编程',
 };
 
 function agentDisplayName(agentType?: string): string {
-  if (!agentType) return 'AI Agent';
+  if (!agentType) return 'VS Code 会话';
   return AGENT_DISPLAY_NAMES[agentType] || agentType;
 }
 
 function agentChatName(agentType?: string): string {
-  if (!agentType) return 'agent';
+  if (!agentType) return '编程助手';
   return AGENT_CHAT_NAMES[agentType] || agentType;
 }
 

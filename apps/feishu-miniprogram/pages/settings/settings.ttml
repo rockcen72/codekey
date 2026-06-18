@@ -21,21 +21,21 @@
   <view class="section" tt:if="{{loaded}}">
     <text class="section-title">订阅</text>
     <view class="info-row info-row-warning" tt:if="{{tier === 'paid' && isExpiringSoon}}">
-      <text class="label">Pro 即将到期</text>
+      <text class="label">专业版即将到期</text>
       <text class="value">还剩 {{daysRemaining}} 天 · 续期使用下方兑换码</text>
     </view>
     <view class="info-row" tt:elif="{{tier === 'paid'}}">
-      <text class="label">Pro 已开通</text>
+      <text class="label">专业版已开通</text>
       <text class="value">有效期至 {{expiresAt}}</text>
     </view>
     <view class="info-row" tt:elif="{{tier === 'trial'}}">
-      <text class="label">Pro 试用中</text>
+      <text class="label">专业版试用中</text>
       <text class="value" tt:if="{{daysRemaining != null && daysRemaining > 0}}">还剩 {{daysRemaining}} 天</text>
       <text class="value" tt:elif="{{daysRemaining === 0}}">今天到期</text>
       <text class="value" tt:else>{{expiresAt}} 到期</text>
     </view>
     <view class="info-row" tt:elif="{{tier === 'free'}}">
-      <text class="label">当前为 Free</text>
+      <text class="label">当前为免费版</text>
       <text class="value" tt:if="{{usage}}">本月已用 {{usage.used}}/{{usage.limit}} 次</text>
       <text class="value" tt:else>本月初级版</text>
     </view>
@@ -108,6 +108,6 @@
   <view class="section about">
     <text class="section-title">关于</text>
     <text class="about-text">CodeKey v1.0.6</text>
-    <text class="about-text">AI 远程控制工具</text>
+    <text class="about-text">远程控制工具</text>
   </view>
 </view>
