@@ -178,17 +178,14 @@ header p { color: var(--muted); font-size: 14px; line-height: 1.6; }
 .plan-features { list-style: none; margin-bottom: 16px; flex: 1; }
 .plan-features li { padding: 5px 0; font-size: 13px; }
 .plan-features li::before { content: "✓ "; color: var(--success); font-weight: 700; }
-.paypal-button-container { margin-top: auto; min-height: 40px; }
-.paypal-button-container.disabled { opacity: 0.4; pointer-events: none; }
-
-.payment-options { display: flex; gap: 12px; margin-bottom: 32px; }
-.payment-card { flex: 1; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 20px; display: flex; flex-direction: column; }
-.payment-card h2 { font-size: 15px; font-weight: 800; margin-bottom: 8px; }
-.payment-card p { color: var(--muted); font-size: 13px; line-height: 1.6; margin-bottom: 12px; flex: 1; }
-.payment-btn { display: inline-flex; align-items: center; gap: 6px; padding: 10px 20px; border: 0; border-radius: 8px; font-size: 14px; font-weight: 700; text-decoration: none; cursor: pointer; color: #fff; }
-.payment-btn:hover { opacity: 0.9; }
-.payment-btn.paypal { background: #0070ba; }
-.payment-btn.china { background: #e53e3e; }
+.plan-features li.missing::before { content: "— "; color: var(--muted); font-weight: 400; }
+.subscribe-btn { display: block; width: 100%; padding: 10px; border: 0; border-radius: 8px; font-size: 14px; font-weight: 700; text-align: center; cursor: pointer; text-decoration: none; margin-top: auto; }
+.subscribe-btn.primary { background: var(--primary); color: #fff; }
+.subscribe-btn.primary:hover { background: #1d4ed8; }
+.subscribe-btn.china { background: #e53e3e; color: #fff; }
+.subscribe-btn.china:hover { background: #c53030; }
+.subscribe-btn.ghost { background: transparent; color: var(--muted); border: 1px solid var(--border); cursor: default; }
+.paypal-button-container { margin-top: 8px; min-height: 40px; }
 
 .guide-section { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 20px; margin-bottom: 32px; }
 .guide-section h2 { font-size: 15px; font-weight: 800; margin-bottom: 10px; }
@@ -232,11 +229,11 @@ footer { text-align: center; padding: 20px 0; color: var(--muted); font-size: 12
     <div class="plan-card">
       <div class="plan-name" data-i18n="plan-free-name">Free</div>
       <div class="plan-price">$0 <span data-i18n="plan-free-period">/month</span></div>
-      <div class="plan-desc" data-i18n="plan-free-desc">Great for first-time users</div>
+      <div class="plan-desc" data-i18n="plan-free-desc">14-day trial included, then 50 approvals/month</div>
       <ul class="plan-features">
         <li data-i18n="plan-free-f1">1 device</li>
-        <li data-i18n="plan-free-f2">Basic approvals</li>
-        <li data-i18n="plan-free-f3">Limited history</li>
+        <li data-i18n="plan-free-f2">50 approvals / month</li>
+        <li data-i18n="plan-free-f3">Limited session history</li>
         <li data-i18n="plan-free-f4">Community support</li>
       </ul>
       <div style="text-align:center;padding:10px 0;color:var(--muted);font-size:12px;" data-i18n="plan-free-current">Currently active</div>
@@ -245,14 +242,16 @@ footer { text-align: center; padding: 20px 0; color: var(--muted); font-size: 12
     <div class="plan-card featured" data-badge="Recommended">
       <div class="plan-name" data-i18n="plan-monthly-name">Pro Monthly</div>
       <div class="plan-price">$9.99 <span data-i18n="plan-monthly-period">/month</span></div>
-      <div class="plan-desc" data-i18n="plan-monthly-desc">Subscribe anytime, cancel anytime</div>
+      <div class="plan-desc" data-i18n="plan-monthly-desc">Unlimited everything, cancel anytime</div>
       <ul class="plan-features">
         <li data-i18n="plan-pro-f1">Unlimited devices</li>
-        <li data-i18n="plan-pro-f2">Full session history</li>
-        <li data-i18n="plan-pro-f3">End-to-end encryption</li>
-        <li data-i18n="plan-pro-f4">Priority support</li>
+        <li data-i18n="plan-pro-f2">Unlimited approvals</li>
+        <li data-i18n="plan-pro-f3">Full session history</li>
+        <li data-i18n="plan-pro-f4">End-to-end encryption</li>
+        <li data-i18n="plan-pro-f5">Priority support</li>
       </ul>
-      <div class="paypal-button-container" id="paypal-button-monthly"></div>
+      <button class="subscribe-btn primary" onclick="startPayPal('monthly')" data-i18n="plan-monthly-btn">Subscribe with PayPal</button>
+      <div class="paypal-button-container" id="paypal-button-monthly" style="display:none"></div>
     </div>
 
     <div class="plan-card">
@@ -261,33 +260,34 @@ footer { text-align: center; padding: 20px 0; color: var(--muted); font-size: 12
       <div class="plan-desc" data-i18n="plan-yearly-desc">Save 17% — $8.33/month</div>
       <ul class="plan-features">
         <li data-i18n="plan-pro-f1">Unlimited devices</li>
-        <li data-i18n="plan-pro-f2">Full session history</li>
-        <li data-i18n="plan-pro-f3">End-to-end encryption</li>
-        <li data-i18n="plan-pro-f4">Priority support</li>
+        <li data-i18n="plan-pro-f2">Unlimited approvals</li>
+        <li data-i18n="plan-pro-f3">Full session history</li>
+        <li data-i18n="plan-pro-f4">End-to-end encryption</li>
+        <li data-i18n="plan-pro-f5">Priority support</li>
       </ul>
-      <div class="paypal-button-container" id="paypal-button-yearly"></div>
+      <button class="subscribe-btn primary" onclick="startPayPal('yearly')" data-i18n="plan-yearly-btn">Subscribe with PayPal</button>
+      <div class="paypal-button-container" id="paypal-button-yearly" style="display:none"></div>
     </div>
   </div>
 
   <div class="payment-options">
     <div class="payment-card">
-      <h2 data-i18n="paypal-title">PayPal</h2>
-      <p data-i18n="paypal-desc">Pay with PayPal, credit card, or debit card. Subscription activates automatically.</p>
-      <a class="payment-btn paypal" href="#" onclick="scrollToPayPal();return false">PayPal</a>
+      <h2 data-i18n="paypal-title">💳 PayPal</h2>
+      <p data-i18n="paypal-desc">Pay with PayPal, credit card, or debit card. Subscription activates automatically after payment.</p>
     </div>
     <div class="payment-card">
-      <h2 data-i18n="china-title">China Payment</h2>
-      <p data-i18n="china-desc">Alipay, WeChat Pay, and bank cards. Purchase a redeem code, then activate in VS Code.</p>
-      <a class="payment-btn china" href="${env.CHINA_PAY_URL}" target="_blank" data-i18n="china-btn">Buy Redeem Code →</a>
+      <h2 data-i18n="china-title">🇨🇳 China Payment</h2>
+      <p data-i18n="china-desc">Alipay, WeChat Pay, and bank cards. Purchase a redeem code, then activate in VS Code sidebar.</p>
+      <a class="subscribe-btn china" href="${env.CHINA_PAY_URL}" target="_blank" data-i18n="china-btn">Buy Redeem Code →</a>
     </div>
   </div>
 
   <div class="guide-section">
     <h2 data-i18n="guide-title">How to Subscribe</h2>
     <ol>
-      <li data-i18n="guide-1"><strong>Choose a plan</strong> — Click the PayPal button above or the China payment link</li>
-      <li data-i18n="guide-2"><strong>Complete payment</strong> — PayPal users pay directly; China users receive a redeem code</li>
-      <li data-i18n="guide-3"><strong>Activate</strong> — PayPal activates automatically; enter your redeem code in the VS Code sidebar</li>
+      <li data-i18n="guide-1"><strong>Choose a plan</strong> — Click "Subscribe with PayPal" on your preferred plan</li>
+      <li data-i18n="guide-2"><strong>Complete payment</strong> — Log in to PayPal and confirm. Subscription activates automatically.</li>
+      <li data-i18n="guide-3"><strong>China users</strong> — Click "Buy Redeem Code" below, purchase via Alipay/WeChat Pay, then enter the code in VS Code sidebar</li>
       <li data-i18n="guide-4"><strong>Enjoy</strong> — Refresh your phone to see the Pro badge</li>
     </ol>
   </div>
@@ -295,20 +295,20 @@ footer { text-align: center; padding: 20px 0; color: var(--muted); font-size: 12
   <div class="faq-section">
     <h2 data-i18n="faq-title">FAQ</h2>
     <div class="faq-item">
-      <div class="faq-q" data-i18n="faq-1-q">How do I activate after payment?</div>
-      <div class="faq-a" data-i18n="faq-1-a">PayPal payments activate automatically. For China payments, enter the redeem code in the VS Code sidebar footer.</div>
+      <div class="faq-q" data-i18n="faq-1-q">What's included in the free plan?</div>
+      <div class="faq-a" data-i18n="faq-1-a">New users get a 14-day free trial with full Pro features. After the trial, you get 50 approvals per month on 1 device with limited history.</div>
     </div>
     <div class="faq-item">
-      <div class="faq-q" data-i18n="faq-2-q">Can I cancel anytime?</div>
-      <div class="faq-a" data-i18n="faq-2-a">Yes. Monthly and yearly plans can be cancelled anytime. Access continues until the end of the current billing period.</div>
+      <div class="faq-q" data-i18n="faq-2-q">How do I activate after payment?</div>
+      <div class="faq-a" data-i18n="faq-2-a">PayPal payments activate automatically. For China payments, enter the redeem code in the VS Code sidebar footer.</div>
     </div>
     <div class="faq-item">
-      <div class="faq-q" data-i18n="faq-3-q">How do China users pay?</div>
-      <div class="faq-a" data-i18n="faq-3-a">Click "Buy Redeem Code" above, purchase via Alipay/WeChat Pay, then enter the code in VS Code to activate.</div>
+      <div class="faq-q" data-i18n="faq-3-q">Can I cancel anytime?</div>
+      <div class="faq-a" data-i18n="faq-3-a">Yes. Monthly and yearly plans can be cancelled anytime. Access continues until the end of the current billing period.</div>
     </div>
     <div class="faq-item">
-      <div class="faq-q" data-i18n="faq-4-q">Can I switch devices?</div>
-      <div class="faq-a" data-i18n="faq-4-a">Yes. Pro supports unlimited devices. Add or remove devices anytime in settings.</div>
+      <div class="faq-q" data-i18n="faq-4-q">What does "unlimited devices" mean?</div>
+      <div class="faq-a" data-i18n="faq-4-a">Pro users can pair multiple VS Code windows or machines to the same CodeKey account. Free plan is limited to 1 device.</div>
     </div>
   </div>
 
@@ -321,88 +321,94 @@ footer { text-align: center; padding: 20px 0; color: var(--muted); font-size: 12
 const i18n = {
   zh: {
     'title': 'CodeKey Pro',
-    'subtitle': '解锁无限设备、完整会话历史、端到端加密和优先支持',
+    'subtitle': '解锁无限审批、多设备管理、端到端加密和优先支持',
     'plan-free-name': 'Free',
     'plan-free-period': '/月',
-    'plan-free-desc': '适合初次体验',
+    'plan-free-desc': '含 14 天试用，之后每月 50 次审批',
     'plan-free-f1': '1 台设备',
-    'plan-free-f2': '基础审批功能',
+    'plan-free-f2': '每月 50 次审批',
     'plan-free-f3': '有限会话历史',
     'plan-free-f4': '社区支持',
     'plan-free-current': '当前已在使用',
     'plan-monthly-name': 'Pro 月付',
     'plan-monthly-period': '/月',
-    'plan-monthly-desc': '按需订阅，随时取消',
-    'plan-pro-f1': '无限设备',
-    'plan-pro-f2': '完整会话历史',
-    'plan-pro-f3': '端到端加密',
-    'plan-pro-f4': '优先支持',
+    'plan-monthly-desc': '无限使用，随时取消',
+    'plan-monthly-btn': 'PayPal 订阅',
     'plan-yearly-name': 'Pro 年付',
     'plan-yearly-period': '/年',
     'plan-yearly-desc': '省 17% — $8.33/月',
-    'paypal-title': 'PayPal',
-    'paypal-desc': '支持 PayPal、信用卡、借记卡支付，订阅自动激活。',
-    'china-title': '国内支付',
-    'china-desc': '支持支付宝、微信支付、银行卡。购买兑换码后在 VS Code 中激活。',
+    'plan-yearly-btn': 'PayPal 订阅',
+    'plan-pro-f1': '无限设备',
+    'plan-pro-f2': '无限审批',
+    'plan-pro-f3': '完整会话历史',
+    'plan-pro-f4': '端到端加密',
+    'plan-pro-f5': '优先支持',
+    'paypal-title': '💳 PayPal',
+    'paypal-desc': '支持 PayPal、信用卡、借记卡支付，支付成功后自动激活订阅。',
+    'china-title': '🇨🇳 国内支付',
+    'china-desc': '支持支付宝、微信支付、银行卡。购买兑换码后在 VS Code 侧边栏输入激活。',
     'china-btn': '购买兑换码 →',
     'guide-title': '订阅指南',
-    'guide-1': '<strong>选择方案</strong> — 点击上方 PayPal 按钮或国内支付链接',
-    'guide-2': '<strong>完成支付</strong> — PayPal 直接支付；国内用户获取兑换码',
-    'guide-3': '<strong>激活订阅</strong> — PayPal 自动激活；兑换码在 VS Code 侧边栏输入',
+    'guide-1': '<strong>选择方案</strong> — 点击心仪方案下的"PayPal 订阅"按钮',
+    'guide-2': '<strong>完成支付</strong> — 登录 PayPal 确认支付，订阅自动激活',
+    'guide-3': '<strong>国内用户</strong> — 点击下方"购买兑换码"，通过支付宝/微信支付购买后在 VS Code 侧边栏输入',
     'guide-4': '<strong>开始使用</strong> — 刷新手机端即可看到 Pro 标识',
     'faq-title': '常见问题',
-    'faq-1-q': '支付后如何激活？',
-    'faq-1-a': 'PayPal 支付自动激活。国内支付购买的兑换码，请在 VS Code 侧边栏底部输入。',
-    'faq-2-q': '可以随时取消吗？',
-    'faq-2-a': '可以。月付和年付均可随时取消，当前周期结束后停止续费。',
-    'faq-3-q': '国内用户如何支付？',
-    'faq-3-a': '点击上方"购买兑换码"，通过支付宝/微信支付购买，然后在 VS Code 中输入激活。',
-    'faq-4-q': '订阅后可以换绑设备吗？',
-    'faq-4-a': '可以。Pro 支持无限设备，随时在设置中添加或移除。',
+    'faq-1-q': '免费版包含什么？',
+    'faq-1-a': '新用户首次配对自动获得 14 天 Pro 试用。试用结束后每月有 50 次审批额度，限 1 台设备。',
+    'faq-2-q': '支付后如何激活？',
+    'faq-2-a': 'PayPal 支付自动激活。国内支付购买的兑换码，请在 VS Code 侧边栏底部输入。',
+    'faq-3-q': '可以随时取消吗？',
+    'faq-3-a': '可以。月付和年付均可随时取消，当前周期结束后停止续费。',
+    'faq-4-q': '"无限设备"是什么意思？',
+    'faq-4-a': 'Pro 用户可以在多个 VS Code 窗口或电脑上配对同一 CodeKey 账号。免费版限 1 台设备。',
     'footer-contact': 'QQ 群 827453239',
     'lang-label': '🇺🇸 English',
     'badge': '推荐',
   },
   en: {
     'title': 'CodeKey Pro',
-    'subtitle': 'Unlock unlimited devices, full session history, E2E encryption & priority support',
+    'subtitle': 'Unlock unlimited approvals, multi-device support, E2E encryption & priority support',
     'plan-free-name': 'Free',
     'plan-free-period': '/month',
-    'plan-free-desc': 'Great for first-time users',
+    'plan-free-desc': '14-day trial included, then 50 approvals/month',
     'plan-free-f1': '1 device',
-    'plan-free-f2': 'Basic approvals',
-    'plan-free-f3': 'Limited history',
+    'plan-free-f2': '50 approvals / month',
+    'plan-free-f3': 'Limited session history',
     'plan-free-f4': 'Community support',
     'plan-free-current': 'Currently active',
     'plan-monthly-name': 'Pro Monthly',
     'plan-monthly-period': '/month',
-    'plan-monthly-desc': 'Subscribe anytime, cancel anytime',
-    'plan-pro-f1': 'Unlimited devices',
-    'plan-pro-f2': 'Full session history',
-    'plan-pro-f3': 'End-to-end encryption',
-    'plan-pro-f4': 'Priority support',
+    'plan-monthly-desc': 'Unlimited everything, cancel anytime',
+    'plan-monthly-btn': 'Subscribe with PayPal',
     'plan-yearly-name': 'Pro Yearly',
     'plan-yearly-period': '/year',
     'plan-yearly-desc': 'Save 17% — $8.33/month',
-    'paypal-title': 'PayPal',
-    'paypal-desc': 'Pay with PayPal, credit card, or debit card. Subscription activates automatically.',
-    'china-title': 'China Payment',
-    'china-desc': 'Alipay, WeChat Pay, and bank cards. Purchase a redeem code, then activate in VS Code.',
+    'plan-yearly-btn': 'Subscribe with PayPal',
+    'plan-pro-f1': 'Unlimited devices',
+    'plan-pro-f2': 'Unlimited approvals',
+    'plan-pro-f3': 'Full session history',
+    'plan-pro-f4': 'End-to-end encryption',
+    'plan-pro-f5': 'Priority support',
+    'paypal-title': '💳 PayPal',
+    'paypal-desc': 'Pay with PayPal, credit card, or debit card. Subscription activates automatically after payment.',
+    'china-title': '🇨🇳 China Payment',
+    'china-desc': 'Alipay, WeChat Pay, and bank cards. Purchase a redeem code, then activate in VS Code sidebar.',
     'china-btn': 'Buy Redeem Code →',
     'guide-title': 'How to Subscribe',
-    'guide-1': '<strong>Choose a plan</strong> — Click the PayPal button above or the China payment link',
-    'guide-2': '<strong>Complete payment</strong> — PayPal users pay directly; China users receive a redeem code',
-    'guide-3': '<strong>Activate</strong> — PayPal activates automatically; enter your redeem code in the VS Code sidebar',
+    'guide-1': '<strong>Choose a plan</strong> — Click "Subscribe with PayPal" on your preferred plan',
+    'guide-2': '<strong>Complete payment</strong> — Log in to PayPal and confirm. Subscription activates automatically.',
+    'guide-3': '<strong>China users</strong> — Click "Buy Redeem Code" below, purchase via Alipay/WeChat Pay, then enter the code in VS Code sidebar',
     'guide-4': '<strong>Enjoy</strong> — Refresh your phone to see the Pro badge',
     'faq-title': 'FAQ',
-    'faq-1-q': 'How do I activate after payment?',
-    'faq-1-a': 'PayPal payments activate automatically. For China payments, enter the redeem code in the VS Code sidebar footer.',
-    'faq-2-q': 'Can I cancel anytime?',
-    'faq-2-a': 'Yes. Monthly and yearly plans can be cancelled anytime. Access continues until the end of the current billing period.',
-    'faq-3-q': 'How do China users pay?',
-    'faq-3-a': 'Click "Buy Redeem Code" above, purchase via Alipay/WeChat Pay, then enter the code in VS Code to activate.',
-    'faq-4-q': 'Can I switch devices?',
-    'faq-4-a': 'Yes. Pro supports unlimited devices. Add or remove devices anytime in settings.',
+    'faq-1-q': "What's included in the free plan?",
+    'faq-1-a': 'New users get a 14-day free trial with full Pro features. After the trial, you get 50 approvals per month on 1 device with limited history.',
+    'faq-2-q': 'How do I activate after payment?',
+    'faq-2-a': 'PayPal payments activate automatically. For China payments, enter the redeem code in the VS Code sidebar footer.',
+    'faq-3-q': 'Can I cancel anytime?',
+    'faq-3-a': 'Yes. Monthly and yearly plans can be cancelled anytime. Access continues until the end of the current billing period.',
+    'faq-4-q': 'What does "unlimited devices" mean?',
+    'faq-4-a': 'Pro users can pair multiple VS Code windows or machines to the same CodeKey account. Free plan is limited to 1 device.',
     'footer-contact': 'QQ Group 827453239',
     'lang-label': '🇨🇳 中文',
     'badge': 'Recommended',
@@ -442,8 +448,13 @@ function showStatus(msg, type) {
   setTimeout(() => { el.className = 'status-banner'; }, 5000);
 }
 
-function scrollToPayPal() {
-  document.querySelector('.paypal-button-container').scrollIntoView({ behavior: 'smooth' });
+function startPayPal(plan) {
+  const container = document.getElementById('paypal-button-' + plan);
+  container.style.display = 'block';
+  container.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  if (container.dataset.rendered) return;
+  container.dataset.rendered = '1';
+  renderPayPal('paypal-button-' + plan, plan);
 }
 
 async function createOrder(plan) {
@@ -484,8 +495,7 @@ function renderPayPal(containerId, plan) {
   }).render('#' + containerId);
 }
 
-renderPayPal('paypal-button-monthly', 'monthly');
-renderPayPal('paypal-button-yearly', 'yearly');
+// PayPal buttons render on-demand via startPayPal()
 </script>
 </body>
 </html>`;
