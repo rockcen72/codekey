@@ -313,6 +313,57 @@ function base64ToBytes(b64: string): Uint8Array {
   return bytes;
 }
 
+// ── ECDH P-256 Key Exchange (绑定码 E2E) ──────────────────────
+
+export function generateEcdhKeyPair(): { publicKeyHex: string; privateKeyHex: string } {
+  const _nobleEcdh = require('../vendor/e2e-key-exchange.js');
+  const p256 = _nobleEcdh.p256;
+  const privateKeyBytes = p256.utils.randomSecretKey();
+  const publicKeyBytes = p256.getPublicKey(privateKeyBytes, false);
+  return {
+    publicKeyHex: bytesToHex(publicKeyBytes),
+    privateKeyHex: bytesToHex(privateKeyBytes),
+  };
+}
+
+export function deriveEcdhKeyMaterial(
+  privateKeyHex: string,
+  peerPublicKeyHex: string,
+): { contentKeyHex: string; keyId: string } {
+  const _nobleEcdh = require('../vendor/e2e-key-exchange.js');
+  const p256 = _nobleEcdh.p256;
+  const hkdf = _nobleEcdh.hkdf;
+  const sha256 = _nobleEcdh.sha256;
+
+  const sharedSecretPoint = p256.getSharedSecret(
+    hexToBytes(privateKeyHex),
+    hexToBytes(peerPublicKeyHex),
+  );
+  const sharedSecret = sharedSecretPoint.subarray(1);
+
+  const HKDF_INFO = 'codekey-e2e-key-v1';
+  const DERIVED_LENGTH = 40;
+
+  const derived = hkdf(sha256, sharedSecret, new Uint8Array(0), utf8ToBytes(HKDF_INFO), DERIVED_LENGTH);
+  return {
+    contentKeyHex: bytesToHex(derived.subarray(0, 32)),
+    keyId: bytesToHex(derived.subarray(32, 40)),
+  };
+}
+
+export function generateEcdhContentKey(
+  peerPublicKeyHex: string,
+): { publicKeyHex: string; privateKeyHex: string; contentKeyHex: string; keyId: string } {
+  const kp = generateEcdhKeyPair();
+  const material = deriveEcdhKeyMaterial(kp.privateKeyHex, peerPublicKeyHex);
+  return {
+    publicKeyHex: kp.publicKeyHex,
+    privateKeyHex: kp.privateKeyHex,
+    contentKeyHex: material.contentKeyHex,
+    keyId: material.keyId,
+  };
+}
+
 export function generateUUID(): string {
   // Fallback UUID v4 for WeChat (no crypto.randomUUID)
   const hex = '0123456789abcdef';

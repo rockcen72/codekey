@@ -79,14 +79,21 @@ export interface ConfirmResult {
   clientToken: string;
   deviceId: string;
   desktopNotified?: boolean;
+  e2eAvailable?: boolean;
+  desktopPublicKeyHex?: string;
+  e2eKeyReceived?: boolean;
 }
 
 export function createApi(serverUrl: string) {
   const api = serverUrl.endsWith('/api/v1') ? serverUrl : `${serverUrl}/api/v1`;
 
   return {
-    confirmCode(code: string, platform: 'wechat' | 'feishu' = 'wechat'): Promise<ConfirmResult> {
-      return request<ConfirmResult>('POST', `${api}/devices/confirm`, { code, platform });
+    confirmCode(code: string, platform: 'wechat' | 'feishu' = 'wechat', phonePublicKeyHex?: string): Promise<ConfirmResult> {
+      return request<ConfirmResult>('POST', `${api}/devices/confirm`, {
+        code,
+        platform,
+        ...(phonePublicKeyHex ? { phonePublicKeyHex } : {}),
+      });
     },
 
     getSessions(): Promise<Session[]> {
