@@ -142,7 +142,7 @@ function renderPage(env: Env): string {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>CodeKey Pro — 订阅</title>
+<title>CodeKey Pro</title>
 <script src="https://www.paypal.com/sdk/js?client-id=${env.PAYPAL_CLIENT_ID}&currency=USD" data-sdk-integration-source="button-factory"></script>
 <style>
 :root {
@@ -157,151 +157,293 @@ function renderPage(env: Env): string {
 }
 * { box-sizing: border-box; margin: 0; padding: 0; }
 body { background: var(--bg); color: var(--text); min-height: 100vh; }
-.container { max-width: 720px; margin: 0 auto; padding: 40px 16px; }
+.container { max-width: 960px; margin: 0 auto; padding: 32px 16px; }
 
-header { text-align: center; margin-bottom: 40px; }
-header h1 { font-size: 32px; font-weight: 800; margin-bottom: 8px; }
-header p { color: var(--muted); font-size: 15px; line-height: 1.6; }
+.lang-bar { text-align: right; margin-bottom: 8px; }
+.lang-btn { border: 1px solid var(--border); background: var(--surface); color: var(--muted); padding: 4px 12px; border-radius: 999px; font-size: 12px; font-weight: 600; cursor: pointer; }
+.lang-btn:hover { border-color: var(--primary); color: var(--primary); }
 
-.plans { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; margin-bottom: 40px; }
-.plan-card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 24px; display: flex; flex-direction: column; }
+header { text-align: center; margin-bottom: 32px; }
+header h1 { font-size: 28px; font-weight: 800; margin-bottom: 6px; }
+header p { color: var(--muted); font-size: 14px; line-height: 1.6; }
+
+.plans { display: flex; gap: 12px; margin-bottom: 32px; }
+.plan-card { flex: 1; min-width: 0; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 20px; display: flex; flex-direction: column; }
 .plan-card.featured { border-color: var(--primary); box-shadow: 0 0 0 2px rgba(37,99,235,0.15); position: relative; }
-.plan-card.featured::before { content: "推荐"; position: absolute; top: -10px; left: 50%; transform: translateX(-50%); background: var(--primary); color: #fff; font-size: 11px; font-weight: 700; padding: 2px 12px; border-radius: 999px; }
-.plan-name { font-size: 14px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px; }
-.plan-price { font-size: 36px; font-weight: 800; margin-bottom: 4px; }
-.plan-price span { font-size: 14px; font-weight: 400; color: var(--muted); }
-.plan-desc { color: var(--muted); font-size: 13px; margin-bottom: 20px; }
-.plan-features { list-style: none; margin-bottom: 24px; flex: 1; }
-.plan-features li { padding: 6px 0; font-size: 14px; }
+.plan-card.featured::before { content: attr(data-badge); position: absolute; top: -10px; left: 50%; transform: translateX(-50%); background: var(--primary); color: #fff; font-size: 11px; font-weight: 700; padding: 2px 12px; border-radius: 999px; white-space: nowrap; }
+.plan-name { font-size: 13px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px; }
+.plan-price { font-size: 32px; font-weight: 800; margin-bottom: 2px; }
+.plan-price span { font-size: 13px; font-weight: 400; color: var(--muted); }
+.plan-desc { color: var(--muted); font-size: 12px; margin-bottom: 16px; }
+.plan-features { list-style: none; margin-bottom: 16px; flex: 1; }
+.plan-features li { padding: 5px 0; font-size: 13px; }
 .plan-features li::before { content: "✓ "; color: var(--success); font-weight: 700; }
-.paypal-button-container { margin-top: auto; min-height: 45px; }
+.paypal-button-container { margin-top: auto; min-height: 40px; }
 .paypal-button-container.disabled { opacity: 0.4; pointer-events: none; }
 
-.china-pay-section { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 24px; margin-bottom: 40px; }
-.china-pay-section h2 { font-size: 18px; font-weight: 800; margin-bottom: 12px; }
-.china-pay-section p { color: var(--muted); font-size: 14px; line-height: 1.6; margin-bottom: 16px; }
-.china-pay-btn { display: inline-flex; align-items: center; gap: 8px; padding: 12px 24px; background: #e53e3e; color: #fff; border: 0; border-radius: 8px; font-size: 15px; font-weight: 700; text-decoration: none; cursor: pointer; }
-.china-pay-btn:hover { background: #c53030; }
+.payment-options { display: flex; gap: 12px; margin-bottom: 32px; }
+.payment-card { flex: 1; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 20px; display: flex; flex-direction: column; }
+.payment-card h2 { font-size: 15px; font-weight: 800; margin-bottom: 8px; }
+.payment-card p { color: var(--muted); font-size: 13px; line-height: 1.6; margin-bottom: 12px; flex: 1; }
+.payment-btn { display: inline-flex; align-items: center; gap: 6px; padding: 10px 20px; border: 0; border-radius: 8px; font-size: 14px; font-weight: 700; text-decoration: none; cursor: pointer; color: #fff; }
+.payment-btn:hover { opacity: 0.9; }
+.payment-btn.paypal { background: #0070ba; }
+.payment-btn.china { background: #e53e3e; }
 
-.guide-section { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 24px; margin-bottom: 40px; }
-.guide-section h2 { font-size: 18px; font-weight: 800; margin-bottom: 12px; }
-.guide-section ol { padding-left: 20px; }
-.guide-section li { padding: 6px 0; font-size: 14px; line-height: 1.6; color: var(--muted); }
+.guide-section { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 20px; margin-bottom: 32px; }
+.guide-section h2 { font-size: 15px; font-weight: 800; margin-bottom: 10px; }
+.guide-section ol { padding-left: 18px; }
+.guide-section li { padding: 5px 0; font-size: 13px; line-height: 1.6; color: var(--muted); }
 .guide-section li strong { color: var(--text); }
 
-.faq-section { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 24px; }
-.faq-section h2 { font-size: 18px; font-weight: 800; margin-bottom: 16px; }
-.faq-item { padding: 12px 0; border-bottom: 1px solid var(--border); }
+.faq-section { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 20px; }
+.faq-section h2 { font-size: 15px; font-weight: 800; margin-bottom: 12px; }
+.faq-item { padding: 10px 0; border-bottom: 1px solid var(--border); }
 .faq-item:last-child { border-bottom: 0; }
-.faq-q { font-weight: 700; font-size: 14px; margin-bottom: 4px; }
-.faq-a { color: var(--muted); font-size: 13px; line-height: 1.6; }
+.faq-q { font-weight: 700; font-size: 13px; margin-bottom: 3px; }
+.faq-a { color: var(--muted); font-size: 12px; line-height: 1.6; }
 
-.status-banner { display: none; padding: 12px 16px; border-radius: 8px; margin-bottom: 20px; font-size: 14px; font-weight: 600; text-align: center; }
+.status-banner { display: none; padding: 10px 14px; border-radius: 8px; margin-bottom: 16px; font-size: 13px; font-weight: 600; text-align: center; }
 .status-banner.success { display: block; background: #f0fdf4; color: #166534; border: 1px solid #bbf7d0; }
 .status-banner.error { display: block; background: #fef2f2; color: #991b1b; border: 1px solid #fecaca; }
 
 footer { text-align: center; padding: 20px 0; color: var(--muted); font-size: 12px; }
+
+@media (max-width: 640px) {
+  .plans { flex-direction: column; }
+  .payment-options { flex-direction: column; }
+}
 </style>
 </head>
 <body>
 <div class="container">
+  <div class="lang-bar">
+    <button class="lang-btn" id="langToggle" onclick="toggleLang()">🇨🇳 中文</button>
+  </div>
+
   <header>
-    <h1>CodeKey Pro</h1>
-    <p>解锁全部功能：多设备管理、完整会话历史、端到端加密、优先支持</p>
+    <h1 id="title">CodeKey Pro</h1>
+    <p id="subtitle">Unlock unlimited devices, full session history, E2E encryption & priority support</p>
   </header>
 
   <div id="statusBanner" class="status-banner"></div>
 
   <div class="plans">
     <div class="plan-card">
-      <div class="plan-name">Free</div>
-      <div class="plan-price">$0 <span>/月</span></div>
-      <div class="plan-desc">适合初次体验</div>
+      <div class="plan-name" data-i18n="plan-free-name">Free</div>
+      <div class="plan-price">$0 <span data-i18n="plan-free-period">/month</span></div>
+      <div class="plan-desc" data-i18n="plan-free-desc">Great for first-time users</div>
       <ul class="plan-features">
-        <li>1 台设备</li>
-        <li>基础审批功能</li>
-        <li>有限会话历史</li>
-        <li>社区支持</li>
+        <li data-i18n="plan-free-f1">1 device</li>
+        <li data-i18n="plan-free-f2">Basic approvals</li>
+        <li data-i18n="plan-free-f3">Limited history</li>
+        <li data-i18n="plan-free-f4">Community support</li>
       </ul>
-      <div style="text-align:center;padding:12px 0;color:var(--muted);font-size:13px;">当前已在使用</div>
+      <div style="text-align:center;padding:10px 0;color:var(--muted);font-size:12px;" data-i18n="plan-free-current">Currently active</div>
     </div>
 
-    <div class="plan-card featured">
-      <div class="plan-name">Pro 月付</div>
-      <div class="plan-price">$9.99 <span>/月</span></div>
-      <div class="plan-desc">按需订阅，随时取消</div>
+    <div class="plan-card featured" data-badge="Recommended">
+      <div class="plan-name" data-i18n="plan-monthly-name">Pro Monthly</div>
+      <div class="plan-price">$9.99 <span data-i18n="plan-monthly-period">/month</span></div>
+      <div class="plan-desc" data-i18n="plan-monthly-desc">Subscribe anytime, cancel anytime</div>
       <ul class="plan-features">
-        <li>无限设备</li>
-        <li>完整会话历史</li>
-        <li>端到端加密</li>
-        <li>优先支持</li>
+        <li data-i18n="plan-pro-f1">Unlimited devices</li>
+        <li data-i18n="plan-pro-f2">Full session history</li>
+        <li data-i18n="plan-pro-f3">End-to-end encryption</li>
+        <li data-i18n="plan-pro-f4">Priority support</li>
       </ul>
       <div class="paypal-button-container" id="paypal-button-monthly"></div>
     </div>
 
     <div class="plan-card">
-      <div class="plan-name">Pro 年付</div>
-      <div class="plan-price">$99.99 <span>/年</span></div>
-      <div class="plan-desc">省 17%，相当于 $8.33/月</div>
+      <div class="plan-name" data-i18n="plan-yearly-name">Pro Yearly</div>
+      <div class="plan-price">$99.99 <span data-i18n="plan-yearly-period">/year</span></div>
+      <div class="plan-desc" data-i18n="plan-yearly-desc">Save 17% — $8.33/month</div>
       <ul class="plan-features">
-        <li>无限设备</li>
-        <li>完整会话历史</li>
-        <li>端到端加密</li>
-        <li>优先支持</li>
+        <li data-i18n="plan-pro-f1">Unlimited devices</li>
+        <li data-i18n="plan-pro-f2">Full session history</li>
+        <li data-i18n="plan-pro-f3">End-to-end encryption</li>
+        <li data-i18n="plan-pro-f4">Priority support</li>
       </ul>
       <div class="paypal-button-container" id="paypal-button-yearly"></div>
     </div>
   </div>
 
-  <div class="china-pay-section">
-    <h2>🇨🇳 国内支付</h2>
-    <p>无法使用 PayPal？你可以通过国内支付平台购买兑换码，然后在 CodeKey 侧边栏输入兑换码激活 Pro 订阅。</p>
-    <a class="china-pay-btn" href="${env.CHINA_PAY_URL}" target="_blank">前往购买兑换码 →</a>
+  <div class="payment-options">
+    <div class="payment-card">
+      <h2 data-i18n="paypal-title">PayPal</h2>
+      <p data-i18n="paypal-desc">Pay with PayPal, credit card, or debit card. Subscription activates automatically.</p>
+      <a class="payment-btn paypal" href="#" onclick="scrollToPayPal();return false">PayPal</a>
+    </div>
+    <div class="payment-card">
+      <h2 data-i18n="china-title">China Payment</h2>
+      <p data-i18n="china-desc">Alipay, WeChat Pay, and bank cards. Purchase a redeem code, then activate in VS Code.</p>
+      <a class="payment-btn china" href="${env.CHINA_PAY_URL}" target="_blank" data-i18n="china-btn">Buy Redeem Code →</a>
+    </div>
   </div>
 
   <div class="guide-section">
-    <h2>📖 订阅指南</h2>
+    <h2 data-i18n="guide-title">How to Subscribe</h2>
     <ol>
-      <li><strong>选择方案</strong> — 点击上方 PayPal 按钮或国内支付链接</li>
-      <li><strong>完成支付</strong> — PayPal 用户直接登录支付；国内用户购买兑换码</li>
-      <li><strong>激活订阅</strong> — 支付成功后，在 VS Code 侧边栏底部输入兑换码激活</li>
-      <li><strong>开始使用</strong> — 刷新手机端即可看到 Pro 标识</li>
+      <li data-i18n="guide-1"><strong>Choose a plan</strong> — Click the PayPal button above or the China payment link</li>
+      <li data-i18n="guide-2"><strong>Complete payment</strong> — PayPal users pay directly; China users receive a redeem code</li>
+      <li data-i18n="guide-3"><strong>Activate</strong> — PayPal activates automatically; enter your redeem code in the VS Code sidebar</li>
+      <li data-i18n="guide-4"><strong>Enjoy</strong> — Refresh your phone to see the Pro badge</li>
     </ol>
   </div>
 
   <div class="faq-section">
-    <h2>❓ 常见问题</h2>
+    <h2 data-i18n="faq-title">FAQ</h2>
     <div class="faq-item">
-      <div class="faq-q">支付后如何激活？</div>
-      <div class="faq-a">PayPal 支付成功后系统会自动激活订阅。国内支付购买的兑换码，请在 VS Code 侧边栏底部输入兑换。</div>
+      <div class="faq-q" data-i18n="faq-1-q">How do I activate after payment?</div>
+      <div class="faq-a" data-i18n="faq-1-a">PayPal payments activate automatically. For China payments, enter the redeem code in the VS Code sidebar footer.</div>
     </div>
     <div class="faq-item">
-      <div class="faq-q">可以随时取消吗？</div>
-      <div class="faq-a">月付和年付均可随时取消，当前周期结束后不再续费，已付费用不退还。</div>
+      <div class="faq-q" data-i18n="faq-2-q">Can I cancel anytime?</div>
+      <div class="faq-a" data-i18n="faq-2-a">Yes. Monthly and yearly plans can be cancelled anytime. Access continues until the end of the current billing period.</div>
     </div>
     <div class="faq-item">
-      <div class="faq-q">国内用户如何支付？</div>
-      <div class="faq-a">点击上方"前往购买兑换码"按钮，通过国内支付平台购买兑换码，然后在 VS Code 侧边栏输入即可激活。</div>
+      <div class="faq-q" data-i18n="faq-3-q">How do China users pay?</div>
+      <div class="faq-a" data-i18n="faq-3-a">Click "Buy Redeem Code" above, purchase via Alipay/WeChat Pay, then enter the code in VS Code to activate.</div>
     </div>
     <div class="faq-item">
-      <div class="faq-q">订阅后可以换绑设备吗？</div>
-      <div class="faq-a">可以。Pro 用户支持无限设备，你可以在设置中随时添加或移除设备。</div>
+      <div class="faq-q" data-i18n="faq-4-q">Can I switch devices?</div>
+      <div class="faq-a" data-i18n="faq-4-a">Yes. Pro supports unlimited devices. Add or remove devices anytime in settings.</div>
     </div>
   </div>
 
   <footer>
-    <p>CodeKey &copy; 2026 · 如有问题请联系 QQ 群 827453239</p>
+    <p>CodeKey &copy; 2026 · <span data-i18n="footer-contact">QQ Group 827453239</span></p>
   </footer>
 </div>
 
 <script>
-const plans = { monthly: 'monthly', yearly: 'yearly' };
+const i18n = {
+  zh: {
+    'title': 'CodeKey Pro',
+    'subtitle': '解锁无限设备、完整会话历史、端到端加密和优先支持',
+    'plan-free-name': 'Free',
+    'plan-free-period': '/月',
+    'plan-free-desc': '适合初次体验',
+    'plan-free-f1': '1 台设备',
+    'plan-free-f2': '基础审批功能',
+    'plan-free-f3': '有限会话历史',
+    'plan-free-f4': '社区支持',
+    'plan-free-current': '当前已在使用',
+    'plan-monthly-name': 'Pro 月付',
+    'plan-monthly-period': '/月',
+    'plan-monthly-desc': '按需订阅，随时取消',
+    'plan-pro-f1': '无限设备',
+    'plan-pro-f2': '完整会话历史',
+    'plan-pro-f3': '端到端加密',
+    'plan-pro-f4': '优先支持',
+    'plan-yearly-name': 'Pro 年付',
+    'plan-yearly-period': '/年',
+    'plan-yearly-desc': '省 17% — $8.33/月',
+    'paypal-title': 'PayPal',
+    'paypal-desc': '支持 PayPal、信用卡、借记卡支付，订阅自动激活。',
+    'china-title': '国内支付',
+    'china-desc': '支持支付宝、微信支付、银行卡。购买兑换码后在 VS Code 中激活。',
+    'china-btn': '购买兑换码 →',
+    'guide-title': '订阅指南',
+    'guide-1': '<strong>选择方案</strong> — 点击上方 PayPal 按钮或国内支付链接',
+    'guide-2': '<strong>完成支付</strong> — PayPal 直接支付；国内用户获取兑换码',
+    'guide-3': '<strong>激活订阅</strong> — PayPal 自动激活；兑换码在 VS Code 侧边栏输入',
+    'guide-4': '<strong>开始使用</strong> — 刷新手机端即可看到 Pro 标识',
+    'faq-title': '常见问题',
+    'faq-1-q': '支付后如何激活？',
+    'faq-1-a': 'PayPal 支付自动激活。国内支付购买的兑换码，请在 VS Code 侧边栏底部输入。',
+    'faq-2-q': '可以随时取消吗？',
+    'faq-2-a': '可以。月付和年付均可随时取消，当前周期结束后停止续费。',
+    'faq-3-q': '国内用户如何支付？',
+    'faq-3-a': '点击上方"购买兑换码"，通过支付宝/微信支付购买，然后在 VS Code 中输入激活。',
+    'faq-4-q': '订阅后可以换绑设备吗？',
+    'faq-4-a': '可以。Pro 支持无限设备，随时在设置中添加或移除。',
+    'footer-contact': 'QQ 群 827453239',
+    'lang-label': '🇺🇸 English',
+    'badge': '推荐',
+  },
+  en: {
+    'title': 'CodeKey Pro',
+    'subtitle': 'Unlock unlimited devices, full session history, E2E encryption & priority support',
+    'plan-free-name': 'Free',
+    'plan-free-period': '/month',
+    'plan-free-desc': 'Great for first-time users',
+    'plan-free-f1': '1 device',
+    'plan-free-f2': 'Basic approvals',
+    'plan-free-f3': 'Limited history',
+    'plan-free-f4': 'Community support',
+    'plan-free-current': 'Currently active',
+    'plan-monthly-name': 'Pro Monthly',
+    'plan-monthly-period': '/month',
+    'plan-monthly-desc': 'Subscribe anytime, cancel anytime',
+    'plan-pro-f1': 'Unlimited devices',
+    'plan-pro-f2': 'Full session history',
+    'plan-pro-f3': 'End-to-end encryption',
+    'plan-pro-f4': 'Priority support',
+    'plan-yearly-name': 'Pro Yearly',
+    'plan-yearly-period': '/year',
+    'plan-yearly-desc': 'Save 17% — $8.33/month',
+    'paypal-title': 'PayPal',
+    'paypal-desc': 'Pay with PayPal, credit card, or debit card. Subscription activates automatically.',
+    'china-title': 'China Payment',
+    'china-desc': 'Alipay, WeChat Pay, and bank cards. Purchase a redeem code, then activate in VS Code.',
+    'china-btn': 'Buy Redeem Code →',
+    'guide-title': 'How to Subscribe',
+    'guide-1': '<strong>Choose a plan</strong> — Click the PayPal button above or the China payment link',
+    'guide-2': '<strong>Complete payment</strong> — PayPal users pay directly; China users receive a redeem code',
+    'guide-3': '<strong>Activate</strong> — PayPal activates automatically; enter your redeem code in the VS Code sidebar',
+    'guide-4': '<strong>Enjoy</strong> — Refresh your phone to see the Pro badge',
+    'faq-title': 'FAQ',
+    'faq-1-q': 'How do I activate after payment?',
+    'faq-1-a': 'PayPal payments activate automatically. For China payments, enter the redeem code in the VS Code sidebar footer.',
+    'faq-2-q': 'Can I cancel anytime?',
+    'faq-2-a': 'Yes. Monthly and yearly plans can be cancelled anytime. Access continues until the end of the current billing period.',
+    'faq-3-q': 'How do China users pay?',
+    'faq-3-a': 'Click "Buy Redeem Code" above, purchase via Alipay/WeChat Pay, then enter the code in VS Code to activate.',
+    'faq-4-q': 'Can I switch devices?',
+    'faq-4-a': 'Yes. Pro supports unlimited devices. Add or remove devices anytime in settings.',
+    'footer-contact': 'QQ Group 827453239',
+    'lang-label': '🇨🇳 中文',
+    'badge': 'Recommended',
+  },
+};
+
+let currentLang = 'en';
+
+function applyLang(lang) {
+  currentLang = lang;
+  const dict = i18n[lang];
+  document.querySelectorAll('[data-i18n]').forEach(el => {
+    const key = el.dataset.i18n;
+    if (dict[key] !== undefined) {
+      el.innerHTML = dict[key];
+    }
+  });
+  document.querySelectorAll('[data-badge]').forEach(el => {
+    el.dataset.badge = dict['badge'];
+  });
+  document.getElementById('langToggle').textContent = dict['lang-label'];
+  document.documentElement.lang = lang === 'zh' ? 'zh-CN' : 'en';
+}
+
+function toggleLang() {
+  applyLang(currentLang === 'en' ? 'zh' : 'en');
+}
+
+// Auto-detect browser language
+const browserLang = (navigator.language || navigator.userLanguage || '').toLowerCase();
+applyLang(browserLang.startsWith('zh') ? 'zh' : 'en');
 
 function showStatus(msg, type) {
   const el = document.getElementById('statusBanner');
   el.textContent = msg;
   el.className = 'status-banner ' + type;
   setTimeout(() => { el.className = 'status-banner'; }, 5000);
+}
+
+function scrollToPayPal() {
+  document.querySelector('.paypal-button-container').scrollIntoView({ behavior: 'smooth' });
 }
 
 async function createOrder(plan) {
@@ -311,7 +453,7 @@ async function createOrder(plan) {
     body: JSON.stringify({ plan }),
   });
   const data = await resp.json();
-  if (!resp.ok) throw new Error(data.error || '创建订单失败');
+  if (!resp.ok) throw new Error(data.error || 'Failed to create order');
   return data.id;
 }
 
@@ -324,12 +466,12 @@ async function onApprove(orderId, plan) {
     });
     const data = await resp.json();
     if (data.status === 'COMPLETED') {
-      showStatus('🎉 订阅成功！感谢你的支持', 'success');
+      showStatus(i18n[currentLang]['title'] === 'CodeKey Pro' ? '🎉 Subscription successful! Thank you for your support' : '🎉 订阅成功！感谢你的支持', 'success');
     } else {
-      showStatus('支付处理中，请稍后查看状态', 'success');
+      showStatus(i18n[currentLang]['title'] === 'CodeKey Pro' ? 'Payment processing, please check status later' : '支付处理中，请稍后查看状态', 'success');
     }
   } catch (err) {
-    showStatus('支付确认失败，请联系客服', 'error');
+    showStatus(i18n[currentLang]['title'] === 'CodeKey Pro' ? 'Payment confirmation failed, please contact support' : '支付确认失败，请联系客服', 'error');
   }
 }
 
@@ -338,7 +480,7 @@ function renderPayPal(containerId, plan) {
   paypal.Buttons({
     createOrder: () => createOrder(plan),
     onApprove: (data) => onApprove(data.orderID, plan),
-    onError: (err) => showStatus('PayPal 支付出错，请重试', 'error'),
+    onError: (err) => showStatus(i18n[currentLang]['title'] === 'CodeKey Pro' ? 'PayPal error, please try again' : 'PayPal 支付出错，请重试', 'error'),
   }).render('#' + containerId);
 }
 
