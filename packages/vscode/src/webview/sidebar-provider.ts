@@ -1414,6 +1414,9 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       case 'redeemCode':
         this._handleRedeemCode(msg.code);
         break;
+      case 'startCheckout':
+        this._handleStartCheckout();
+        break;
       case 'unpairDevice':
         this._handleUnpair();
         break;
@@ -1498,6 +1501,29 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
 
   private _postRedeemResult(ok: boolean, detail: string): void {
     this._view?.webview.postMessage({ type: 'redeemResult', ok, error: detail });
+  }
+
+  private async _handleStartCheckout(): Promise<void> {
+    const creds = loadCredentials();
+    if (!creds?.deviceToken || !creds?.relayUrl) {
+      this._postCheckoutResult('Not paired');
+      return;
+    }
+    try {
+      const api = createApi(creds);
+      const { checkoutToken } = await api.startCheckout();
+      const url = `https://tinymoney.ccwu.cc/?checkoutToken=${encodeURIComponent(checkoutToken)}`;
+      await vscode.env.openExternal(vscode.Uri.parse(url));
+      this._postCheckoutResult('');
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Checkout failed';
+      log(`[CodeKey] checkout error: ${msg}`);
+      this._postCheckoutResult(msg);
+    }
+  }
+
+  private _postCheckoutResult(error: string): void {
+    this._view?.webview.postMessage({ type: 'checkoutResult', error });
   }
 
   private async _handlePairingGenerate(): Promise<void> {

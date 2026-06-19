@@ -6,7 +6,7 @@ import type { AuthState } from '../hooks/useAuth';
 import { useDevices } from '../hooks/useDevices';
 import { useSubscription } from '../hooks/useSubscription';
 import { DeviceBadge } from '../components/DeviceBadge';
-import { RedeemCode } from '../components/RedeemCode';
+
 import { formatDate } from '../utils/format';
 import { getContentKey, getE2EStatus } from '../auth/device-storage';
 import { getTelegramStartParam, parsePairingStartParam } from '../auth/pairing-start-param';
@@ -136,11 +136,6 @@ export function SettingsPage({ auth }: Props) {
             The E2E key has been rotated on your desktop. Re-pair your phone to restore encrypted commands.
           </div>
         ) : null}
-      </div>
-
-      <div className="settings-redeem">
-        <span className="e2e-section-title">Redeem Code</span>
-        <RedeemCode onRedeemed={() => void subscription.refresh()} />
       </div>
 
       {unbindTarget ? (

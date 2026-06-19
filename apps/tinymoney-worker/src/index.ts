@@ -74,6 +74,10 @@ export default {
 			return handleActivateSubscription(request, env);
 		}
 
+		if (request.method === "POST" && url.pathname === "/api/paypal/checkout-redeem") {
+			return handleCheckoutRedeem(request, env);
+		}
+
 		return new Response("Not Found", { status: 404 });
 	},
 };
@@ -130,6 +134,25 @@ async function handleActivateSubscription(request: Request, env: Env): Promise<R
 		});
 	} catch (err) {
 		return json({ error: toErrorMessage(err, "Failed to verify subscription") }, 500);
+	}
+}
+
+async function handleCheckoutRedeem(request: Request, env: Env): Promise<Response> {
+	try {
+		const { checkoutToken, code } = (await request.json()) as { checkoutToken?: string; code?: string };
+		if (!checkoutToken) return json({ error: "Missing checkoutToken" }, 400);
+		if (!code) return json({ error: "Missing code" }, 400);
+
+		const base = env.RELAY_BACKEND_URL.replace(/\/+$/, "");
+		const resp = await fetch(`${base}/api/v1/checkout-redeem`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ checkoutToken, code }),
+		});
+		const data = await resp.json();
+		return json(data, resp.status);
+	} catch (err) {
+		return json({ error: toErrorMessage(err, "Failed to redeem code") }, 500);
 	}
 }
 
@@ -199,7 +222,9 @@ async function handleWebhook(request: Request, env: Env): Promise<Response> {
 		subscriptionId,
 		customId,
 		plan: resolvePlanName(env, planId),
-		status: typeof resource.status === "string" ? resource.status : null,
+		// Only send status for subscription lifecycle events; PayPal uses
+		// different status values for PAYMENT.SALE.* resources.
+		status: eventType?.startsWith("BILLING.SUBSCRIPTION.") && typeof resource.status === "string" ? resource.status : null,
 		resource,
 	});
 

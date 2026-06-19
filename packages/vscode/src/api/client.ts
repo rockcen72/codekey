@@ -60,6 +60,21 @@ export function createApi(creds: Credentials) {
     getDeviceSubscription(): Promise<SubscriptionResponse> {
       return request<SubscriptionResponse>('GET', '/device-subscription');
     },
+
+    startCheckout(): Promise<{ checkoutToken: string; expiresIn: number }> {
+      const signal = AbortSignal.timeout(5000);
+      return secureFetch(`${base}/checkout/start`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(creds.deviceToken ? { 'X-Codekey-Client-Token': creds.deviceToken } : {}),
+        },
+        signal,
+      }).then(async (res) => {
+        if (!res.ok) throw new ApiError(res.status, `checkout start failed (${res.status})`);
+        return res.json() as Promise<{ checkoutToken: string; expiresIn: number }>;
+      });
+    },
   };
 }
 

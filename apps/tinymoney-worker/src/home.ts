@@ -64,13 +64,19 @@ export function renderHomePage(env: Env): string {
 			"faq-1-q": "\u514d\u8d39\u7248\u5305\u542b\u4ec0\u4e48\uff1f",
 			"faq-1-a": "\u65b0\u7528\u6237\u9996\u6b21\u914d\u5bf9\u81ea\u52a8\u83b7\u5f97 14 \u5929 Pro \u8bd5\u7528\u3002\u8bd5\u7528\u7ed3\u675f\u540e\u6bcf\u6708 50 \u6b21\u5ba1\u6279\u989d\u5ea6\uff0c\u9650 1 \u53f0\u8bbe\u5907\u3002",
 			"faq-2-q": "\u652f\u4ed8\u540e\u5982\u4f55\u6fc0\u6d3b\uff1f",
-			"faq-2-a": "PayPal \u652f\u4ed8\u81ea\u52a8\u6fc0\u6d3b\u3002\u56fd\u5185\u652f\u4ed8\u8d2d\u4e70\u7684\u5151\u6362\u7801\uff0c\u8bf7\u5728 VS Code \u4fa7\u8fb9\u680f\u5e95\u90e8\u8f93\u5165\u3002",
+			"faq-2-a": "PayPal \u652f\u4ed8\u81ea\u52a8\u6fc0\u6d3b\u3002\u56fd\u5185\u652f\u4ed8\u8d2d\u4e70\u7684\u5151\u6362\u7801\uff0c\u8bf7\u5728\u8ba2\u9605\u9875\u9762\u8f93\u5165\u6fc0\u6d3b\u3002",
 			"faq-3-q": "\u53ef\u4ee5\u968f\u65f6\u53d6\u6d88\u5417\uff1f",
 			"faq-3-a": "\u53ef\u4ee5\u3002\u6708\u4ed8\u548c\u5e74\u4ed8\u5747\u53ef\u968f\u65f6\u53d6\u6d88\uff0c\u5f53\u524d\u5468\u671f\u7ed3\u675f\u540e\u505c\u6b62\u7eed\u8d39\uff0c\u5df2\u652f\u4ed8\u90e8\u5206\u4e0d\u9000\u6b3e\u3002",
 			"faq-4-q": "\u201c\u65e0\u9650\u8bbe\u5907\u201d\u662f\u4ec0\u4e48\u610f\u601d\uff1f",
 			"faq-4-a": "Pro \u7528\u6237\u53ef\u4ee5\u5728\u591a\u4e2a VS Code \u7a97\u53e3\u6216\u7535\u8111\u4e0a\u914d\u5bf9\u540c\u4e00 CodeKey \u8d26\u53f7\u3002\u514d\u8d39\u7248\u9650 1 \u53f0\u8bbe\u5907\u3002",
 			"faq-5-q": "\u8ba2\u9605\u540e\u53ef\u4ee5\u9000\u6b3e\u5417\uff1f",
 			"faq-5-a": "\u9996\u6b21\u8ba2\u9605\u542b 14 \u5929\u514d\u8d39\u8bd5\u7528\uff0c\u8bd5\u7528\u671f\u5185\u53d6\u6d88\u5168\u989d\u514d\u8d39\u3002\u8bd5\u7528\u671f\u540e\u8ba2\u9605\u4e3a\u865a\u62df\u670d\u52a1\u4e0d\u63d0\u4f9b\u9000\u6b3e\u3002\u8be6\u89c1<a href=\"/refund\">\u9000\u6b3e\u653f\u7b56</a>\u3002",
+			"redeem-title": "\u5151\u6362\u7801\u6fc0\u6d3b",
+			"redeem-input-placeholder": "\u8bf7\u8f93\u5165\u5151\u6362\u7801",
+			"redeem-btn": "\u6fc0\u6d3b",
+			"redeem-success": "\u5151\u6362\u7801\u5df2\u6fc0\u6d3b\uff0c\u8ba2\u9605\u5df2\u751f\u6548\uff01",
+			"redeem-error-invalid": "\u5151\u6362\u7801\u65e0\u6548\u6216\u5df2\u8fc7\u671f",
+			"redeem-error-expired": "\u914d\u7f6e\u4f1a\u8bdd\u5df2\u8fc7\u671f\uff0c\u8bf7\u91cd\u65b0\u6253\u5f00\u8ba2\u9605\u9875\u9762",
 			badge: "\u63a8\u8350",
 		},
 		en: {
@@ -128,13 +134,19 @@ export function renderHomePage(env: Env): string {
 			"faq-1-q": "What's included in the free plan?",
 			"faq-1-a": "New users get a 14-day free trial with full Pro features. After the trial, you get 50 approvals per month on 1 device with limited history.",
 			"faq-2-q": "How do I activate after payment?",
-			"faq-2-a": "PayPal payments activate automatically. For China payments, enter the redeem code in the VS Code sidebar footer.",
+			"faq-2-a": "PayPal payments activate automatically. For China payments, enter the redeem code on the billing page.",
 			"faq-3-q": "Can I cancel anytime?",
 			"faq-3-a": "Yes. Monthly and yearly plans can be cancelled anytime. Access continues until the end of the current billing period; already-paid amounts are non-refundable.",
 			"faq-4-q": "What does \"unlimited devices\" mean?",
 			"faq-4-a": "Pro users can pair multiple VS Code windows or machines to the same CodeKey account. Free plan is limited to 1 device.",
 			"faq-5-q": "Can I get a refund?",
 			"faq-5-a": "Every new subscription includes a 14-day free trial. Cancel during the trial for no charge. After the trial, the subscription is a digital service and is non-refundable. See <a href=\"/refund\">Refund Policy</a>.",
+			"redeem-title": "Redeem Code",
+			"redeem-input-placeholder": "Enter your redeem code",
+			"redeem-btn": "Redeem",
+			"redeem-success": "Redeem code activated! Subscription applied.",
+			"redeem-error-invalid": "Invalid or expired redeem code",
+			"redeem-error-expired": "Session expired, please re-open the billing page",
 			badge: "Recommended",
 		},
 	};
@@ -201,6 +213,18 @@ header.page-hero p { color: var(--muted); font-size: 14px; line-height: 1.6; }
 .china-row-text strong { color: var(--text); }
 .china-btn { display: inline-flex; align-items: center; gap: 6px; padding: 8px 18px; border: 0; border-radius: 8px; background: #e53e3e; color: #fff; font-size: 13px; font-weight: 700; text-decoration: none; cursor: pointer; white-space: nowrap; flex-shrink: 0; }
 .china-btn:hover { background: #c53030; }
+.redeem-section { display: none; margin-bottom: 32px; padding: 20px; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; }
+.redeem-section.visible { display: block; }
+.redeem-section h2 { font-size: 15px; font-weight: 800; margin-bottom: 12px; }
+.redeem-row { display: flex; gap: 8px; }
+.redeem-row input { flex: 1; padding: 10px 14px; border: 1px solid var(--border); border-radius: 8px; font-size: 14px; font-family: ui-monospace, Menlo, monospace; background: var(--bg); color: var(--text); outline: none; }
+.redeem-row input:focus { border-color: var(--primary); }
+.redeem-row button { padding: 10px 20px; border: 0; border-radius: 8px; background: var(--primary); color: #fff; font-size: 14px; font-weight: 700; cursor: pointer; white-space: nowrap; }
+.redeem-row button:hover { background: #1d4ed8; }
+.redeem-row button:disabled { opacity: 0.5; cursor: not-allowed; }
+.redeem-result { margin-top: 12px; font-size: 13px; font-weight: 600; padding: 8px 12px; border-radius: 6px; display: none; }
+.redeem-result.success { display: block; background: #f0fdf4; color: #166534; border: 1px solid #bbf7d0; }
+.redeem-result.error { display: block; background: #fef2f2; color: #991b1b; border: 1px solid #fecaca; }
 .guide-section, .faq-section { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 20px; margin-bottom: 24px; }
 .guide-section h2, .faq-section h2 { font-size: 15px; font-weight: 800; margin-bottom: 12px; }
 .guide-section ol { padding-left: 18px; }
@@ -342,6 +366,15 @@ header.page-hero p { color: var(--muted); font-size: 14px; line-height: 1.6; }
     <a class="china-btn" href="${escapeHtml(env.CHINA_PAY_URL)}" target="_blank" rel="noopener" data-i18n="china-btn">Buy Redeem Code \u2192</a>
   </div>
 
+  <div id="redeemSection" class="redeem-section">
+    <h2 data-i18n="redeem-title">Redeem Code</h2>
+    <div class="redeem-row">
+      <input id="redeemInput" type="text" placeholder="Enter your redeem code" autocomplete="off" autocorrect="off" autocapitalize="characters" spellcheck="false">
+      <button id="redeemBtn" onclick="submitRedeem()" data-i18n="redeem-btn">Redeem</button>
+    </div>
+    <div id="redeemResult" class="redeem-result"></div>
+  </div>
+
   <div class="guide-section">
     <h2 data-i18n="guide-title">How to Subscribe</h2>
     <ol>
@@ -354,7 +387,7 @@ header.page-hero p { color: var(--muted); font-size: 14px; line-height: 1.6; }
   <div class="faq-section">
     <h2 data-i18n="faq-title">FAQ</h2>
     <div class="faq-item"><div class="faq-q" data-i18n="faq-1-q">What's included in the free plan?</div><div class="faq-a" data-i18n="faq-1-a">New users get a 14-day free trial with full Pro features. After the trial, you get 50 approvals per month on 1 device with limited history.</div></div>
-    <div class="faq-item"><div class="faq-q" data-i18n="faq-2-q">How do I activate after payment?</div><div class="faq-a" data-i18n="faq-2-a">PayPal payments activate automatically. For China payments, enter the redeem code in the VS Code sidebar footer.</div></div>
+    <div class="faq-item"><div class="faq-q" data-i18n="faq-2-q">How do I activate after payment?</div><div class="faq-a" data-i18n="faq-2-a">PayPal payments activate automatically. For China payments, enter the redeem code on the billing page.</div></div>
     <div class="faq-item"><div class="faq-q" data-i18n="faq-3-q">Can I cancel anytime?</div><div class="faq-a" data-i18n="faq-3-a">Yes. Monthly and yearly plans can be cancelled anytime. Access continues until the end of the current billing period; already-paid amounts are non-refundable.</div></div>
     <div class="faq-item"><div class="faq-q" data-i18n="faq-4-q">What does "unlimited devices" mean?</div><div class="faq-a" data-i18n="faq-4-a">Pro users can pair multiple VS Code windows or machines to the same CodeKey account. Free plan is limited to 1 device.</div></div>
     <div class="faq-item"><div class="faq-q" data-i18n="faq-5-q">Can I get a refund?</div><div class="faq-a" data-i18n="faq-5-a">Every new subscription includes a 14-day free trial. Cancel during the trial for no charge. After the trial, the subscription is a digital service and is non-refundable. See <a href="/refund">Refund Policy</a>.</div></div>
@@ -460,6 +493,60 @@ async function onApprove(subscriptionId, plan) {
   }
 }
 
+async function submitRedeem() {
+  const btn = document.getElementById('redeemBtn');
+  const input = document.getElementById('redeemInput');
+  const resultEl = document.getElementById('redeemResult');
+  const token = getCheckoutToken();
+  const code = input.value.trim();
+
+  if (!code) return;
+  if (!token) {
+    resultEl.className = 'redeem-result error';
+    resultEl.textContent = currentLang === 'zh' ? '\u914d\u7f6e\u4f1a\u8bdd\u5df2\u8fc7\u671f\uff0c\u8bf7\u91cd\u65b0\u6253\u5f00\u8ba2\u9605\u9875\u9762' : 'Session expired, please re-open the billing page';
+    return;
+  }
+
+  btn.disabled = true;
+  resultEl.className = 'redeem-result';
+  resultEl.textContent = '';
+
+  try {
+    const resp = await fetch('/api/paypal/checkout-redeem', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ checkoutToken: token, code }),
+    });
+    const data = await resp.json();
+    if (resp.ok && data.success) {
+      resultEl.className = 'redeem-result success';
+      resultEl.textContent = currentLang === 'zh' ? '\u5151\u6362\u7801\u5df2\u6fc0\u6d3b\uff0c\u8ba2\u9605\u5df2\u751f\u6548\uff01' : 'Redeem code activated! Subscription applied.';
+      input.value = '';
+    } else {
+      const msg = data && data.error === 'not_found'
+        ? (currentLang === 'zh' ? '\u5151\u6362\u7801\u65e0\u6548\u6216\u5df2\u4f7f\u7528' : 'Invalid or already-used redeem code')
+        : data && data.error === 'expired'
+        ? (currentLang === 'zh' ? '\u914d\u7f6e\u4f1a\u8bdd\u5df2\u8fc7\u671f\uff0c\u8bf7\u91cd\u65b0\u6253\u5f00\u8ba2\u9605\u9875\u9762' : 'Session expired, please re-open the billing page')
+        : (currentLang === 'zh' ? '\u5151\u6362\u5931\u8d25\uff0c\u8bf7\u68c0\u67e5\u5151\u6362\u7801\u5e76\u91cd\u8bd5' : 'Redeem failed, please check your code and try again');
+      resultEl.className = 'redeem-result error';
+      resultEl.textContent = msg;
+    }
+  } catch (err) {
+    resultEl.className = 'redeem-result error';
+    resultEl.textContent = currentLang === 'zh' ? '\u7f51\u7edc\u9519\u8bef\uff0c\u8bf7\u7a0d\u540e\u91cd\u8bd5' : 'Network error, please try again';
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+// Show redeem section when this page was opened with a checkoutToken
+(function() {
+  const token = getCheckoutToken();
+  if (token) {
+    document.getElementById('redeemSection').classList.add('visible');
+  }
+})();
+
 function renderPayPal(containerId, plan) {
   if (typeof paypal === 'undefined') return;
   const planId = getPlanId(plan);
@@ -537,7 +624,7 @@ function mockVscode(): string {
   <text x="84" y="386" font-family="-apple-system, Segoe UI, sans-serif" font-size="10" fill="#9ca3af">Cursor \u00B7 completed 3m ago</text>
   <!-- footer hint -->
   <rect x="56" y="416" width="288" height="32" rx="4" fill="#1e1e1e" stroke="#3c3c3c"/>
-  <text x="200" y="436" text-anchor="middle" font-family="-apple-system, Segoe UI, sans-serif" font-size="10" fill="#9ca3af">Have a redeem code? Enter below</text>
+  <text x="200" y="436" text-anchor="middle" font-family="-apple-system, Segoe UI, sans-serif" font-size="10" fill="#9ca3af">Visit tinymoney.ccwu.cc to subscribe</text>
 </svg>`;
 }
 

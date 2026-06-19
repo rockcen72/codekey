@@ -22,7 +22,7 @@
     <text class="section-title">订阅</text>
     <view class="info-row info-row-warning" wx:if="{{tier === 'paid' && isExpiringSoon}}">
       <text class="label">专业版即将到期</text>
-      <text class="value">还剩 {{daysRemaining}} 天 · 续期使用下方兑换码</text>
+      <text class="value">还剩 {{daysRemaining}} 天 · <text class="purchase-link" bindtap="openBilling">前往续期 →</text></text>
     </view>
     <view class="info-row" wx:elif="{{tier === 'paid'}}">
       <text class="label">专业版已开通</text>
@@ -61,22 +61,7 @@
       </text>
     </view>
 
-    <view class="redeem-row" wx:if="{{isPaired}}">
-      <input
-        class="redeem-input"
-        placeholder="输入兑换码 (CK-XXXX-XXXX-XXXX)"
-        value="{{redeemInput}}"
-        bindinput="onRedeemInput"
-        maxlength="20"
-        confirm-type="done"
-      />
-      <button
-        class="redeem-btn"
-        bindtap="submitRedeem"
-        loading="{{redeemBusy}}"
-        disabled="{{redeemBusy || !redeemInput}}"
-      >兑换</button>
-    </view>
+
   </view>
 
   <view class="section" wx:if="{{isPaired}}">

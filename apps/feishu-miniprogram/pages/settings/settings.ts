@@ -1,7 +1,6 @@
 import { getDeviceId, clearAuth, getUserToken, getClientToken, getContentKey, getE2EStatus, getServerUrl, hasAuth } from '../../services/storage';
 import {
   getSubscription,
-  redeemCode,
   type Tier,
   type UsageSnapshot,
 } from '../../services/subscription';
@@ -34,8 +33,7 @@ interface PageData {
   usage: UsageSnapshot | null;
   quotaState: QuotaState;
   quotaPercent: number; // 0-100, used for progress bar width
-  redeemInput: string;
-  redeemBusy: boolean;
+
   loaded: boolean;
   hasE2EKey: boolean;
   e2eStatus: 'enabled' | 'stale' | 'disabled';
@@ -54,8 +52,7 @@ Page({
     usage: null,
     quotaState: 'hidden',
     quotaPercent: 0,
-    redeemInput: '',
-    redeemBusy: false,
+
     loaded: false,
     hasE2EKey: false,
     e2eStatus: 'disabled',
@@ -326,34 +323,8 @@ Page({
     app.onWsEvent('quota_exceeded', this._onQuotaExceededBound);
   },
 
-  onRedeemInput(e: any) {
-    this.setData({ redeemInput: (e.detail.value || '').toUpperCase() });
-  },
-
-  async submitRedeem() {
-    const code = (this.data.redeemInput || '').trim();
-    if (!code) {
-      tt.showToast({ title: '请输入兑换码', icon: 'none' });
-      return;
-    }
-    this.setData({ redeemBusy: true });
-    try {
-      const r = await redeemCode(code);
-      tt.showToast({ title: `已激活 ${r.plan}`, icon: 'success' });
-      this.setData({ redeemInput: '' });
-      this.refreshSubscription();
-    } catch (err: any) {
-      const msg =
-        err?.error === 'invalid_format' ? '兑换码格式不正确' :
-        err?.error === 'not_found' ? '兑换码无效' :
-        err?.error === 'already_used' ? '兑换码已被使用' :
-        err?.error === 'void' ? '兑换码已作废' :
-        err?.error === 'product_mismatch' ? '兑换码与产品不匹配' :
-        '兑换失败';
-      tt.showToast({ title: msg, icon: 'none' });
-    } finally {
-      this.setData({ redeemBusy: false });
-    }
+  openBilling() {
+    tt.setClipboardData({ data: 'https://tinymoney.ccwu.cc', success: () => tt.showToast({ title: '链接已复制', icon: 'success' }) });
   },
 
   formatDate(d: Date): string {

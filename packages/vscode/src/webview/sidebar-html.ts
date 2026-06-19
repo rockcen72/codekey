@@ -32,6 +32,9 @@ export interface SubscriptionInfo {
   plan: string | null;
   expiresAt: string | null;
   usage: { used: number; limit: number; period: string } | null;
+  source?: string;
+  nextBillingTime?: string | null;
+  cancelAtPeriodEnd?: boolean;
 }
 
 export interface PrivacyInfo {
@@ -560,51 +563,89 @@ function renderClaudeSessions(state: SidebarState): string {
 
 export function renderSubscribe(state: SidebarState): string {
   const sub = state.subscription;
+
+  let urgency: 'critical' | 'attention' | 'quiet' = 'quiet';
+  let urgencyMsg = '';
+  let urgencyDetail = '';
   let planLabel = 'AI Coding Remote';
   let planClass = '';
+  let manageUrl = 'https://tinymoney.ccwu.cc';
+
   if (sub) {
+    const days = sub.expiresAt
+      ? Math.max(0, Math.ceil((new Date(sub.expiresAt).getTime() - Date.now()) / 86_400_000))
+      : null;
+
     if (sub.tier === 'paid') {
       const pn = sub.plan === 'yearly' ? 'Annual' : 'Monthly';
-      planLabel = `Pro · ${pn}`;
-      if (sub.expiresAt) {
-        const days = Math.max(0, Math.ceil((new Date(sub.expiresAt).getTime() - Date.now()) / 86400000));
-        if (days > 0 && days <= 3) planClass = 'sub-expiring';
+      const srcLabel = sub.source === 'paypal' ? 'PayPal' : sub.source === 'redeem_code' ? 'Redeem' : '';
+      planLabel = `Pro · ${pn}${srcLabel ? ` · ${srcLabel}` : ''}`;
+      planClass = 'sub-paid';
+      if (sub.cancelAtPeriodEnd) {
+        planLabel += ' · Canceling';
       }
-      planClass += ' sub-paid';
+      if (days !== null && days <= 3) {
+        urgency = 'critical';
+        urgencyMsg = i18n(state.lang, `Pro expires in ${days} day${days !== 1 ? 's' : ''}`, `Pro 还有 ${days} 天到期`);
+        urgencyDetail = i18n(state.lang, 'Renew now to keep unlimited approvals.', '立即续订以保持无限审批。');
+      } else if (days !== null && days <= 7) {
+        urgency = 'attention';
+        urgencyMsg = i18n(state.lang, `Pro expires in ${days} days`, `Pro 还有 ${days} 天到期`);
+      }
     } else if (sub.tier === 'trial') {
-      const days = sub.expiresAt
-        ? Math.max(0, Math.ceil((new Date(sub.expiresAt).getTime() - Date.now()) / 86400000))
-        : 14;
-      planLabel = `Trial · ${days} day${days !== 1 ? 's' : ''}`;
-      planClass = ' sub-trial';
-      if (days <= 3) planClass += ' sub-expiring';
+      const trialDays = days ?? 14;
+      planLabel = `Trial · ${trialDays} day${trialDays !== 1 ? 's' : ''}`;
+      planClass = 'sub-trial';
+      if (trialDays <= 3) {
+        urgency = 'critical';
+        urgencyMsg = trialDays <= 0
+          ? i18n(state.lang, 'Trial ended', '试用已结束')
+          : i18n(state.lang, `Trial ends in ${trialDays} day${trialDays !== 1 ? 's' : ''}`, `试用还有 ${trialDays} 天结束`);
+        urgencyDetail = i18n(state.lang, 'Subscribe to keep Pro features.', '订阅以保留 Pro 功能。');
+      } else if (trialDays <= 7) {
+        urgency = 'attention';
+        urgencyMsg = i18n(state.lang, `Trial ends in ${trialDays} days`, `试用还有 ${trialDays} 天结束`);
+      }
     } else if (sub.usage) {
-      planLabel = `Free · ${sub.usage.used}/${sub.usage.limit}`;
-      planClass = sub.usage.used >= sub.usage.limit ? ' sub-exhausted'
-        : sub.usage.used >= sub.usage.limit * 0.8 ? ' sub-approaching'
-        : ' sub-free';
+      const used = sub.usage.used;
+      const limit = sub.usage.limit;
+      planLabel = `Free · ${used}/${limit}`;
+      if (used >= limit) {
+        urgency = 'critical';
+        urgencyMsg = i18n(state.lang, 'Approval limit reached', '审批额度已用完');
+        urgencyDetail = i18n(state.lang, `${used}/${limit} this month. Upgrade to Pro for unlimited.`, `本月 ${used}/${limit}。升级 Pro 解锁无限。`);
+        planClass = 'sub-exhausted';
+      } else if (used >= limit * 0.8) {
+        urgency = 'attention';
+        urgencyMsg = i18n(state.lang, `${limit - used} approval${limit - used !== 1 ? 's' : ''} left`, `本月仅剩 ${limit - used} 次审批`);
+        planClass = 'sub-approaching';
+      }
     }
   }
+
+  // Show next billing info for PayPal subscriptions
+  let billingHtml = '';
+  if (sub?.source === 'paypal' && sub.nextBillingTime) {
+    const nextDate = new Date(sub.nextBillingTime);
+    const dateStr = nextDate.toLocaleDateString();
+    billingHtml = `<div class="sub-billing">${i18n(state.lang, 'Next billing:', '下次扣费：')} ${dateStr}</div>`;
+  }
+
   const qqHtml = `<div class="qq-group-row"><span class="qq-icon">QQ</span> <a class="qq-link" href="https://qm.qq.com/q/ryWvbgYpNY" target="_blank">827453239</a></div>`;
-  // Upgrade-to-Pro CTA: only show to free-tier users (paid/trial users
-  // already see their plan or trial countdown in the sub-row above).
-  // Link still points to the external shop page.
-  const upgradeCtaHtml = sub && sub.tier === 'free'
-    ? `<a class="upgrade-cta" href="https://tinymoney.ccwu.cc" target="_blank">${i18n(state.lang, 'Upgrade to Pro', '升级 Pro')}</a>`
+
+  const urgencyBanner = urgency !== 'quiet' && urgencyMsg
+    ? `<div class="urgency-banner urgency-${urgency}">
+         <div class="urgency-headline">${urgencyMsg}</div>
+         ${urgencyDetail ? `<div class="urgency-detail">${urgencyDetail}</div>` : ''}
+         <a class="urgency-cta" href="${manageUrl}" target="_blank">${i18n(state.lang, 'Manage Subscription', '管理订阅')}</a>
+       </div>`
     : '';
-  const notPairedHint = state.deviceStatus !== 'paired'
-    ? `<div class="redeem-hint">${i18n(state.lang, 'Pair a device first, then redeem your code here.', '请先配对设备，配对成功后再来此输入兑换码激活。')}</div>`
+
+  const quietCta = urgency === 'quiet'
+    ? `<a class="upgrade-cta checkout-btn" href="${manageUrl}" target="_blank">${i18n(state.lang, 'Manage Subscription', '管理订阅')}</a>`
     : '';
-  const expandedHtml = `<div class="redeem-panel" id="redeemPanel">
-    <a class="purchase-link" href="https://tinymoney.ccwu.cc" target="_blank">${i18n(state.lang, 'Purchase →', '购买 →')}</a>
-    ${notPairedHint}
-    <div class="redeem-row">
-      <input class="redeem-input" id="redeemInput" placeholder="CK-XXXX-XXXX-XXXX" maxlength="19" spellcheck="false" ${state.deviceStatus !== 'paired' ? 'disabled' : ''} />
-      <button class="redeem-btn" data-action="redeemCode" ${state.deviceStatus !== 'paired' ? 'disabled' : ''}>${i18n(state.lang, 'Redeem', '兑换')}</button>
-    </div>
-    <div class="redeem-status" id="redeemStatus"></div>
-  </div>`;
-  return `<div class="footer" id="subscriptionFooter">${qqHtml}${upgradeCtaHtml}<div class="sub-row" data-action="toggleRedeem"><span class="sub-label${planClass}">${planLabel}</span><span class="expand-icon">▸</span></div>${expandedHtml}</div>`;
+
+  return `<div class="footer" id="subscriptionFooter">${qqHtml}${urgencyBanner}${quietCta}<div class="sub-row"><span class="sub-label ${planClass}">${planLabel}</span></div>${billingHtml}</div>`;
 }
 
 // ── Pairing card ─────────────────────────────────────────
@@ -1260,35 +1301,7 @@ ${renderSubscribe(state)}
       try { sessionStorage.removeItem('pairingPlatform'); } catch(e) {}
     }
 
-    // Toggle redeem panel
-    if (action === 'toggleRedeem') {
-      var panel = document.getElementById('redeemPanel');
-      var icon = target.querySelector('.expand-icon');
-      if (panel) {
-        var isOpen = panel.classList.toggle('open');
-        if (icon) icon.classList.toggle('open', isOpen);
-        if (isOpen) setTimeout(function() {
-          var inp = document.getElementById('redeemInput');
-          if (inp) inp.focus();
-        }, 100);
-      }
-      return;
-    }
 
-    // Redeem code
-    if (action === 'redeemCode') {
-      var input = document.getElementById('redeemInput');
-      var status = document.getElementById('redeemStatus');
-      var btn = target;
-      if (!input || !status) return;
-      var code = input.value.trim().toUpperCase();
-      if (!code) { status.textContent = T('Enter a code', '请输入兑换码'); status.className = 'redeem-status err'; return; }
-      btn.disabled = true;
-      status.textContent = T('Redeeming...', '兑换中...');
-      status.className = 'redeem-status';
-      api.postMessage({ action: 'redeemCode', code: code });
-      return;
-    }
 
     // Back from session detail to session list
     if (action === 'hideSessionDetail') {
@@ -1342,32 +1355,9 @@ ${renderSubscribe(state)}
     }
   });
 
-  // Listen for redeem result from extension host
-  window.addEventListener('message', function(e) {
-    if (e.data && e.data.type === 'redeemResult') {
-      var status = document.getElementById('redeemStatus');
-      var btn = document.querySelector('.redeem-btn');
-      if (btn) btn.disabled = false;
-      if (!status) return;
-      if (e.data.ok) {
-        status.textContent = T('Redeemed! Subscription extended.', '兑换成功！订阅已延长。');
-        status.className = 'redeem-status ok';
-        var inp = document.getElementById('redeemInput');
-        if (inp) inp.value = '';
-      } else {
-        status.textContent = T('Failed: ', '兑换失败：') + e.data.error;
-        status.className = 'redeem-status err';
-      }
-    }
-  });
 
-  // Enter key on redeem input
-  document.addEventListener('keydown', function(e) {
-    if (e.key === 'Enter' && document.activeElement === document.getElementById('redeemInput')) {
-      var btn = document.querySelector('.redeem-btn');
-      if (btn && !btn.disabled) btn.click();
-    }
-  });
+
+
 })();
 </script>
 </body>
@@ -1705,27 +1695,31 @@ body{
 .sub-label.sub-approaching{color:var(--vscode-terminal-ansiYellow,#e2b714)}
 .sub-label.sub-exhausted{color:var(--vscode-terminal-ansiRed,#f14c4c)}
 .sub-label.sub-expiring{color:var(--vscode-terminal-ansiYellow,#e2b714)}
+/* ── Urgency banner: replaces buried CTA when subscription needs action ── */
+/* Two tiers: critical (red, ≤3 days/exhausted) auto-expands the redeem panel; */
+/* attention (yellow, 4-7 days / 80%+ usage) stays compact but visible. */
+.urgency-banner{margin:6px 0 8px;padding:8px 10px;border-radius:6px;text-align:left;border:1px solid transparent}
+.urgency-critical{background:rgba(241,76,76,.10);border-color:rgba(241,76,76,.45)}
+.urgency-attention{background:rgba(226,183,20,.08);border-color:rgba(226,183,20,.40)}
+.urgency-headline{font-size:11px;font-weight:700;letter-spacing:.02em;line-height:1.3}
+.urgency-critical .urgency-headline{color:var(--vscode-terminal-ansiRed,#f14c4c)}
+.urgency-attention .urgency-headline{color:var(--vscode-terminal-ansiYellow,#e2b714)}
+.urgency-detail{font-size:10px;line-height:1.4;color:var(--vscode-descriptionForeground,#9090a8);margin-top:3px}
+.urgency-cta{display:block;width:100%;margin-top:7px;padding:6px 8px;border:none;border-radius:4px;background:var(--vscode-button-background,#5c9cf5);color:var(--vscode-button-foreground,#fff);font-size:11px;font-weight:700;cursor:pointer;text-align:center}
+.urgency-cta:hover{background:var(--vscode-button-hoverBackground,#4a8ae8)}
+.urgency-critical .urgency-cta{background:var(--vscode-terminal-ansiRed,#f14c4c)}
+.urgency-critical .urgency-cta:hover{background:#d83a3a}
 .upgrade-cta{display:inline-flex;align-items:center;justify-content:center;margin:6px 0 8px;padding:4px 8px;border:1px solid var(--vscode-button-border,rgba(92,156,245,.45));border-radius:4px;background:var(--vscode-button-background,#5c9cf5);color:var(--vscode-button-foreground,#fff);font-size:10px;font-weight:700;letter-spacing:0;text-decoration:none}
 .upgrade-cta:hover{background:var(--vscode-button-hoverBackground,#4a8ae8);text-decoration:none}
-.sub-row{display:flex;align-items:center;justify-content:center;gap:6px;cursor:pointer}
-.sub-row:hover .expand-icon{opacity:1}
-.expand-icon{font-size:10px;opacity:0.4;transition:transform .2s,opacity .2s;color:var(--vscode-descriptionForeground,#888)}
-.expand-icon.open{transform:rotate(90deg)}
-.redeem-panel{display:none;margin-top:6px;padding-top:6px;border-top:1px solid var(--vscode-panel-border,#2a2a3a)}
-.redeem-panel.open{display:block}
-.purchase-link{display:block;font-size:11px;color:var(--vscode-textLink-foreground,#5c9cf5);margin-bottom:6px;text-decoration:none}
-.purchase-link:hover{text-decoration:underline}
-.redeem-row{display:flex;gap:4px}
-.redeem-input{flex:1;min-width:0;background:var(--vscode-input-background,#1a1a2e);color:var(--vscode-input-foreground,#e8e8f0);border:1px solid var(--vscode-input-border,#333);border-radius:2px;padding:3px 6px;font-size:11px;font-family:monospace;outline:none}
-.redeem-input:focus{border-color:var(--vscode-focusBorder,#5c9cf5)}
-.redeem-btn{background:var(--vscode-button-background,#5c9cf5);color:var(--vscode-button-foreground,#fff);border:none;border-radius:2px;padding:3px 8px;font-size:11px;cursor:pointer;white-space:nowrap}
-.redeem-btn:disabled{opacity:0.5;cursor:default}
-.redeem-btn:hover:not(:disabled){background:var(--vscode-button-hoverBackground,#4a8ae8)}
-.redeem-status{font-size:10px;margin-top:4px;min-height:1.2em}
-.redeem-status.ok{color:var(--vscode-terminal-ansiGreen,#2ecc71)}
-.redeem-status.err{color:var(--vscode-terminal-ansiRed,#e74c3c)}
-.redeem-hint{text-align:center;font-size:10px;color:var(--vscode-descriptionForeground,#888);margin-bottom:6px;line-height:1.4}
-.redeem-input:disabled{opacity:0.4;cursor:not-allowed}
+
+
+
+
+
+
+
+
+
 .qq-group-row{display:flex;align-items:center;justify-content:center;gap:4px;font-size:10px;margin-bottom:3px;color:var(--vscode-descriptionForeground,#888)}
 .qq-icon{font-size:9px;font-weight:600;background:var(--vscode-badge-background,#333);color:var(--vscode-badge-foreground,#fff);padding:0 3px;border-radius:2px;line-height:1.4}
 .qq-number{color:var(--vscode-descriptionForeground,#888)}

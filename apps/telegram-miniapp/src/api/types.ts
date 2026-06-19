@@ -48,6 +48,9 @@ export interface SubscriptionStatus {
   expiresAt: string | null;
   product: string;
   usage: { used: number; limit: number } | null;
+  source?: string;
+  nextBillingTime?: string | null;
+  cancelAtPeriodEnd?: boolean;
 }
 
 export interface TelegramLoginResult {
