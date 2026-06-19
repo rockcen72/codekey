@@ -367,7 +367,7 @@ header.page-hero p { color: var(--muted); font-size: 14px; line-height: 1.6; }
 
   <div class="china-row">
     <span class="china-row-text" data-i18n="china-text"><strong>\ud83c\udde8\ud83c\uddf3 China users:</strong> Alipay, WeChat Pay, and bank cards. Buy a redeem code, then activate in VS Code.</span>
-    <a class="china-btn" href="${escapeHtml(env.CHINA_PAY_URL)}" target="_blank" rel="noopener" data-i18n="china-btn">Buy Redeem Code \u2192</a>
+    <button class="china-btn" onclick="openRedeem()" data-i18n="china-btn">Buy Redeem Code \u2192</button>
   </div>
 
   <div id="redeemSection" class="redeem-section">
@@ -519,8 +519,14 @@ async function submitRedeem() {
     });
     const data = await resp.json();
     if (resp.ok && data.success) {
-      resultEl.className = 'redeem-result success';
-      resultEl.textContent = currentLang === 'zh' ? '\u5151\u6362\u7801\u5df2\u6fc0\u6d3b\uff0c\u8ba2\u9605\u5df2\u751f\u6548\uff01' : 'Redeem code activated! Subscription applied.';
+      const section = document.getElementById('redeemSection');
+      if (section) {
+        section.innerHTML = '<div class="subscribe-success">'
+          + '<div class="icon">&#9989;</div>'
+          + '<h3>' + (currentLang === 'zh' ? '\u611f\u8c22\u8ba2\u9605' : 'Thank you for subscribing') + '</h3>'
+          + '<p>' + (currentLang === 'zh' ? '\u5151\u6362\u7801\u5df2\u6fc0\u6d3b\uff0c\u8ba2\u9605\u5df2\u751f\u6548\uff0c\u8bf7\u8fd4\u56de VS Code \u67e5\u770b\u4f60\u7684 Pro \u72b6\u6001\u3002' : 'Redeem code activated! Go back to VS Code to see your Pro status.') + '</p>'
+          + '</div>';
+      }
       input.value = '';
     } else {
       const msg = data && data.error === 'not_found'
@@ -536,6 +542,17 @@ async function submitRedeem() {
     resultEl.textContent = currentLang === 'zh' ? '\u7f51\u7edc\u9519\u8bef\uff0c\u8bf7\u7a0d\u540e\u91cd\u8bd5' : 'Network error, please try again';
   } finally {
     btn.disabled = false;
+  }
+}
+
+function openRedeem() {
+  window.open(CHINA_PAY_URL, '_blank');
+  document.getElementById('redeemSection').classList.add('visible');
+  if (!getCheckoutToken()) {
+    document.getElementById('redeemResult').className = 'redeem-result';
+    document.getElementById('redeemResult').textContent = currentLang === 'zh'
+      ? '\u8bf7\u4ece VS Code \u6269\u5c55\u4e2d\u6253\u5f00\u6b64\u9875\u9762\u540e\u6fc0\u6d3b\u5151\u6362\u7801'
+      : 'Open from the CodeKey VS Code extension to activate your code';
   }
 }
 

@@ -563,49 +563,48 @@ function renderClaudeSessions(state: SidebarState): string {
 
 export function renderSubscribe(state: SidebarState): string {
   const sub = state.subscription;
+  const qqHtml = `<div class="qq-group-row"><span class="qq-icon">QQ</span> <a class="qq-link" href="https://qm.qq.com/q/ryWvbgYpNY" target="_blank">827453239</a></div>`;
 
-  let planLabel = i18n(state.lang, 'Pair device to view subscription', '配对设备后查看订阅');
+  if (!sub) return `<div class="footer" id="subscriptionFooter">${qqHtml}</div>`;
+
+  const days = sub.expiresAt
+    ? Math.max(0, Math.ceil((new Date(sub.expiresAt).getTime() - Date.now()) / 86_400_000))
+    : null;
+
+  let planLabel = 'AI Coding Remote';
   let planClass = '';
-  if (sub) {
-    const days = sub.expiresAt
-      ? Math.max(0, Math.ceil((new Date(sub.expiresAt).getTime() - Date.now()) / 86_400_000))
-      : null;
-
-    if (sub.tier === 'paid') {
-      const pn = sub.plan === 'yearly' ? 'Annual' : 'Monthly';
-      const remainingDays = days ?? 0;
-      const periodCount = sub.plan === 'monthly' && remainingDays > 35
-        ? Math.round(remainingDays / 30)
-        : sub.plan === 'yearly' && remainingDays > 370
-        ? Math.round(remainingDays / 365)
-        : 1;
-      const countLabel = periodCount > 1 ? ` \u00d7${periodCount}` : '';
-      const srcLabel = sub.source === 'paypal' ? 'PayPal' : sub.source === 'redeem' ? 'Redeem' : sub.source === 'trial' ? 'Trial' : '';
-      planLabel = `Pro \u00b7 ${pn}${countLabel}${srcLabel ? ` \u00b7 ${srcLabel}` : ''}`;
-      planClass = 'sub-paid';
-      if (sub.cancelAtPeriodEnd) {
-        planLabel += ' · Canceling';
-      }
-    } else if (sub.tier === 'trial') {
-      const trialDays = days ?? 14;
-      planLabel = `Trial · ${trialDays} day${trialDays !== 1 ? 's' : ''}`;
-      planClass = 'sub-trial';
-    } else if (sub.usage) {
-      const used = sub.usage.used;
-      const limit = sub.usage.limit;
-      planLabel = `Free · ${used}/${limit}`;
-      planClass = used >= limit ? 'sub-exhausted' : used >= limit * 0.8 ? 'sub-approaching' : '';
+  if (sub.tier === 'paid') {
+    const pn = sub.plan === 'yearly' ? 'Annual' : 'Monthly';
+    const remainingDays = days ?? 0;
+    const periodCount = sub.plan === 'monthly' && remainingDays > 35
+      ? Math.round(remainingDays / 30)
+      : sub.plan === 'yearly' && remainingDays > 370
+      ? Math.round(remainingDays / 365)
+      : 1;
+    const countLabel = periodCount > 1 ? ` \u00d7${periodCount}` : '';
+    const srcLabel = sub.source === 'paypal' ? 'PayPal' : sub.source === 'redeem' ? 'Redeem' : sub.source === 'trial' ? 'Trial' : '';
+    planLabel = `Pro \u00b7 ${pn}${countLabel}${srcLabel ? ` \u00b7 ${srcLabel}` : ''}`;
+    planClass = 'sub-paid';
+    if (sub.cancelAtPeriodEnd) {
+      planLabel += ' · Canceling';
     }
+  } else if (sub.tier === 'trial') {
+    const trialDays = days ?? 14;
+    planLabel = `Trial · ${trialDays} day${trialDays !== 1 ? 's' : ''}`;
+    planClass = 'sub-trial';
+  } else if (sub.usage) {
+    const used = sub.usage.used;
+    const limit = sub.usage.limit;
+    planLabel = `Free · ${used}/${limit}`;
+    planClass = used >= limit ? 'sub-exhausted' : used >= limit * 0.8 ? 'sub-approaching' : '';
   }
 
   let billingHtml = '';
-  if (sub?.source === 'paypal' && sub.nextBillingTime) {
+  if (sub.source === 'paypal' && sub.nextBillingTime) {
     const nextDate = new Date(sub.nextBillingTime);
     const dateStr = nextDate.toLocaleDateString();
     billingHtml = `<div class="sub-billing">${i18n(state.lang, 'Next billing:', '下次扣费：')} ${dateStr}</div>`;
   }
-
-  const qqHtml = `<div class="qq-group-row"><span class="qq-icon">QQ</span> <a class="qq-link" href="https://qm.qq.com/q/ryWvbgYpNY" target="_blank">827453239</a></div>`;
 
   return `<div class="footer" id="subscriptionFooter"><div class="sub-row"><span class="sub-label ${planClass}">${planLabel}</span></div>${billingHtml}<button class="upgrade-cta" data-action="startCheckout">${i18n(state.lang, 'Manage Subscription', '管理订阅')}</button>${qqHtml}</div>`;
 }
