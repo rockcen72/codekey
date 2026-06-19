@@ -6,6 +6,12 @@
 export interface Env {
 	RELAY_BACKEND_URL: string;
 	PAYPAL_CLIENT_ID: string;
+	PAYPAL_CLIENT_SECRET: string;
+	PAYPAL_ENV?: string;
+	PAYPAL_PLAN_ID_MONTHLY: string;
+	PAYPAL_PLAN_ID_YEARLY: string;
+	PAYPAL_WEBHOOK_ID: string;
+	RELAY_INTERNAL_TOKEN: string;
 	CHINA_PAY_URL: string;
 	MERCHANT_NAME: string;
 	MERCHANT_NAME_CN: string;

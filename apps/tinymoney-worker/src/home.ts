@@ -402,7 +402,7 @@ function loadPayPalSdk() {
   if (paypalSdkPromise) return paypalSdkPromise;
   paypalSdkPromise = new Promise((resolve, reject) => {
     const script = document.createElement('script');
-    script.src = 'https://www.paypal.com/sdk/js?client-id=' + encodeURIComponent(PAYPAL_CLIENT_ID) + '&currency=USD';
+    script.src = 'https://www.paypal.com/sdk/js?client-id=' + encodeURIComponent(PAYPAL_CLIENT_ID) + '&currency=USD&vault=true&intent=subscription';
     script.async = true;
     script.dataset.sdkIntegrationSource = 'button-factory';
     const timer = setTimeout(() => reject(new Error('PayPal SDK timeout')), 12000);
@@ -413,29 +413,47 @@ function loadPayPalSdk() {
   return paypalSdkPromise;
 }
 
-async function createOrder(plan) {
-  const resp = await fetch('/api/paypal/create-order', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ plan }),
-  });
-  const data = await resp.json();
-  if (!resp.ok) throw new Error(data.error || 'Failed to create order');
-  return data.id;
+function getPlanId(plan) {
+  if (plan === 'monthly') return PAYPAL_PLAN_ID_MONTHLY;
+  if (plan === 'yearly') return PAYPAL_PLAN_ID_YEARLY;
+  return '';
 }
 
-async function onApprove(orderId, plan) {
+function getCheckoutToken() {
+  // The mobile app / Telegram opens this page with a short-lived
+  // checkoutToken signed by the relay backend. We pass it through to
+  // PayPal as custom_id so webhook events can be attributed back to
+  // the right user.
+  const params = new URLSearchParams(window.location.search);
+  return params.get('checkoutToken') || params.get('ct') || '';
+}
+
+async function confirmSubscription(subscriptionId, plan) {
+  const resp = await fetch('/api/paypal/subscription/activate', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ subscriptionId, plan }),
+  });
+  const data = await resp.json();
+  if (!resp.ok) throw new Error(data.error || 'Failed to verify subscription');
+  return data;
+}
+
+async function onApprove(subscriptionId, plan) {
   try {
-    const resp = await fetch('/api/paypal/capture-order', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ orderId, plan }),
-    });
-    const data = await resp.json();
-    if (data.status === 'COMPLETED') {
-      showStatus(currentLang === 'zh' ? '\ud83c\udf89 \u8ba2\u9605\u6210\u529f\uff01\u611f\u8c22\u4f60\u7684\u652f\u6301' : '\ud83c\udf89 Subscription successful! Thank you for your support', 'success');
+    const data = await confirmSubscription(subscriptionId, plan);
+    if (data.syncing) {
+      // PayPal confirmed, but the relay backend opens Pro from the
+      // signature-verified webhook, not from this public endpoint.
+      // Tell the user the payment was accepted and ask them to refresh
+      // the app shortly. Avoids the misleading "subscribed!" toast in
+      // the rare case the webhook never lands (in which case support
+      // can still attribute the payment via PayPal's records).
+      showStatus(currentLang === 'zh' ? '\u2705 PayPal \u5df2\u6263\u6b3e\uff0c\u6b63\u5728\u540c\u6b65\u5230 CodeKey\uff0c\u8bf7\u7a0d\u540e\u5728\u624b\u673a/\u684c\u9762\u7aef\u5237\u65b0' : '\u2705 PayPal payment accepted. Syncing to CodeKey \u2014 please refresh your app shortly.', 'success');
+    } else if (data.pending) {
+      showStatus(currentLang === 'zh' ? '\u8ba2\u9605\u5df2\u521b\u5efa\uff0cPayPal \u6b63\u5728\u786e\u8ba4\uff0c\u8bf7\u7a0d\u540e\u5237\u65b0' : 'Subscription created. PayPal is still confirming it, please refresh shortly.', 'success');
     } else {
-      showStatus(currentLang === 'zh' ? '\u652f\u4ed8\u5904\u7406\u4e2d\uff0c\u8bf7\u7a0d\u540e\u67e5\u770b\u72b6\u6001' : 'Payment processing, please check status later', 'success');
+      showStatus((currentLang === 'zh' ? '\u8ba2\u9605\u72b6\u6001\uff1a' : 'Subscription status: ') + (data.status || 'UNKNOWN'), 'success');
     }
   } catch (err) {
     showStatus(currentLang === 'zh' ? '\u652f\u4ed8\u786e\u8ba4\u5931\u8d25\uff0c\u8bf7\u8054\u7cfb\u5ba2\u670d' : 'Payment confirmation failed, please contact support', 'error');
@@ -444,9 +462,17 @@ async function onApprove(orderId, plan) {
 
 function renderPayPal(containerId, plan) {
   if (typeof paypal === 'undefined') return;
+  const planId = getPlanId(plan);
+  if (!planId) {
+    showStatus(currentLang === 'zh' ? 'PayPal plan \u914d\u7f6e\u7f3a\u5931' : 'Missing PayPal plan configuration', 'error');
+    return;
+  }
   paypal.Buttons({
-    createOrder: () => createOrder(plan),
-    onApprove: (data) => onApprove(data.orderID, plan),
+    createSubscription: (data, actions) => actions.subscription.create({
+      plan_id: planId,
+      custom_id: getCheckoutToken() || undefined,
+    }),
+    onApprove: (data) => onApprove(data.subscriptionID, plan),
     onError: () => showStatus(currentLang === 'zh' ? 'PayPal \u652f\u4ed8\u51fa\u9519\uff0c\u8bf7\u91cd\u8bd5' : 'PayPal error, please try again', 'error'),
   }).render('#' + containerId);
 }
@@ -617,4 +643,3 @@ function mockTelegram(): string {
   <rect x="100" y="540" width="80" height="4" rx="2" fill="#1c1917"/>
 </svg>`;
 }
-

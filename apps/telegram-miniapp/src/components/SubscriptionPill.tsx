@@ -1,4 +1,3 @@
-import { Link } from 'react-router-dom';
 import type { SubscriptionStatus } from '../api/types';
 
 interface Props {
@@ -37,8 +36,8 @@ export function SubscriptionPill({ subscription }: Props) {
   const className = isExpiringSoon ? 'sub-pill-expiring' : `sub-pill-${quotaState === 'hidden' ? `tier-${tier}` : quotaState}`;
 
   return (
-    <Link to="/pro" className={`sub-pill sub-pill-link ${className}`} aria-label="Manage subscription">
+    <a href="https://tinymoney.ccwu.cc" target="_blank" rel="noopener noreferrer" className={`sub-pill sub-pill-link ${className}`} aria-label="Manage subscription">
       {label}
-    </Link>
+    </a>
   );
 }

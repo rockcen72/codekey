@@ -176,46 +176,46 @@ export function SessionsPage({ auth }: Props) {
 
         if (exhausted) {
           return (
-            <Link to="/pro" className="upgrade-banner upgrade-banner-exhausted">
+            <a href="https://tinymoney.ccwu.cc" target="_blank" rel="noopener noreferrer" className="upgrade-banner upgrade-banner-exhausted">
               <span className="upgrade-banner-icon">{'\u26A0'}</span>
               <span className="upgrade-banner-text">
                 <strong>Approval limit reached.</strong> Upgrade to Pro for unlimited approvals.
               </span>
               <span className="upgrade-banner-arrow">{'\u2192'}</span>
-            </Link>
+            </a>
           );
         }
         if (expiringSoon) {
           return (
-            <Link to="/pro" className="upgrade-banner upgrade-banner-warn">
+            <a href="https://tinymoney.ccwu.cc" target="_blank" rel="noopener noreferrer" className="upgrade-banner upgrade-banner-warn">
               <span className="upgrade-banner-icon">{'\u23F3'}</span>
               <span className="upgrade-banner-text">
                 {sub.tier === 'trial' ? 'Trial' : 'Pro'} ends in {days} {days === 1 ? 'day' : 'days'}. Subscribe to keep Pro features.
               </span>
               <span className="upgrade-banner-arrow">{'\u2192'}</span>
-            </Link>
+            </a>
           );
         }
         if (approaching) {
           return (
-            <Link to="/pro" className="upgrade-banner upgrade-banner-warn">
+            <a href="https://tinymoney.ccwu.cc" target="_blank" rel="noopener noreferrer" className="upgrade-banner upgrade-banner-warn">
               <span className="upgrade-banner-icon">{'\u26A0'}</span>
               <span className="upgrade-banner-text">
                 Only {usage!.limit - usage!.used} approvals left this month. Go unlimited with Pro.
               </span>
               <span className="upgrade-banner-arrow">{'\u2192'}</span>
-            </Link>
+            </a>
           );
         }
         if (sub.tier === 'free') {
           return (
-            <Link to="/pro" className="upgrade-banner upgrade-banner-soft">
+            <a href="https://tinymoney.ccwu.cc" target="_blank" rel="noopener noreferrer" className="upgrade-banner upgrade-banner-soft">
               <span className="upgrade-banner-icon">{'\u2728'}</span>
               <span className="upgrade-banner-text">
                 <strong>Unlock unlimited approvals</strong> with CodeKey Pro.
               </span>
               <span className="upgrade-banner-arrow">{'\u2192'}</span>
-            </Link>
+            </a>
           );
         }
         return null;

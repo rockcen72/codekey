@@ -1,11 +1,12 @@
 import { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { UnboundDeviceError, userRequest } from '../api/client';
 import type { UserDevice } from '../api/types';
 import type { AuthState } from '../hooks/useAuth';
 import { useDevices } from '../hooks/useDevices';
 import { useSubscription } from '../hooks/useSubscription';
 import { DeviceBadge } from '../components/DeviceBadge';
+import { RedeemCode } from '../components/RedeemCode';
 import { formatDate } from '../utils/format';
 import { getContentKey, getE2EStatus } from '../auth/device-storage';
 import { getTelegramStartParam, parsePairingStartParam } from '../auth/pairing-start-param';
@@ -84,7 +85,7 @@ export function SettingsPage({ auth }: Props) {
         </section>
       )}
 
-      <Link to="/pro" className="settings-sub-row">
+      <a href="https://tinymoney.ccwu.cc" target="_blank" rel="noopener noreferrer" className="settings-sub-row">
         <div className="settings-sub-info">
           <span className="settings-sub-title">Subscription</span>
           <span className="settings-sub-meta">
@@ -110,7 +111,7 @@ export function SettingsPage({ auth }: Props) {
         <span className="settings-sub-action">
           {subscription.subscription?.tier === 'pro' ? 'Manage' : 'Upgrade'} {'\u2192'}
         </span>
-      </Link>
+      </a>
 
       <div className="e2e-section">
         <span className="e2e-section-title">E2E Encryption</span>
@@ -135,6 +136,11 @@ export function SettingsPage({ auth }: Props) {
             The E2E key has been rotated on your desktop. Re-pair your phone to restore encrypted commands.
           </div>
         ) : null}
+      </div>
+
+      <div className="settings-redeem">
+        <span className="e2e-section-title">Redeem Code</span>
+        <RedeemCode onRedeemed={() => void subscription.refresh()} />
       </div>
 
       {unbindTarget ? (

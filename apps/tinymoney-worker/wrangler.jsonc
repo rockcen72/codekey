@@ -10,15 +10,22 @@
   "routes": [
     { "pattern": "tinymoney.ccwu.cc", "custom_domain": true }
   ],
+  // Secrets (set via `wrangler secret put` — NOT in this file):
+  //   PAYPAL_CLIENT_SECRET
+  //   RELAY_INTERNAL_TOKEN
+  //   PAYPAL_WEBHOOK_ID
   "vars": {
     "RELAY_BACKEND_URL": "https://codekey.tinymoney.cn",
-    "PAYPAL_CLIENT_ID": "sandbox-placeholder",
+    "PAYPAL_CLIENT_ID": "ARv1WHM8_ltzdOXmQ6fY8OB_08UfALsOGo_HmsxDE9O32l1-x1lD5ej_Ur7cbAFV1haDAtcFUfBVTKtW",
+    "PAYPAL_ENV": "sandbox",
+    "PAYPAL_PLAN_ID_MONTHLY": "P-5W402202GL735564NNIZ72UA",
+    "PAYPAL_PLAN_ID_YEARLY": "P-4K995901EH521313YNIZ726I",
     "CHINA_PAY_URL": "https://pay.ldxp.cn/shop/6T7QKRTE",
     "MERCHANT_NAME": "[Merchant Name Placeholder]",
     "MERCHANT_NAME_CN": "[\u5546\u6237\u540d\u79f0\u5360\u4f4d]",
     "MERCHANT_ADDRESS": "[Merchant Address Placeholder]",
     "MERCHANT_ADDRESS_CN": "[\u7ecf\u8425\u5730\u5740\u5360\u4f4d]",
-    "SUPPORT_EMAIL": "support@example.com",
+    "SUPPORT_EMAIL": "denzlecen101@2925.com",
     "SUPPORT_PHONE": "+86-000-0000-0000",
     "EFFECTIVE_DATE": "2026-06-18"
   }

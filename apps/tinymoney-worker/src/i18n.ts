@@ -12,7 +12,9 @@ export function i18nScript(env: Env, extra?: { zh: Record<string, string>; en: R
 	const enExtra = extra?.en ?? {};
 	return `<script>
 const PAYPAL_CLIENT_ID = ${JSON.stringify(env.PAYPAL_CLIENT_ID || "")};
-const PAYPAL_CONFIGURED = !!PAYPAL_CLIENT_ID && !PAYPAL_CLIENT_ID.includes('placeholder') && !PAYPAL_CLIENT_ID.startsWith('sandbox-');
+const PAYPAL_PLAN_ID_MONTHLY = ${JSON.stringify(env.PAYPAL_PLAN_ID_MONTHLY || "")};
+const PAYPAL_PLAN_ID_YEARLY = ${JSON.stringify(env.PAYPAL_PLAN_ID_YEARLY || "")};
+const PAYPAL_CONFIGURED = [PAYPAL_CLIENT_ID, PAYPAL_PLAN_ID_MONTHLY, PAYPAL_PLAN_ID_YEARLY].every(value => value && !value.includes('placeholder'));
 const CHINA_PAY_URL = ${JSON.stringify(env.CHINA_PAY_URL || "")};
 const MERCHANT_NAME_EN = ${JSON.stringify(env.MERCHANT_NAME || "")};
 const MERCHANT_NAME_CN = ${JSON.stringify(env.MERCHANT_NAME_CN || env.MERCHANT_NAME || "")};
