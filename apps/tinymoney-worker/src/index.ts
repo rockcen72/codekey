@@ -12,7 +12,7 @@
 //     thing that should ever call that endpoint.
 
 import type { Env } from "./shared";
-import { renderHomePage } from "./home";
+import { renderHomePage, renderFallbackPage } from "./home";
 import { renderPrivacyPage, renderRefundPage, renderTermsPage, renderContactPage } from "./policies";
 
 const JSON_HEADERS = { "content-type": "application/json; charset=utf-8" };
@@ -47,6 +47,15 @@ export default {
 		}
 
 		if (request.method === "GET" || request.method === "HEAD") {
+			if (url.pathname === "/") {
+				const hasToken = url.searchParams.has("checkoutToken") || url.searchParams.has("ct");
+				const html = hasToken ? renderHomePage(env) : renderFallbackPage(env);
+				const headers = {
+					"content-type": "text/html; charset=utf-8",
+					"cache-control": "public, max-age=300",
+				};
+				return new Response(request.method === "HEAD" ? null : html, { headers });
+			}
 			const renderer = pickPageRenderer(url.pathname);
 			if (renderer) {
 				const html = renderer(env);
@@ -84,8 +93,6 @@ export default {
 
 function pickPageRenderer(pathname: string): ((env: Env) => string) | null {
 	switch (pathname) {
-		case "/":
-			return renderHomePage;
 		case "/privacy":
 		case "/privacy.html":
 			return renderPrivacyPage;

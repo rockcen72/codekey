@@ -176,46 +176,42 @@ export function SessionsPage({ auth }: Props) {
 
         if (exhausted) {
           return (
-            <a href="https://tinymoney.ccwu.cc" target="_blank" rel="noopener noreferrer" className="upgrade-banner upgrade-banner-exhausted">
+            <div className="upgrade-banner upgrade-banner-exhausted">
               <span className="upgrade-banner-icon">{'\u26A0'}</span>
               <span className="upgrade-banner-text">
-                <strong>Approval limit reached.</strong> Upgrade to Pro for unlimited approvals.
+                <strong>Approval limit reached.</strong> Upgrade to Pro on the VS Code desktop extension.
               </span>
-              <span className="upgrade-banner-arrow">{'\u2192'}</span>
-            </a>
+            </div>
           );
         }
         if (expiringSoon) {
           return (
-            <a href="https://tinymoney.ccwu.cc" target="_blank" rel="noopener noreferrer" className="upgrade-banner upgrade-banner-warn">
+            <div className="upgrade-banner upgrade-banner-warn">
               <span className="upgrade-banner-icon">{'\u23F3'}</span>
               <span className="upgrade-banner-text">
-                {sub.tier === 'trial' ? 'Trial' : 'Pro'} ends in {days} {days === 1 ? 'day' : 'days'}. Subscribe to keep Pro features.
+                {sub.tier === 'trial' ? 'Trial' : 'Pro'} ends in {days} {days === 1 ? 'day' : 'days'}. Renew on the VS Code desktop extension.
               </span>
-              <span className="upgrade-banner-arrow">{'\u2192'}</span>
-            </a>
+            </div>
           );
         }
         if (approaching) {
           return (
-            <a href="https://tinymoney.ccwu.cc" target="_blank" rel="noopener noreferrer" className="upgrade-banner upgrade-banner-warn">
+            <div className="upgrade-banner upgrade-banner-warn">
               <span className="upgrade-banner-icon">{'\u26A0'}</span>
               <span className="upgrade-banner-text">
-                Only {usage!.limit - usage!.used} approvals left this month. Go unlimited with Pro.
+                Only {usage!.limit - usage!.used} approvals left this month. Upgrade to Pro on the VS Code desktop extension.
               </span>
-              <span className="upgrade-banner-arrow">{'\u2192'}</span>
-            </a>
+            </div>
           );
         }
         if (sub.tier === 'free') {
           return (
-            <a href="https://tinymoney.ccwu.cc" target="_blank" rel="noopener noreferrer" className="upgrade-banner upgrade-banner-soft">
+            <div className="upgrade-banner upgrade-banner-soft">
               <span className="upgrade-banner-icon">{'\u2728'}</span>
               <span className="upgrade-banner-text">
-                <strong>Unlock unlimited approvals</strong> with CodeKey Pro.
+                <strong>Unlock unlimited approvals</strong> with CodeKey Pro. Subscribe from the VS Code desktop extension.
               </span>
-              <span className="upgrade-banner-arrow">{'\u2192'}</span>
-            </a>
+            </div>
           );
         }
         return null;

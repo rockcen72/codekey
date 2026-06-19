@@ -569,8 +569,6 @@ export function renderSubscribe(state: SidebarState): string {
   let urgencyDetail = '';
   let planLabel = 'AI Coding Remote';
   let planClass = '';
-  let manageUrl = 'https://tinymoney.ccwu.cc';
-
   if (sub) {
     const days = sub.expiresAt
       ? Math.max(0, Math.ceil((new Date(sub.expiresAt).getTime() - Date.now()) / 86_400_000))
@@ -578,7 +576,7 @@ export function renderSubscribe(state: SidebarState): string {
 
     if (sub.tier === 'paid') {
       const pn = sub.plan === 'yearly' ? 'Annual' : 'Monthly';
-      const srcLabel = sub.source === 'paypal' ? 'PayPal' : sub.source === 'redeem_code' ? 'Redeem' : '';
+      const srcLabel = sub.source === 'paypal' ? 'PayPal' : sub.source === 'redeem' ? 'Redeem' : sub.source === 'trial' ? 'Trial' : '';
       planLabel = `Pro · ${pn}${srcLabel ? ` · ${srcLabel}` : ''}`;
       planClass = 'sub-paid';
       if (sub.cancelAtPeriodEnd) {
@@ -637,12 +635,12 @@ export function renderSubscribe(state: SidebarState): string {
     ? `<div class="urgency-banner urgency-${urgency}">
          <div class="urgency-headline">${urgencyMsg}</div>
          ${urgencyDetail ? `<div class="urgency-detail">${urgencyDetail}</div>` : ''}
-         <a class="urgency-cta" href="${manageUrl}" target="_blank">${i18n(state.lang, 'Manage Subscription', '管理订阅')}</a>
+          <button class="urgency-cta" data-action="startCheckout">${i18n(state.lang, 'Manage Subscription', '管理订阅')}</button>
        </div>`
     : '';
 
   const quietCta = urgency === 'quiet'
-    ? `<a class="upgrade-cta checkout-btn" href="${manageUrl}" target="_blank">${i18n(state.lang, 'Manage Subscription', '管理订阅')}</a>`
+    ? `<button class="upgrade-cta checkout-btn" data-action="startCheckout">${i18n(state.lang, 'Manage Subscription', '管理订阅')}</button>`
     : '';
 
   return `<div class="footer" id="subscriptionFooter">${qqHtml}${urgencyBanner}${quietCta}<div class="sub-row"><span class="sub-label ${planClass}">${planLabel}</span></div>${billingHtml}</div>`;

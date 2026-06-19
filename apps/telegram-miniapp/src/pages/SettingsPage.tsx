@@ -85,7 +85,7 @@ export function SettingsPage({ auth }: Props) {
         </section>
       )}
 
-      <a href="https://tinymoney.ccwu.cc" target="_blank" rel="noopener noreferrer" className="settings-sub-row">
+      <div className="settings-sub-row">
         <div className="settings-sub-info">
           <span className="settings-sub-title">Subscription</span>
           <span className="settings-sub-meta">
@@ -108,10 +108,7 @@ export function SettingsPage({ auth }: Props) {
             })()}
           </span>
         </div>
-        <span className="settings-sub-action">
-          {subscription.subscription?.tier === 'pro' ? 'Manage' : 'Upgrade'} {'\u2192'}
-        </span>
-      </a>
+      </div>
 
       <div className="e2e-section">
         <span className="e2e-section-title">E2E Encryption</span>

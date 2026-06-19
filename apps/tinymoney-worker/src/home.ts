@@ -730,3 +730,99 @@ function mockTelegram(): string {
   <rect x="100" y="540" width="80" height="4" rx="2" fill="#1c1917"/>
 </svg>`;
 }
+
+// ── Fallback page (no checkout token) ────────────────────
+
+export function renderFallbackPage(env: Env): string {
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CodeKey &mdash; Subscription</title>
+<meta name="description" content="CodeKey Pro subscription">
+<style>
+${commonStyles()}
+.fallback { text-align: center; padding: 64px 16px 48px; }
+.fallback-icon { font-size: 48px; margin-bottom: 20px; }
+.fallback h1 { font-size: 22px; font-weight: 800; margin-bottom: 12px; letter-spacing: -0.3px; }
+.fallback p { color: var(--muted); font-size: 14px; line-height: 1.7; max-width: 480px; margin: 0 auto 24px; }
+.fallback .steps { text-align: left; max-width: 400px; margin: 0 auto 32px; }
+.fallback .step { padding: 10px 0; border-bottom: 1px solid var(--border); font-size: 13px; line-height: 1.6; display: flex; gap: 10px; }
+.fallback .step:last-child { border-bottom: 0; }
+.fallback .step-num { flex-shrink: 0; width: 22px; height: 22px; background: var(--primary); color: #fff; border-radius: 50%; font-size: 12px; font-weight: 700; display: flex; align-items: center; justify-content: center; }
+.fallback .step-text { flex: 1; color: var(--muted); }
+.fallback .step-text strong { color: var(--text); }
+.fallback-links { display: flex; flex-direction: column; gap: 10px; align-items: center; }
+.fallback-btn { display: inline-flex; align-items: center; gap: 6px; padding: 12px 24px; border-radius: 8px; font-size: 14px; font-weight: 700; text-decoration: none; cursor: pointer; }
+.fallback-btn.primary { background: var(--primary); color: #fff; }
+.fallback-btn.primary:hover { background: #1d4ed8; }
+.fallback-btn.secondary { background: var(--surface); color: var(--text); border: 1px solid var(--border); }
+.fallback-btn.secondary:hover { border-color: var(--primary); color: var(--primary); }
+.fallback-meta { font-size: 12px; color: var(--muted); margin-top: 32px; }
+.fallback-meta a { color: var(--primary); }
+</style>
+</head>
+<body>
+<div class="container">
+  ${renderTopNav("home")}
+
+  <div class="fallback">
+    <div class="fallback-icon">🔑</div>
+    <h1 data-i18n="fallback-title">Please open from VS Code</h1>
+    <p data-i18n="fallback-desc">This subscription page requires a secure session from the CodeKey VS Code extension. Please open it from the sidebar to manage your subscription.</p>
+
+    <div class="steps">
+      <div class="step"><span class="step-num">1</span><span class="step-text" data-i18n="fallback-step-1"><strong>Open VS Code</strong> and click the CodeKey icon in the Activity Bar</span></div>
+      <div class="step"><span class="step-num">2</span><span class="step-text" data-i18n="fallback-step-2">In the <strong>CodeKey sidebar</strong>, click <strong>"Manage Subscription"</strong></span></div>
+    </div>
+
+    <div class="fallback-links">
+      <a class="fallback-btn primary" href="https://marketplace.visualstudio.com/items?itemName=CodeKey.codekey-vscode" target="_blank" rel="noopener noreferrer" data-i18n="fallback-install-btn">📦 Install CodeKey Extension</a>
+      <div class="fallback-meta">
+        <span data-i18n="fallback-qq">QQ Group</span>: <a href="https://qm.qq.com/q/ryWvbgYpNY" target="_blank" rel="noopener noreferrer">827453239</a>
+        &nbsp;·&nbsp;
+        <span data-i18n="fallback-email">Email</span>: <a href="mailto:${escapeHtml(env.SUPPORT_EMAIL)}">${escapeHtml(env.SUPPORT_EMAIL)}</a>
+      </div>
+    </div>
+  </div>
+</div>
+${renderFooter(env)}
+<script>
+const i18n = {
+  zh: {
+    "fallback-title": "请从 VS Code 打开",
+    "fallback-desc": "此订阅页面需要 CodeKey VS Code 扩展的安全会话。请从 VS Code 侧边栏打开以管理您的订阅。",
+    "fallback-step-1": "<strong>打开 VS Code</strong>，点击左侧活动栏中的 CodeKey 图标",
+    "fallback-step-2": "在 <strong>CodeKey 侧边栏</strong>中，点击 <strong>&quot;管理订阅&quot;</strong>",
+    "fallback-install-btn": "📦 安装 CodeKey 扩展",
+    "fallback-qq": "QQ 群",
+    "fallback-email": "邮箱",
+  },
+  en: {
+    "fallback-title": "Please open from VS Code",
+    "fallback-desc": "This subscription page requires a secure session from the CodeKey VS Code extension. Please open it from the sidebar to manage your subscription.",
+    "fallback-step-1": "<strong>Open VS Code</strong> and click the CodeKey icon in the Activity Bar",
+    "fallback-step-2": "In the <strong>CodeKey sidebar</strong>, click <strong>&quot;Manage Subscription&quot;</strong>",
+    "fallback-install-btn": "📦 Install CodeKey Extension",
+    "fallback-qq": "QQ Group",
+    "fallback-email": "Email",
+  },
+};
+let currentLang = 'en';
+function applyLang(lang) {
+  currentLang = lang;
+  const dict = i18n[lang];
+  document.querySelectorAll('[data-i18n]').forEach(el => {
+    const key = el.dataset.i18n;
+    if (dict[key] !== undefined) el.innerHTML = dict[key];
+  });
+  document.documentElement.lang = lang === 'zh' ? 'zh-CN' : 'en';
+}
+function toggleLang() { applyLang(currentLang === 'en' ? 'zh' : 'en'); }
+const browserLang = (navigator.language || navigator.userLanguage || '').toLowerCase();
+applyLang(browserLang.startsWith('zh') ? 'zh' : 'en');
+</script>
+</body>
+</html>`;
+}

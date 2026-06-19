@@ -36,8 +36,8 @@ export function SubscriptionPill({ subscription }: Props) {
   const className = isExpiringSoon ? 'sub-pill-expiring' : `sub-pill-${quotaState === 'hidden' ? `tier-${tier}` : quotaState}`;
 
   return (
-    <a href="https://tinymoney.ccwu.cc" target="_blank" rel="noopener noreferrer" className={`sub-pill sub-pill-link ${className}`} aria-label="Manage subscription">
+    <span className={`sub-pill ${className}`} aria-label="Subscription status">
       {label}
-    </a>
+    </span>
   );
 }

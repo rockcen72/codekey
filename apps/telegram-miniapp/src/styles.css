@@ -2095,13 +2095,6 @@ a {
   color: var(--ck-danger);
 }
 
-/* ── Subscription Pill (clickable) ───────────────── */
-
-.sub-pill-link {
-  text-decoration: none;
-  cursor: pointer;
-}
-
 /* ── Settings: Subscription Row ──────────────────── */
 
 .settings-sub-row {

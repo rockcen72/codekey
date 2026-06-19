@@ -68,6 +68,9 @@ export interface SubscriptionStatus {
   expiresAt: string | null; // ISO timestamp or null
   product: string;
   usage: UsageSnapshot | null;
+  source?: string;
+  nextBillingTime?: string | null;
+  cancelAtPeriodEnd?: boolean;
 }
 
 export interface RedeemOk {
