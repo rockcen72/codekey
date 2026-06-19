@@ -217,7 +217,7 @@ export function SessionsPage({ auth }: Props) {
         return null;
       })()}
 
-      {devices.devices.length === 0 ? (
+      {!devices.loading && devices.devices.length === 0 ? (
         <section className="empty-state">
           <h2>No devices connected</h2>
           <p>Generate a pairing code in the desktop extension to connect.</p>

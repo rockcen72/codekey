@@ -24,7 +24,7 @@ function state(overrides: Partial<SidebarState> = {}): SidebarState {
 }
 
 describe("renderSubscribe", () => {
-	it("shows the Upgrade to Pro CTA for free users", () => {
+	it("shows plan status + Manage Subscription button + QQ group for free users", () => {
 		const html = renderSubscribe(state({
 			subscription: {
 				tier: "free",
@@ -34,12 +34,14 @@ describe("renderSubscribe", () => {
 			},
 		}));
 
-		expect(html).toContain("Upgrade to Pro");
-		expect(html).toContain("https://pay.ldxp.cn/shop/6T7QKRTE");
+		expect(html).toContain("Free");
+		expect(html).toContain("12/50");
+		expect(html).toContain("Manage Subscription");
 		expect(html).toContain("upgrade-cta");
+		expect(html).toContain("827453239");
 	});
 
-	it("hides the Upgrade CTA for paid users (sub-row already shows plan)", () => {
+	it("shows Manage Subscription button for paid users", () => {
 		const html = renderSubscribe(state({
 			subscription: {
 				tier: "paid",
@@ -49,13 +51,13 @@ describe("renderSubscribe", () => {
 			},
 		}));
 
-		expect(html).not.toContain("Upgrade to Pro");
-		expect(html).not.toContain("upgrade-cta");
-		// Plan label still rendered in sub-row.
 		expect(html).toContain("Pro");
+		expect(html).toContain("Manage Subscription");
+		expect(html).toContain("upgrade-cta");
+		expect(html).toContain("827453239");
 	});
 
-	it("hides the Upgrade CTA for trial users (countdown is in sub-row)", () => {
+	it("shows Manage Subscription button for trial users", () => {
 		const html = renderSubscribe(state({
 			subscription: {
 				tier: "trial",
@@ -65,9 +67,10 @@ describe("renderSubscribe", () => {
 			},
 		}));
 
-		expect(html).not.toContain("Upgrade to Pro");
-		expect(html).not.toContain("upgrade-cta");
 		expect(html).toContain("Trial");
+		expect(html).toContain("Manage Subscription");
+		expect(html).toContain("upgrade-cta");
+		expect(html).toContain("827453239");
 	});
 });
 

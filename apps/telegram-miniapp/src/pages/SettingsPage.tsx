@@ -92,7 +92,7 @@ export function SettingsPage({ auth }: Props) {
             {(() => {
               const sub = subscription.subscription;
               if (!sub) return 'Loading...';
-              if (sub.tier === 'pro') {
+              if (sub.tier === 'paid') {
                 return sub.expiresAt
                   ? `Pro \u00b7 renews ${formatDate(sub.expiresAt)}`
                   : 'Pro active';

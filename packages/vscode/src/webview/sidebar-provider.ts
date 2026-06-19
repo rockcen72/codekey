@@ -1411,9 +1411,6 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       case 'pairedDevice':
         this._handlePairingComplete(msg.token, msg.deviceId, msg.phonePublicKeyHex, msg.e2eKeyReceived);
         break;
-      case 'redeemCode':
-        this._handleRedeemCode(msg.code);
-        break;
       case 'startCheckout':
         this._handleStartCheckout();
         break;
@@ -1471,36 +1468,6 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     this._pushUnpairedDeviceState();
     void this._pushState();
     vscode.window.showInformationMessage('Device unpaired');
-  }
-
-  private async _handleRedeemCode(code: string): Promise<void> {
-    const creds = loadCredentials();
-    if (!creds) {
-      this._postRedeemResult(false, 'Not paired');
-      return;
-    }
-    try {
-      const res = await secureFetch(`${creds.relayUrl}/api/v1/device-redeem`, {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${creds.deviceToken}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ code: code.trim().toUpperCase() }),
-        signal: AbortSignal.timeout(10000),
-      });
-      const body = await res.json() as { error?: string; success?: boolean; afterExpiresAt?: string };
-      if (res.ok && body.success) {
-        this._postRedeemResult(true, body.afterExpiresAt || '');
-        this._pushState();
-      } else {
-        this._postRedeemResult(false, body.error || `HTTP ${res.status}`);
-      }
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Request failed';
-      this._postRedeemResult(false, msg);
-    }
-  }
-
-  private _postRedeemResult(ok: boolean, detail: string): void {
-    this._view?.webview.postMessage({ type: 'redeemResult', ok, error: detail });
   }
 
   private async _handleStartCheckout(): Promise<void> {

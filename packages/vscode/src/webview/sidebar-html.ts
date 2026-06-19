@@ -564,10 +564,7 @@ function renderClaudeSessions(state: SidebarState): string {
 export function renderSubscribe(state: SidebarState): string {
   const sub = state.subscription;
 
-  let urgency: 'critical' | 'attention' | 'quiet' = 'quiet';
-  let urgencyMsg = '';
-  let urgencyDetail = '';
-  let planLabel = 'AI Coding Remote';
+  let planLabel = i18n(state.lang, 'Pair device to view subscription', '配对设备后查看订阅');
   let planClass = '';
   if (sub) {
     const days = sub.expiresAt
@@ -576,52 +573,31 @@ export function renderSubscribe(state: SidebarState): string {
 
     if (sub.tier === 'paid') {
       const pn = sub.plan === 'yearly' ? 'Annual' : 'Monthly';
+      const remainingDays = days ?? 0;
+      const periodCount = sub.plan === 'monthly' && remainingDays > 35
+        ? Math.round(remainingDays / 30)
+        : sub.plan === 'yearly' && remainingDays > 370
+        ? Math.round(remainingDays / 365)
+        : 1;
+      const countLabel = periodCount > 1 ? ` \u00d7${periodCount}` : '';
       const srcLabel = sub.source === 'paypal' ? 'PayPal' : sub.source === 'redeem' ? 'Redeem' : sub.source === 'trial' ? 'Trial' : '';
-      planLabel = `Pro · ${pn}${srcLabel ? ` · ${srcLabel}` : ''}`;
+      planLabel = `Pro \u00b7 ${pn}${countLabel}${srcLabel ? ` \u00b7 ${srcLabel}` : ''}`;
       planClass = 'sub-paid';
       if (sub.cancelAtPeriodEnd) {
         planLabel += ' · Canceling';
-      }
-      if (days !== null && days <= 3) {
-        urgency = 'critical';
-        urgencyMsg = i18n(state.lang, `Pro expires in ${days} day${days !== 1 ? 's' : ''}`, `Pro 还有 ${days} 天到期`);
-        urgencyDetail = i18n(state.lang, 'Renew now to keep unlimited approvals.', '立即续订以保持无限审批。');
-      } else if (days !== null && days <= 7) {
-        urgency = 'attention';
-        urgencyMsg = i18n(state.lang, `Pro expires in ${days} days`, `Pro 还有 ${days} 天到期`);
       }
     } else if (sub.tier === 'trial') {
       const trialDays = days ?? 14;
       planLabel = `Trial · ${trialDays} day${trialDays !== 1 ? 's' : ''}`;
       planClass = 'sub-trial';
-      if (trialDays <= 3) {
-        urgency = 'critical';
-        urgencyMsg = trialDays <= 0
-          ? i18n(state.lang, 'Trial ended', '试用已结束')
-          : i18n(state.lang, `Trial ends in ${trialDays} day${trialDays !== 1 ? 's' : ''}`, `试用还有 ${trialDays} 天结束`);
-        urgencyDetail = i18n(state.lang, 'Subscribe to keep Pro features.', '订阅以保留 Pro 功能。');
-      } else if (trialDays <= 7) {
-        urgency = 'attention';
-        urgencyMsg = i18n(state.lang, `Trial ends in ${trialDays} days`, `试用还有 ${trialDays} 天结束`);
-      }
     } else if (sub.usage) {
       const used = sub.usage.used;
       const limit = sub.usage.limit;
       planLabel = `Free · ${used}/${limit}`;
-      if (used >= limit) {
-        urgency = 'critical';
-        urgencyMsg = i18n(state.lang, 'Approval limit reached', '审批额度已用完');
-        urgencyDetail = i18n(state.lang, `${used}/${limit} this month. Upgrade to Pro for unlimited.`, `本月 ${used}/${limit}。升级 Pro 解锁无限。`);
-        planClass = 'sub-exhausted';
-      } else if (used >= limit * 0.8) {
-        urgency = 'attention';
-        urgencyMsg = i18n(state.lang, `${limit - used} approval${limit - used !== 1 ? 's' : ''} left`, `本月仅剩 ${limit - used} 次审批`);
-        planClass = 'sub-approaching';
-      }
+      planClass = used >= limit ? 'sub-exhausted' : used >= limit * 0.8 ? 'sub-approaching' : '';
     }
   }
 
-  // Show next billing info for PayPal subscriptions
   let billingHtml = '';
   if (sub?.source === 'paypal' && sub.nextBillingTime) {
     const nextDate = new Date(sub.nextBillingTime);
@@ -631,19 +607,7 @@ export function renderSubscribe(state: SidebarState): string {
 
   const qqHtml = `<div class="qq-group-row"><span class="qq-icon">QQ</span> <a class="qq-link" href="https://qm.qq.com/q/ryWvbgYpNY" target="_blank">827453239</a></div>`;
 
-  const urgencyBanner = urgency !== 'quiet' && urgencyMsg
-    ? `<div class="urgency-banner urgency-${urgency}">
-         <div class="urgency-headline">${urgencyMsg}</div>
-         ${urgencyDetail ? `<div class="urgency-detail">${urgencyDetail}</div>` : ''}
-          <button class="urgency-cta" data-action="startCheckout">${i18n(state.lang, 'Manage Subscription', '管理订阅')}</button>
-       </div>`
-    : '';
-
-  const quietCta = urgency === 'quiet'
-    ? `<button class="upgrade-cta checkout-btn" data-action="startCheckout">${i18n(state.lang, 'Manage Subscription', '管理订阅')}</button>`
-    : '';
-
-  return `<div class="footer" id="subscriptionFooter">${qqHtml}${urgencyBanner}${quietCta}<div class="sub-row"><span class="sub-label ${planClass}">${planLabel}</span></div>${billingHtml}</div>`;
+  return `<div class="footer" id="subscriptionFooter"><div class="sub-row"><span class="sub-label ${planClass}">${planLabel}</span></div>${billingHtml}<button class="upgrade-cta" data-action="startCheckout">${i18n(state.lang, 'Manage Subscription', '管理订阅')}</button>${qqHtml}</div>`;
 }
 
 // ── Pairing card ─────────────────────────────────────────
@@ -1068,6 +1032,16 @@ ${renderSubscribe(state)}
     if (e.data && e.data.type === 'sessionsRefreshStatus') {
       var status = document.getElementById('sessionsRefreshStatus');
       if (status) status.textContent = e.data.text || '';
+    }
+
+    if (e.data && e.data.type === 'checkoutResult' && e.data.error) {
+      var subFooter = document.getElementById('subscriptionFooter');
+      if (subFooter) {
+        var errEl = document.createElement('div');
+        errEl.style.cssText = 'margin:4px 0;padding:4px 8px;background:rgba(241,76,76,.12);border-radius:4px;font-size:10px;color:var(--vscode-terminal-ansiRed,#f14c4c);text-align:left';
+        errEl.textContent = e.data.error.length > 60 ? e.data.error.slice(0, 60) + '…' : e.data.error;
+        subFooter.insertBefore(errEl, subFooter.firstChild);
+      }
     }
   });
 

@@ -22,7 +22,7 @@
     <text class="section-title">订阅</text>
     <view class="info-row info-row-warning" tt:if="{{tier === 'paid' && isExpiringSoon}}">
       <text class="label">专业版即将到期</text>
-      <text class="value">还剩 {{daysRemaining}} 天 · <text class="purchase-link" bindtap="openBilling">前往续期 →</text></text>
+      <text class="value">还剩 {{daysRemaining}} 天 · 续期请到 VS Code 桌面端</text>
     </view>
     <view class="info-row" tt:elif="{{tier === 'paid'}}">
       <text class="label">专业版已开通</text>

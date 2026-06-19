@@ -42,11 +42,6 @@
 
 .unbind-btn { margin-top: 20rpx; width: 100%; height: 80rpx; line-height: 80rpx; border-radius: var(--ck-radius-md); background: #fef2f2; color: var(--ck-danger); font-size: 28rpx; font-weight: 700; border: 1rpx solid #fecaca; text-align: center; }
 .unbind-btn:active { background: #fee2e2; }
-.redeem-row { display: flex; align-items: center; gap: 12rpx; margin-top: 16rpx; }
-.redeem-input { flex: 1 1 0; width: 0; height: 72rpx; padding: 0 16rpx; border: 1rpx solid var(--ck-border); border-radius: var(--ck-radius-sm); background: var(--ck-bg); font-size: 26rpx; font-family: monospace; letter-spacing: 1rpx; min-width: 0; }
-.redeem-btn { display: flex; align-items: center; justify-content: center; flex: 0 0 112rpx; width: 112rpx; max-width: 112rpx; min-width: 112rpx; height: 72rpx; line-height: 72rpx; font-size: 26rpx; font-weight: 600; border-radius: var(--ck-radius-sm); background: var(--ck-primary); color: #fff; padding: 0; margin: 0; }
-.redeem-btn::after { border: none; }
-.redeem-btn[disabled] { opacity: 0.5; }
 .quota-card { margin-top: 18rpx; padding: 16rpx 18rpx; background: var(--ck-surface); border: 1rpx solid var(--ck-border); border-radius: var(--ck-radius-md); }
 .quota-bar { width: 100%; height: 14rpx; background: var(--ck-bg); border-radius: 7rpx; overflow: hidden; }
 .quota-fill { height: 100%; border-radius: 7rpx; transition: width 200ms ease, background 200ms ease; }

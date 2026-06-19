@@ -1,6 +1,6 @@
 {
   "name": "codekey-miniprogram",
-  "version": "1.0.0",
+  "version": "1.2.1",
   "description": "CodeKey WeChat Mini Program",
   "main": "app.js",
   "scripts": {

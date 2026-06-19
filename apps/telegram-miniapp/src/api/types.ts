@@ -43,7 +43,7 @@ export interface UserEvent {
 }
 
 export interface SubscriptionStatus {
-  tier: 'free' | 'trial' | 'pro';
+  tier: 'free' | 'trial' | 'paid';
   plan: string | null;
   expiresAt: string | null;
   product: string;

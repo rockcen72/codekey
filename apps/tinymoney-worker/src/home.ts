@@ -207,6 +207,10 @@ header.page-hero p { color: var(--muted); font-size: 14px; line-height: 1.6; }
 .subscribe-btn.primary { background: var(--primary); color: #fff; }
 .subscribe-btn.primary:hover { background: #1d4ed8; }
 .paypal-button-container { margin-top: 8px; min-height: 40px; }
+.subscribe-success { text-align: center; padding: 24px 16px; }
+.subscribe-success .icon { font-size: 36px; margin-bottom: 10px; }
+.subscribe-success h3 { font-size: 16px; font-weight: 800; margin-bottom: 6px; }
+.subscribe-success p { font-size: 13px; color: var(--muted); line-height: 1.5; margin: 0; }
 .paypal-note { text-align: center; color: var(--muted); font-size: 12px; margin-bottom: 24px; line-height: 1.5; }
 .china-row { display: flex; align-items: center; justify-content: center; gap: 12px; margin-bottom: 32px; padding: 16px 20px; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; }
 .china-row-text { color: var(--muted); font-size: 13px; }
@@ -475,18 +479,14 @@ async function confirmSubscription(subscriptionId, plan) {
 async function onApprove(subscriptionId, plan) {
   try {
     const data = await confirmSubscription(subscriptionId, plan);
-    if (data.syncing) {
-      // PayPal confirmed, but the relay backend opens Pro from the
-      // signature-verified webhook, not from this public endpoint.
-      // Tell the user the payment was accepted and ask them to refresh
-      // the app shortly. Avoids the misleading "subscribed!" toast in
-      // the rare case the webhook never lands (in which case support
-      // can still attribute the payment via PayPal's records).
-      showStatus(currentLang === 'zh' ? '\u2705 PayPal \u5df2\u6263\u6b3e\uff0c\u6b63\u5728\u540c\u6b65\u5230 CodeKey\uff0c\u8bf7\u7a0d\u540e\u5728\u624b\u673a/\u684c\u9762\u7aef\u5237\u65b0' : '\u2705 PayPal payment accepted. Syncing to CodeKey \u2014 please refresh your app shortly.', 'success');
-    } else if (data.pending) {
-      showStatus(currentLang === 'zh' ? '\u8ba2\u9605\u5df2\u521b\u5efa\uff0cPayPal \u6b63\u5728\u786e\u8ba4\uff0c\u8bf7\u7a0d\u540e\u5237\u65b0' : 'Subscription created. PayPal is still confirming it, please refresh shortly.', 'success');
-    } else {
-      showStatus((currentLang === 'zh' ? '\u8ba2\u9605\u72b6\u6001\uff1a' : 'Subscription status: ') + (data.status || 'UNKNOWN'), 'success');
+    const container = document.getElementById('paypal-button-' + plan);
+    if (container) {
+      container.innerHTML = '<div class="subscribe-success">'
+        + '<div class="icon">&#9989;</div>'
+        + '<h3>' + (currentLang === 'zh' ? '\u611f\u8c22\u8ba2\u9605' : 'Thank you for subscribing') + '</h3>'
+        + '<p>' + (currentLang === 'zh' ? '\u8ba2\u9605\u5df2\u751f\u6548\uff0c\u8bf7\u8fd4\u56de VS Code \u67e5\u770b\u4f60\u7684 Pro \u72b6\u6001\u3002' : 'Subscription activated. Go back to VS Code to see your Pro status.') + '</p>'
+        + '</div>';
+      container.style.display = 'block';
     }
   } catch (err) {
     showStatus(currentLang === 'zh' ? '\u652f\u4ed8\u786e\u8ba4\u5931\u8d25\uff0c\u8bf7\u8054\u7cfb\u5ba2\u670d' : 'Payment confirmation failed, please contact support', 'error');

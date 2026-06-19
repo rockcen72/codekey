@@ -323,10 +323,6 @@ Page({
     app.onWsEvent('quota_exceeded', this._onQuotaExceededBound);
   },
 
-  openBilling() {
-    tt.setClipboardData({ data: 'https://tinymoney.ccwu.cc', success: () => tt.showToast({ title: '链接已复制', icon: 'success' }) });
-  },
-
   formatDate(d: Date): string {
     const y = d.getFullYear();
     const m = String(d.getMonth() + 1).padStart(2, '0');

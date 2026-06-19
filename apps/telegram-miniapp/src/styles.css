@@ -442,11 +442,6 @@ a {
   gap: 12px;
 }
 
-.compact-redeem {
-  margin-bottom: 10px;
-  padding: 10px;
-}
-
 .session-list {
   gap: 7px;
 }
@@ -817,33 +812,6 @@ a {
 .tier-free { background: rgba(31, 37, 35, 0.08); color: var(--muted); }
 .tier-trial { background: rgba(154, 103, 0, 0.12); color: #9a6700; }
 .tier-pro { background: rgba(0, 109, 119, 0.12); color: #00545c; }
-
-/* ── Redeem Code ─────────────────────────────────── */
-
-.redeem-section {
-  margin-top: 10px;
-}
-
-.redeem-row {
-  display: flex;
-  gap: 8px;
-}
-
-.redeem-input {
-  flex: 1;
-  min-height: 36px;
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  padding: 0 10px;
-  font: inherit;
-  font-size: 14px;
-  letter-spacing: 1px;
-}
-
-.redeem-msg {
-  margin: 6px 0 0;
-  font-size: 13px;
-}
 
 .success-text {
   color: #137333;
@@ -2352,8 +2320,5 @@ a {
   color: var(--ck-muted);
 }
 
-.pro-redeem {
-  padding-top: 24px;
-  border-top: 1px solid var(--ck-border);
-}
+
 

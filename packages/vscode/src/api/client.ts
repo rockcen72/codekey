@@ -69,6 +69,7 @@ export function createApi(creds: Credentials) {
           'Content-Type': 'application/json',
           ...(creds.deviceToken ? { 'X-Codekey-Client-Token': creds.deviceToken } : {}),
         },
+        body: '{}',
         signal,
       }).then(async (res) => {
         if (!res.ok) throw new ApiError(res.status, `checkout start failed (${res.status})`);
