@@ -16,17 +16,17 @@
   //   PAYPAL_WEBHOOK_ID
   "vars": {
     "RELAY_BACKEND_URL": "https://codekey.tinymoney.cn",
-    "PAYPAL_CLIENT_ID": "ARv1WHM8_ltzdOXmQ6fY8OB_08UfALsOGo_HmsxDE9O32l1-x1lD5ej_Ur7cbAFV1haDAtcFUfBVTKtW",
-    "PAYPAL_ENV": "sandbox",
-    "PAYPAL_PLAN_ID_MONTHLY": "P-5W402202GL735564NNIZ72UA",
-    "PAYPAL_PLAN_ID_YEARLY": "P-4K995901EH521313YNIZ726I",
+    "PAYPAL_CLIENT_ID": "BAAJ3K-qOn09Dj7FtMSJB_tWly6vlqssMTQ_fS-Lw6---mV_peMrHaT2DLnqNuCIuU-8mCVxg7yJk-radE",
+    "PAYPAL_ENV": "live",
+    "PAYPAL_PLAN_ID_MONTHLY": "P-51X85311SY848104XNI3EK6Y",
+    "PAYPAL_PLAN_ID_YEARLY": "P-0UB94151FU728825WNI3EK6Y",
     "CHINA_PAY_URL": "https://pay.ldxp.cn/shop/6T7QKRTE",
-    "MERCHANT_NAME": "[Merchant Name Placeholder]",
-    "MERCHANT_NAME_CN": "[\u5546\u6237\u540d\u79f0\u5360\u4f4d]",
-    "MERCHANT_ADDRESS": "[Merchant Address Placeholder]",
-    "MERCHANT_ADDRESS_CN": "[\u7ecf\u8425\u5730\u5740\u5360\u4f4d]",
+    "MERCHANT_NAME": "Changjiang Digital Coastline Store",
+    "MERCHANT_NAME_CN": "\u660c\u6c5f\u533a\u6570\u5b57\u6d77\u5cb8\u7ebf\u767e\u8d27\u5e97",
+    "MERCHANT_ADDRESS": "Shunji Logistics Park, Liming Road, Changjiang District, Jingdezhen City, Jiangxi, China 109C030",
+    "MERCHANT_ADDRESS_CN": "景德镇市昌江区黎明路顺吉物流园青年创业孵化基地109C030",
     "SUPPORT_EMAIL": "denzlecen101@2925.com",
-    "SUPPORT_PHONE": "+86-000-0000-0000",
+    "SUPPORT_PHONE": "827453239",
     "EFFECTIVE_DATE": "2026-06-18"
   }
 }

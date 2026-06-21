@@ -12,7 +12,7 @@
 //     thing that should ever call that endpoint.
 
 import type { Env } from "./shared";
-import { renderHomePage, renderFallbackPage } from "./home";
+import { renderHomePage } from "./home";
 import { renderPrivacyPage, renderRefundPage, renderTermsPage, renderContactPage } from "./policies";
 
 const JSON_HEADERS = { "content-type": "application/json; charset=utf-8" };
@@ -48,13 +48,38 @@ export default {
 
 		if (request.method === "GET" || request.method === "HEAD") {
 			if (url.pathname === "/") {
-				const hasToken = url.searchParams.has("checkoutToken") || url.searchParams.has("ct");
-				const html = hasToken ? renderHomePage(env) : renderFallbackPage(env);
+				const html = renderHomePage(env);
 				const headers = {
 					"content-type": "text/html; charset=utf-8",
 					"cache-control": "public, max-age=300",
 				};
 				return new Response(request.method === "HEAD" ? null : html, { headers });
+			}
+			if (url.pathname === "/robots.txt") {
+				return new Response(`User-agent: *
+Allow: /
+Sitemap: https://tinymoney.ccwu.cc/sitemap.xml
+
+User-agent: GPTBot
+Disallow: /
+
+User-agent: ClaudeBot
+Disallow: /
+
+User-agent: Google-Extended
+Disallow: /
+`, { headers: { "content-type": "text/plain; charset=utf-8" } });
+			}
+			if (url.pathname === "/sitemap.xml") {
+				const text = `<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url><loc>https://tinymoney.ccwu.cc/</loc><changefreq>weekly</changefreq><priority>1.0</priority></url>
+  <url><loc>https://tinymoney.ccwu.cc/privacy</loc><changefreq>monthly</changefreq><priority>0.6</priority></url>
+  <url><loc>https://tinymoney.ccwu.cc/refund</loc><changefreq>monthly</changefreq><priority>0.6</priority></url>
+  <url><loc>https://tinymoney.ccwu.cc/terms</loc><changefreq>monthly</changefreq><priority>0.6</priority></url>
+  <url><loc>https://tinymoney.ccwu.cc/contact</loc><changefreq>monthly</changefreq><priority>0.5</priority></url>
+</urlset>`;
+				return new Response(request.method === "HEAD" ? null : text, { headers: { "content-type": "application/xml; charset=utf-8" } });
 			}
 			const renderer = pickPageRenderer(url.pathname);
 			if (renderer) {
@@ -85,6 +110,10 @@ export default {
 
 		if (request.method === "POST" && url.pathname === "/api/paypal/checkout-redeem") {
 			return handleCheckoutRedeem(request, env);
+		}
+
+		if (request.method === "GET" && url.pathname === "/api/paypal/checkout-status") {
+			return handleCheckoutStatus(request, env);
 		}
 
 		return new Response("Not Found", { status: 404 });
@@ -441,6 +470,16 @@ function extractCustomId(
 		if (typeof customId === "string") return customId;
 	}
 	return null;
+}
+
+async function handleCheckoutStatus(request: Request, env: Env): Promise<Response> {
+	const url = new URL(request.url);
+	const token = url.searchParams.get("checkoutToken") || url.searchParams.get("ct") || "";
+	if (!token) return json({ error: "Missing checkoutToken" }, 400);
+	const base = env.RELAY_BACKEND_URL.replace(/\/+$/, "");
+	const resp = await fetch(`${base}/api/v1/checkout-status?checkoutToken=${encodeURIComponent(token)}`);
+	const data = await resp.json();
+	return json(data, resp.status);
 }
 
 function toErrorMessage(err: unknown, fallback: string): string {

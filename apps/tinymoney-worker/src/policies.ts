@@ -129,7 +129,7 @@ export function renderPrivacyPage(env: Env): string {
 <p>${merchantEn}<br>
 ${addrEn}<br>
 Email: <a href="mailto:${email}">${email}</a><br>
-Phone: ${phone}</p>
+QQ: ${phone}</p>
 `;
 
 	const bodyZh = `
@@ -255,7 +255,7 @@ export function renderRefundPage(env: Env): string {
 <p>${merchantEn}<br>
 ${addrEn}<br>
 Email: <a href="mailto:${email}">${email}</a><br>
-Phone: ${phone}</p>
+QQ: ${phone}</p>
 `;
 
 	const bodyZh = `
@@ -392,7 +392,7 @@ export function renderTermsPage(env: Env): string {
 <p>${merchantEn}<br>
 ${addrEn}<br>
 Email: <a href="mailto:${email}">${email}</a><br>
-Phone: ${phone}</p>
+QQ: ${phone}</p>
 `;
 
 	const bodyZh = `
@@ -497,8 +497,8 @@ export function renderContactPage(env: Env): string {
     <div class="contact-value"><a href="mailto:${email}">${email}</a></div>
   </div>
   <div class="contact-row">
-    <div class="contact-label">Support Phone</div>
-    <div class="contact-value">${phone}</div>
+    <div class="contact-label">Instant Messaging</div>
+    <div class="contact-value">QQ ${phone}</div>
   </div>
   <div class="contact-row">
     <div class="contact-label">Response Time</div>
@@ -547,8 +547,8 @@ export function renderContactPage(env: Env): string {
     <div class="contact-value"><a href="mailto:${email}">${email}</a></div>
   </div>
   <div class="contact-row">
-    <div class="contact-label">\u5ba2\u670d\u7535\u8bdd</div>
-    <div class="contact-value">${phone}</div>
+    <div class="contact-label">\u5373\u65f6\u901a\u8baf</div>
+    <div class="contact-value">QQ ${phone}</div>
   </div>
   <div class="contact-row">
     <div class="contact-label">\u54cd\u5e94\u65f6\u6548</div>

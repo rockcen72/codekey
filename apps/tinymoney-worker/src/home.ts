@@ -54,7 +54,7 @@ export function renderHomePage(env: Env): string {
 			"plan-pro-f4": "\u7aef\u5230\u7aef\u52a0\u5bc6",
 			"plan-pro-f5": "\u4f18\u5148\u652f\u6301",
 			"paypal-note": "\ud83d\udcb3 \u652f\u6301 PayPal\u3001\u4fe1\u7528\u5361\u3001\u501f\u8bb0\u5361\u3002\u4e0d\u9ed8\u8ba4\u9009\u4e2d PayPal\uff0c\u60a8\u53ef\u9009\u62e9\u4efb\u4f55\u63a5\u53d7\u7684\u652f\u4ed8\u65b9\u5f0f\u3002\u652f\u4ed8\u6210\u529f\u540e\u81ea\u52a8\u6fc0\u6d3b\u8ba2\u9605\u3002",
-			"china-text": "<strong>\ud83c\udde8\ud83c\uddf3 \u56fd\u5185\u7528\u6237\uff1a</strong>\u652f\u6301\u652f\u4ed8\u5b9d\u3001\u5fae\u4fe1\u652f\u4ed8\u3001\u94f6\u884c\u5361\u3002\u8d2d\u4e70\u5151\u6362\u7801\u540e\u5728 VS Code \u4fa7\u8fb9\u680f\u8f93\u5165\u6fc0\u6d3b\u3002",
+			"china-text": "<strong>\ud83c\udde8\ud83c\uddf3 \u56fd\u5185\u7528\u6237\uff1a</strong>\u652f\u6301\u652f\u4ed8\u5b9d\u3001\u5fae\u4fe1\u652f\u4ed8\u3001\u94f6\u884c\u5361\u3002\u8d2d\u4e70\u5151\u6362\u7801\u540e\u5728\u4e0b\u65b9\u8f93\u5165\u6846\u586b\u5199\u5151\u6362\u7801\u6fc0\u6d3b\u3002",
 			"china-btn": "\u8d2d\u4e70\u5151\u6362\u7801 \u2192",
 			"guide-title": "\u8ba2\u9605\u6307\u5357",
 			"guide-1": "<strong>\u9009\u62e9\u65b9\u6848</strong> \u2014 \u70b9\u51fb\u5fc3\u4eea\u65b9\u6848\u4e0b\u7684\u201cPayPal \u8ba2\u9605\u201d\u6309\u94ae",
@@ -124,7 +124,7 @@ export function renderHomePage(env: Env): string {
 			"plan-pro-f4": "End-to-end encryption",
 			"plan-pro-f5": "Priority support",
 			"paypal-note": "\ud83d\udcb3 PayPal, credit card, and debit card accepted. PayPal is not pre-selected\u2014you may choose any supported payment method. Subscription activates automatically after payment.",
-			"china-text": "<strong>\ud83c\udde8\ud83c\uddf3 China users:</strong> Alipay, WeChat Pay, and bank cards. Buy a redeem code, then activate in VS Code.",
+			"china-text": "<strong>\ud83c\udde8\ud83c\uddf3 China users:</strong> Alipay, WeChat Pay, and bank cards. Buy a redeem code, then enter it in the input box below to activate.",
 			"china-btn": "Buy Redeem Code \u2192",
 			"guide-title": "How to Subscribe",
 			"guide-1": "<strong>Choose a plan</strong> \u2014 Click \"Subscribe with PayPal\" on your preferred plan",
@@ -157,6 +157,7 @@ export function renderHomePage(env: Env): string {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>CodeKey Pro &mdash; Subscription</title>
+<meta name="google-site-verification" content="L-Uzs0l4RlaaxR4KNNVhdS6YzugJyNbTM8_MJhDEyl8" />
 <meta name="description" content="CodeKey Pro subscription. Digital service for VS Code AI agent approvals on phone. PayPal accepted.">
 <style>
 ${commonStyles()}
@@ -409,8 +410,36 @@ function showStatus(msg, type) {
   setTimeout(() => { el.className = 'status-banner'; }, 5000);
 }
 
-function startPayPal(plan) {
+async function startPayPal(plan) {
   const container = document.getElementById('paypal-button-' + plan);
+
+  const token = getCheckoutToken();
+  if (!token) {
+    const isZh = document.documentElement.lang.startsWith('zh');
+    container.style.display = 'block';
+    container.innerHTML = '<div style="padding:14px;border:1px dashed var(--border);border-radius:8px;color:var(--muted);font-size:13px;text-align:center;line-height:1.6">'
+      + (isZh
+        ? '\u8bf7\u5148\u5b89\u88c5 VS Code \u6269\u5c55\uff0c\u901a\u8fc7\u4fa7\u8fb9\u680f\u8ba2\u9605\u6309\u94ae\u8fdb\u884c\u8ba2\u9605\u3002'
+        : 'Install the CodeKey VS Code extension first, then subscribe from the sidebar.')
+      + '</div>';
+    container.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    return;
+  }
+  try {
+    const resp = await fetch('/api/paypal/checkout-status?checkoutToken=' + encodeURIComponent(token));
+    const data = await resp.json();
+    if (data.hasActive && data.subscription) {
+      container.style.display = 'block';
+      container.innerHTML = '<div style="padding:14px;border:1px dashed var(--border);border-radius:8px;color:var(--muted);font-size:13px;text-align:center;line-height:1.6">'
+        + (currentLang === 'zh'
+          ? '\u60a8\u5df2\u6709\u4e00\u4e2a\u6709\u6548\u8ba2\u9605\uff0c\u8bf7\u5148\u53d6\u6d88\u5f53\u524d\u8ba2\u9605\u540e\u518d\u8ba2\u9605\u65b0\u65b9\u6848\u3002'
+          : 'You already have an active subscription. Cancel it before subscribing to a different plan.')
+        + '</div>';
+      container.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      return;
+    }
+  } catch (_) { /* fall through */ }
+
   container.style.display = 'block';
   container.scrollIntoView({ behavior: 'smooth', block: 'center' });
   if (container.dataset.rendered) return;
@@ -507,6 +536,21 @@ async function submitRedeem() {
     return;
   }
 
+  // Warn if user has an active subscription
+  try {
+    const statusResp = await fetch('/api/paypal/checkout-status?checkoutToken=' + encodeURIComponent(token));
+    const statusData = await statusResp.json();
+    if (statusData.hasActive && !window._redeemConfirmed) {
+      resultEl.className = 'redeem-result error';
+      resultEl.innerHTML = (currentLang === 'zh'
+        ? '\u60a8\u6709\u6d3b\u8dc3\u8ba2\u9605\uff0c\u5151\u6362\u7801\u5c06\u5728\u5f53\u524d\u8ba2\u9605\u5230\u671f\u540e\u751f\u6548\u3002<a href="#" onclick="window._redeemConfirmed=true;document.getElementById(\\'redeemBtn\\').click();return false" style="color:var(--primary);font-weight:600">\u786e\u8ba4\u7ee7\u7eed</a>'
+        : 'You have an active subscription. The redeem code will activate after your current subscription expires. <a href="#" onclick="window._redeemConfirmed=true;document.getElementById(\\'redeemBtn\\').click();return false" style="color:var(--primary);font-weight:600">Continue anyway</a>');
+      btn.disabled = false;
+      return;
+    }
+  } catch (_) { /* fall through */ }
+  window._redeemConfirmed = false;
+
   btn.disabled = true;
   resultEl.className = 'redeem-result';
   resultEl.textContent = '';
@@ -545,10 +589,26 @@ async function submitRedeem() {
   }
 }
 
-function openRedeem() {
+async function openRedeem() {
   window.open(CHINA_PAY_URL, '_blank');
   document.getElementById('redeemSection').classList.add('visible');
-  if (!getCheckoutToken()) {
+
+  const token = getCheckoutToken();
+  if (token) {
+    try {
+      const resp = await fetch('/api/paypal/checkout-status?checkoutToken=' + encodeURIComponent(token));
+      const data = await resp.json();
+      if (data.hasActive && !window._redeemWarningDismissed) {
+        document.getElementById('redeemResult').className = 'redeem-result error';
+        document.getElementById('redeemResult').innerHTML = (currentLang === 'zh'
+          ? '\u60a8\u6709\u6d3b\u8dc3\u8ba2\u9605\uff0c\u5151\u6362\u7801\u5c06\u5728\u5f53\u524d\u8ba2\u9605\u5230\u671f\u540e\u751f\u6548\u3002'
+          : 'You have an active subscription. The redeem code will activate after your current subscription expires.');
+        return;
+      }
+    } catch (_) { /* fall through */ }
+  }
+
+  if (!token) {
     document.getElementById('redeemResult').className = 'redeem-result';
     document.getElementById('redeemResult').textContent = currentLang === 'zh'
       ? '\u8bf7\u4ece VS Code \u6269\u5c55\u4e2d\u6253\u5f00\u6b64\u9875\u9762\u540e\u6fc0\u6d3b\u5151\u6362\u7801'
@@ -561,6 +621,25 @@ function openRedeem() {
   const token = getCheckoutToken();
   if (token) {
     document.getElementById('redeemSection').classList.add('visible');
+  } else {
+    const bannerText = function(lang) {
+      return lang === 'zh'
+        ? '\u8bf7\u5148\u5b89\u88c5 VS Code \u6269\u5c55\uff0c\u901a\u8fc7\u4fa7\u8fb9\u680f\u8ba2\u9605\u6309\u94ae\u8fdb\u884c\u8ba2\u9605\u3002\u5df2\u6709\u5151\u6362\u7801\uff1f\u8bf7\u4ece VS Code \u4fa7\u8fb9\u680f\u70b9\u51fb\u201c\u7ba1\u7406\u8ba2\u9605\u201d\u6253\u5f00\u6b64\u9875\u9762\u540e\u6fc0\u6d3b\u3002'
+        : 'Install the CodeKey VS Code extension first, then subscribe from the sidebar. Have a redeem code? Open this page from the VS Code sidebar "Manage Subscription" button to activate it.';
+    };
+    const showBanner = function(lang) {
+      const banner = document.getElementById('statusBanner');
+      if (!banner) return;
+      banner.className = 'status-banner';
+      banner.style.display = 'block';
+      banner.style.background = 'rgba(37,99,235,0.08)';
+      banner.style.border = '1px solid rgba(37,99,235,0.25)';
+      banner.style.color = 'var(--text)';
+      banner.innerHTML = bannerText(lang);
+    };
+    showBanner(currentLang);
+    // Update banner text when language toggles (onLangChange is called by i18nScript)
+    window.onLangChange = function(lang) { showBanner(lang); };
   }
 })();
 
@@ -757,6 +836,7 @@ export function renderFallbackPage(env: Env): string {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>CodeKey &mdash; Subscription</title>
+<meta name="google-site-verification" content="L-Uzs0l4RlaaxR4KNNVhdS6YzugJyNbTM8_MJhDEyl8" />
 <meta name="description" content="CodeKey Pro subscription">
 <style>
 ${commonStyles()}

@@ -575,15 +575,10 @@ export function renderSubscribe(state: SidebarState): string {
   let planClass = '';
   if (sub.tier === 'paid') {
     const pn = sub.plan === 'yearly' ? 'Annual' : 'Monthly';
-    const remainingDays = days ?? 0;
-    const periodCount = sub.plan === 'monthly' && remainingDays > 35
-      ? Math.round(remainingDays / 30)
-      : sub.plan === 'yearly' && remainingDays > 370
-      ? Math.round(remainingDays / 365)
-      : 1;
-    const countLabel = periodCount > 1 ? ` \u00d7${periodCount}` : '';
+    const expiryDate = sub.expiresAt ? new Date(sub.expiresAt).toLocaleDateString() : null;
+    const expiryLabel = expiryDate ? ` \u00b7 ${i18n(state.lang, 'until', '到期')} ${expiryDate}` : '';
     const srcLabel = sub.source === 'paypal' ? 'PayPal' : sub.source === 'redeem' ? 'Redeem' : sub.source === 'trial' ? 'Trial' : '';
-    planLabel = `Pro \u00b7 ${pn}${countLabel}${srcLabel ? ` \u00b7 ${srcLabel}` : ''}`;
+    planLabel = `Pro \u00b7 ${pn}${expiryLabel}${srcLabel ? ` \u00b7 ${srcLabel}` : ''}`;
     planClass = 'sub-paid';
     if (sub.cancelAtPeriodEnd) {
       planLabel += ' · Canceling';
